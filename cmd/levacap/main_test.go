@@ -272,3 +272,46 @@ func TestCaptureMissingXMLWarns(t *testing.T) {
 		t.Errorf("manifest %+v err %v", m, err)
 	}
 }
+
+func TestWriteOutputFailureLeavesGoodFilesUntouched(t *testing.T) {
+	old := cmdWait
+	cmdWait = 10 * time.Millisecond
+	t.Cleanup(func() { cmdWait = old })
+	s := startSim(t, sim.Config{})
+	dir := t.TempDir()
+	scen := filepath.Join(dir, "commands")
+	// A directory squatting on the manifest temp name makes the manifest write
+	// fail after the log temp file was written.
+	if err := os.MkdirAll(filepath.Join(scen, ".manifest.json.tmp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"log.jsonl", "manifest.json"} {
+		if err := os.WriteFile(filepath.Join(scen, n), []byte("GOOD"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out, errb bytes.Buffer
+	code := run([]string{"capture", "-scenario", "commands", "-addr", s.Addr().String(), "-out", dir, "-force"}, strings.NewReader(""), &out, &errb)
+	if code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	for _, n := range []string{"log.jsonl", "manifest.json"} {
+		b, _ := os.ReadFile(filepath.Join(scen, n))
+		if string(b) != "GOOD" {
+			t.Errorf("%s modified: %q", n, b)
+		}
+	}
+}
+
+func TestCaptureBadXMLPathFailsBeforeDial(t *testing.T) {
+	s := startSim(t, sim.Config{TripwireAddr: "127.0.0.1:0"})
+	t.Setenv("MEDEWI_XML_PATH", filepath.Join(t.TempDir(), "missing.xml"))
+	var out, errb bytes.Buffer
+	code := run([]string{"capture", "-scenario", "commands", "-addr", s.Addr().String(), "-out", t.TempDir()}, strings.NewReader(""), &out, &errb)
+	if code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	if !strings.Contains(errb.String(), "MEDEWI_XML_PATH") {
+		t.Errorf("stderr %q", errb.String())
+	}
+}

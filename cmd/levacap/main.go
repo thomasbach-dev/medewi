@@ -193,11 +193,24 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	outDir := filepath.Join(*out, *scenario)
 	if !*force {
 		for _, n := range []string{"log.jsonl", "manifest.json"} {
-			if _, err := os.Stat(filepath.Join(outDir, n)); err == nil {
+			// Any stat result other than "does not exist" counts as exists.
+			if _, err := os.Stat(filepath.Join(outDir, n)); !errors.Is(err, os.ErrNotExist) {
 				_, _ = fmt.Fprintf(stderr, "levacap: %s already exists; refusing to overwrite (use -force)\n", filepath.Join(outDir, n))
 				return 1
 			}
 		}
+	}
+
+	// Validate and hash the spec before touching the machine.
+	xmlSHA := ""
+	if p := os.Getenv(envXML); p != "" {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "levacap: read $%s: %v\n", envXML, err)
+			return 1
+		}
+		sum := sha256.Sum256(b)
+		xmlSHA = hex.EncodeToString(sum[:])
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -260,7 +273,7 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	mu.Lock()
 	snapshot := append([]fixture.Event(nil), events...)
 	mu.Unlock()
-	if err := writeOutput(outDir, logName, manName, *scenario, *addr, c.ID(), xmlName, strings.Join(notes, "; "), snapshot); err != nil {
+	if err := writeOutput(outDir, logName, manName, *scenario, *addr, c.ID(), xmlName, xmlSHA, strings.Join(notes, "; "), snapshot); err != nil {
 		_, _ = fmt.Fprintf(stderr, "levacap: %v\n", err)
 		return 1
 	}
@@ -367,11 +380,16 @@ func captureStream(ctx context.Context, c *leva.Conn, scenario string, stdin io.
 	return nil
 }
 
-func writeOutput(dir, logName, manName, scenario, addr, banner, xmlName, notes string, events []fixture.Event) error {
+// writeOutput writes both files under temp names and renames them into place
+// only after both succeeded, so a failure never leaves a half-written capture
+// under the final names or damages existing files.
+func writeOutput(dir, logName, manName, scenario, addr, banner, xmlName, xmlSHA, notes string, events []fixture.Event) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	f, err := os.Create(filepath.Join(dir, logName))
+	logTmp := filepath.Join(dir, "."+logName+".tmp")
+	manTmp := filepath.Join(dir, "."+manName+".tmp")
+	f, err := os.Create(logTmp)
 	if err != nil {
 		return err
 	}
@@ -386,17 +404,16 @@ func writeOutput(dir, logName, manName, scenario, addr, banner, xmlName, notes s
 		Scenario:        scenario,
 		FirmwareVersion: banner,
 		XMLName:         xmlName,
+		XMLSHA256:       xmlSHA,
 		MachineAddr:     addr,
 		Notes:           notes,
 		Recorded:        time.Now(),
 	}
-	if p := os.Getenv(envXML); p != "" {
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return fmt.Errorf("hash spec: %w", err)
-		}
-		sum := sha256.Sum256(b)
-		m.XMLSHA256 = hex.EncodeToString(sum[:])
+	if err := m.Save(manTmp); err != nil {
+		return err
 	}
-	return m.Save(filepath.Join(dir, manName))
+	if err := os.Rename(logTmp, filepath.Join(dir, logName)); err != nil {
+		return err
+	}
+	return os.Rename(manTmp, filepath.Join(dir, manName))
 }
