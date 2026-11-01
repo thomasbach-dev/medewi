@@ -88,3 +88,18 @@ func TestParseSpecStructuralErrors(t *testing.T) {
 		t.Errorf("want error naming value 1, got %v", err)
 	}
 }
+
+func TestParseSpecDeclaredLatin1NotDoubleDecoded(t *testing.T) {
+	doc := []byte("<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><cfg><values><value at=\"1\" len=\"2\" export=\"T\xb0\" type=\"string\"/></values></cfg>")
+	spec, err := ParseSpec(bytes.NewReader(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := spec.Values[0].Name
+	if got == "T\u00c2\u00b0" {
+		t.Fatal("double-decoded")
+	}
+	if got != "T\u00b0" {
+		t.Errorf("name = %q", got)
+	}
+}

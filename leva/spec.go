@@ -59,7 +59,9 @@ func ParseSpec(r io.Reader) (*RecordSpec, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read spec: %w", err)
 	}
+	transcoded := false
 	if !utf8.Valid(data) {
+		transcoded = true
 		data, err = charmap.ISO8859_1.NewDecoder().Bytes(data)
 		if err != nil {
 			return nil, fmt.Errorf("transcode spec: %w", err)
@@ -67,6 +69,9 @@ func ParseSpec(r io.Reader) (*RecordSpec, error) {
 	}
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	dec.CharsetReader = func(_ string, in io.Reader) (io.Reader, error) {
+		if transcoded {
+			return in, nil // already UTF-8; never decode twice
+		}
 		return charmap.ISO8859_1.NewDecoder().Reader(in), nil
 	}
 	var cfg xmlCfg
