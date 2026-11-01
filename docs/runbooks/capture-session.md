@@ -105,9 +105,10 @@ Behavior of the tool you need to know:
   *complete* capture).
 - **Ctrl-C is a clean stop for `stream` and `shot`.** Once recording has
   started, Ctrl-C does exactly what Enter does: `levacap` sends `MC `, writes a
-  complete `log.jsonl` and `manifest.json`, and exits 0. Ctrl-C before
-  recording starts (during the banner wait or the `MC?` query) aborts the run.
-  In `commands`, Ctrl-C aborts the run.
+  complete `log.jsonl` and `manifest.json`, and exits 0. Ctrl-C during the
+  banner wait aborts without writing any files (exit 1). Ctrl-C during the
+  `MC?` query, or at any point in `commands`, aborts the run and writes
+  partial files (next bullet).
 - **Any other failure** (a disconnect, a timeout, a failed `MC `, or an abort
   as above) writes `log.partial.jsonl` / `manifest.partial.json` with the
   reason in the manifest notes, and exits 1. Partial files never overwrite a
