@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"reflect"
@@ -390,5 +391,47 @@ func TestTapSeesBothDirections(t *testing.T) {
 	defer mu.Unlock()
 	if len(tx) != 0 || len(rx) != 0 {
 		t.Errorf("tap fired after remove: tx=%q rx=%q", tx, rx)
+	}
+}
+
+func TestCancelDuringSendDoesNotWedge(t *testing.T) {
+	cl, sv := net.Pipe()
+	c := NewConn(cl, WithIdleGap(testGap))
+	t.Cleanup(func() { _ = c.Close(); _ = sv.Close() })
+	go func() { _, _ = io.Copy(io.Discard, sv) }()
+
+	for i := range 300 {
+		ctx, cancel := context.WithCancel(context.Background())
+		go cancel()
+		_ = c.send(ctx, "MC ") // may succeed or fail; must not leave a stale deadline
+		cancel()
+		if err := c.send(context.Background(), "MC "); err != nil {
+			t.Fatalf("iteration %d: send after cancel failed: %v", i, err)
+		}
+	}
+}
+
+func TestCancelledCommandReplyDoesNotLeak(t *testing.T) {
+	c, s := newPair(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		s.readLine(t)
+		cancel()
+		time.Sleep(testGap / 3)
+		s.write(t, "late\r\n")
+	}()
+	if _, err := c.Command(ctx, "MCh"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	go func() {
+		s.readLine(t)
+		s.write(t, "fresh\r\n")
+	}()
+	got, err := c.Command(context.Background(), "MCh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"fresh"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }

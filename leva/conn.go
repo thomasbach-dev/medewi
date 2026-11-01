@@ -57,6 +57,7 @@ type Conn struct {
 	cfg config
 
 	cmdMu sync.Mutex // serialises Command (one collector at a time)
+	quiet bool       // guarded by cmdMu: previous Command aborted, reply may be pending
 	wmu   sync.Mutex // serialises writes to nc
 
 	mu        sync.Mutex // guards everything below
@@ -209,13 +210,20 @@ func (c *Conn) send(ctx context.Context, line string) error {
 	}
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
-	stop := context.AfterFunc(ctx, func() { _ = c.nc.SetWriteDeadline(time.Now()) })
+	fired := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		defer close(fired)
+		_ = c.nc.SetWriteDeadline(time.Now())
+	})
 	buf := []byte(line + "\r\n")
 	_, werr := c.nc.Write(buf)
 	if !stop() {
-		// The cancel hook fired (or is firing); the deadline it sets is
-		// stale, so clear it. A ctx error beats the resulting timeout.
-		defer func() { _ = c.nc.SetWriteDeadline(time.Time{}) }()
+		// The cancel hook has started; stop() does not wait for it. Wait
+		// until it has finished before clearing, otherwise it could set
+		// its past deadline after our clear and wedge every later write.
+		<-fired
+		_ = c.nc.SetWriteDeadline(time.Time{})
+		// A ctx error beats the resulting timeout.
 		if werr != nil && ctx.Err() != nil {
 			werr = ctx.Err()
 		}
@@ -234,6 +242,13 @@ func (c *Conn) send(ctx context.Context, line string) error {
 // arriving while no Command is in flight are discarded. If the connection
 // dies mid-command, the lines collected so far are returned together with
 // the error.
+//
+// If a Command is aborted by its context after the command was written, the
+// machine's reply may still arrive. The next Command therefore first waits
+// for one idle gap of silence, discarding whatever command output arrives,
+// before sending. Residual risk: a reply that is delayed by more than the
+// idle gap can still leak into a later Command's result; that is inherent
+// to idle-gap collection.
 func (c *Conn) Command(ctx context.Context, cmd string) ([]string, error) {
 	c.cmdMu.Lock()
 	defer c.cmdMu.Unlock()
@@ -249,11 +264,47 @@ func (c *Conn) Command(ctx context.Context, cmd string) ([]string, error) {
 		c.collect, c.lines, c.notify = false, nil, nil
 		return l
 	}
+	// fail maps a waitIdle outcome to Command's result.
+	fail := func(err error) ([]string, error) {
+		lines := take()
+		if err == errConnDone {
+			if e := c.Err(); e != nil {
+				return lines, e
+			}
+			return lines, ErrClosed
+		}
+		return nil, err
+	}
+
+	if c.quiet {
+		if err := c.waitIdle(ctx, notify); err != nil {
+			return fail(err)
+		}
+		c.quiet = false
+		c.mu.Lock()
+		c.lines = nil
+		c.mu.Unlock()
+	}
 
 	if err := c.send(ctx, cmd); err != nil {
 		take()
+		c.quiet = true // the write may have been partially delivered
 		return nil, err
 	}
+	if err := c.waitIdle(ctx, notify); err != nil {
+		if err != errConnDone {
+			c.quiet = true // command sent, reply still pending
+		}
+		return fail(err)
+	}
+	return take(), nil
+}
+
+var errConnDone = errors.New("leva: reader finished")
+
+// waitIdle blocks until no notification arrived for one idle gap (nil), ctx
+// is done (ctx.Err()) or the reader exited (errConnDone).
+func (c *Conn) waitIdle(ctx context.Context, notify <-chan struct{}) error {
 	timer := time.NewTimer(c.cfg.idleGap)
 	defer timer.Stop()
 	for {
@@ -261,16 +312,11 @@ func (c *Conn) Command(ctx context.Context, cmd string) ([]string, error) {
 		case <-notify:
 			timer.Reset(c.cfg.idleGap)
 		case <-timer.C:
-			return take(), nil
+			return nil
 		case <-ctx.Done():
-			take()
-			return nil, ctx.Err()
+			return ctx.Err()
 		case <-c.done:
-			lines := take()
-			if err := c.Err(); err != nil {
-				return lines, err
-			}
-			return lines, ErrClosed
+			return errConnDone
 		}
 	}
 }
