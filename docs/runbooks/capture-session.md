@@ -4,8 +4,9 @@ Executable prose of the design's "Conformance suite & capture session"
 section. Use it for the first contact with the machine, for every later
 re-capture, and as the firmware-flash gate.
 
-Tools: `levacap` (conformance and capture), `levasim` (simulator for
-dry runs). Build with `nix build .#levacap` or `go run ./cmd/levacap`.
+Tools: `go run ./cmd/levacap` (conformance and capture) and
+`go run ./cmd/levasim` (simulator for dry runs), from `nix develop`/direnv.
+Below, `levacap ...` means `go run ./cmd/levacap ...`.
 
 ## Safety rules (read first)
 
@@ -24,8 +25,8 @@ dry runs). Build with `nix build .#levacap` or `go run ./cmd/levacap`.
 4. **Human review before `git add`.** Every captured fixture (`log.jsonl`,
    `manifest.json`, `responses.json`) is read by a human first. Vendor help
    text (`MCh` output) and the vendor XML are not committed either.
-5. **Machine idle, one client.** Nobody brewing, Status Monitor closed, no
-   medewi daemon running. Dumps compete with a shot for the single UART and
+5. **Machine idle, no other clients.** Nobody brewing, Status Monitor closed, no
+   medewi daemon running, no other clients except the deliberate fan-out checks. Dumps compete with a shot for the single UART and
    stream toggles are global state.
 
 ## Prerequisites
@@ -53,8 +54,8 @@ dry runs). Build with `nix build .#levacap` or `go run ./cmd/levacap`.
 ## 1. Conformance run (quick, read-only)
 
 ```sh
-levacap conform -max readonly      # banner, MCh, MC?
-levacap conform -max stream        # additionally MCr, 3 reports, MC<space>
+go run ./cmd/levacap conform -max readonly      # banner, MCh, MC?
+go run ./cmd/levacap conform -max stream        # additionally MCr, 3 reports, MC<space>
 ```
 
 Both prompt "machine idle, nobody brewing? [y/N]" (skip with `-yes` only if
@@ -73,11 +74,11 @@ Each scenario is written to `<out>/<scenario>/` (default `captures/<scenario>/`)
 (firmware banner, XML name, XML sha256, address, notes).
 
 ```sh
-levacap capture -scenario commands        # 1. each whitelist command once
-levacap capture -scenario stream          # 2. idle report stream
-levacap capture -scenario stream -out captures/warmup   # 3. warmup
-levacap capture -scenario shot            # 4. a real shot
-levacap capture -scenario shot -out captures/shot2      # 5. second shot
+go run ./cmd/levacap capture -scenario commands        # 1. each whitelist command once
+go run ./cmd/levacap capture -scenario stream          # 2. idle report stream
+go run ./cmd/levacap capture -scenario stream -out captures/warmup   # 3. warmup
+go run ./cmd/levacap capture -scenario shot            # 4. a real shot
+go run ./cmd/levacap capture -scenario shot -out captures/shot2      # 5. second shot
 ```
 
 1. **commands** — sends `MCh MC? MCu MCm MCb MCf` with a 1 s pause between
@@ -107,13 +108,15 @@ Behavior of the tool you need to know:
   the manifest notes, and exits 1. Partial files never overwrite a complete
   capture. Delete them or keep them for diagnosis; do not feed them to the
   simulator.
+- A second failed run overwrites existing `.partial` files.
 - Files are written under temp names and renamed only after both succeeded.
 - Port 2323 as `-addr` is refused.
 
 ## 3. Sanitization gate
 
-1. Real `MCu` / `MCm` / full `commands` capture: copy to
-   `private/` (dated names) and keep it out of the repo.
+1. Real `MCu` / `MCm` / full `commands` capture: move to
+   `private/` (dated names), keep it out of the repo, and
+   **delete the real dumps from `captures/`** afterwards.
 2. For stream and shot captures, read `manifest.json` and skim `log.jsonl`
    (`jq -r .data < log.jsonl | base64 -d | less`) for anything private
    (license key, addresses, names). The manifest records only the XML's file
@@ -121,8 +124,12 @@ Behavior of the tool you need to know:
 3. Only then `git add testdata/fixtures/<name>/` and commit. Dump commands
    in committed fixtures stay synthetic (see
    `testdata/fixtures/synthetic/responses.json`).
-4. Dry-run any fixture first: `levasim -fixtures <dir>` then
-   `MEDEWI_XML_PATH=... levacap conform -addr 127.0.0.1:2300 -max stream`.
+4. Dry-run any fixture first, in two terminals:
+   ```sh
+   go run ./cmd/levasim -fixtures testdata/fixtures/synthetic -addr 127.0.0.1:2300
+   MEDEWI_XML_PATH=testdata/spec/synthetic.xml go run ./cmd/levacap conform -addr 127.0.0.1:2300 -max stream -yes
+   ```
+   (For a new fixture directory, substitute it and its matching XML.)
 
 ## 4. Assumptions to verify during the first session
 
@@ -141,18 +148,41 @@ Record the answer in the manifest notes and fix code/simulator if wrong.
 
 ## 5. Firmware-flash gate
 
-After every firmware flash, before anything else talks to the machine:
+Some firmware upgrades reset ALL settings, hence the backup first. After
+every firmware flash, before anything else talks to the machine:
 
 1. Stop the medewi daemon (from phase 2 on; today: nothing running).
-2. Back up the settings first (`MCu` on port 23 into private storage), then
-   flash following the vendor procedure (`rancilio.org`, "Update").
+2. **Before** flashing, back up the settings and record the pre-flash state
+   (nothing from here is committed):
+   ```sh
+   go run ./cmd/levacap capture -scenario commands -out private/preflash-YYYY-MM-DD
+   ```
+   Then flash per the vendor procedure (`rancilio.org`, "Update").
    `levacap` never goes near port 2323.
-3. `levacap conform -max readonly`. It reports what changed in the banner,
-   help and XML name.
-4. Compare the `MC?` name with the file behind `MEDEWI_XML_PATH`. On
-   mismatch: put the release's new XML next to the old one, point
-   `MEDEWI_XML_PATH` at it (update `.envrc`), and
-   **re-run `levacap conform -max stream`** so reports are decoded against
-   the new layout.
-5. When both runs pass, restart the daemon (its startup handshake re-checks
+3. Copy the new release's XML into Status Monitor's `config/` directory
+   AND update the local copy behind `MEDEWI_XML_PATH` (new file, then
+   update `.envrc`).
+4. Run `go run ./cmd/levacap conform -max readonly`; compare its output and
+   the `MC?` name against the pre-flash capture by hand. A name that does
+   not match the XML file means: fix the XML copy first.
+5. Re-run `go run ./cmd/levacap conform -max stream` so reports are decoded
+   against the new XML layout. If settings were reset, restore them from the
+   `MCu` backup (vendor procedure).
+6. When both runs pass, restart the daemon (its startup handshake re-checks
    the XML name).
+
+## 6. If something fails
+
+- **`not-run` / "no $id banner within 5s"**: the banner never arrived.
+  Likely causes: Status Monitor (or another client) still connected, client
+  limit reached, or the machine is in eco/standby. Close other clients, wake
+  the machine at the machine itself (do NOT send `MCa` or anything else),
+  wait, retry.
+- **levacap died mid-stream** (crash, Ctrl-C, network loss): `MCr` is
+  GLOBAL machine state, so the report stream keeps running. The one
+  sanctioned recovery, and the only hand-typed command exception, on port 23
+  only: `nc machine.example 23`, type `MC ` (MC, space) and Enter, then
+  disconnect. Never use port 2323.
+- **`failed:` lines from conform**: re-run once. If it fails again, save the
+  full output (and any `*.partial*` files) for the issue tracker; do not
+  retry in a loop against the machine.
