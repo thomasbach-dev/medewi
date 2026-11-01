@@ -1,0 +1,52 @@
+{
+  "MCh": [
+    "MCh  synthetic help (command names only)",
+    "MC?  XML name",
+    "MCu  setup dump",
+    "MCm  EEPROM dump",
+    "MCb  pressure test data",
+    "MCf  flow test data",
+    "MCr  start reports",
+    "MC<space>  stop reports"
+  ],
+  "MC?": [
+    "XML=synthetic"
+  ],
+  "MCu": [
+    "Setup (SYNTHETIC - fake values)",
+    "  PID",
+    "    Kp = 1.0",
+    "    Ki = 0.1",
+    "    Kd = 0.0",
+    "    Heater = 1000 W",
+    "  Sensors",
+    "    Boiler = TSIC@AUX1",
+    "    Pressure = 100 psi @AUX2",
+    "  Pump",
+    "    Kc = 0.5",
+    "    I = 0.2",
+    "  Flow",
+    "    Calibration = 1000 imp/l",
+    "  License",
+    "    Key = 00000000-FAKE"
+  ],
+  "MCm": [
+    ":10000000101112131415161718191A1B1C1D1E1F78",
+    ":10001000DEADBEEFDEADBEEFDEADBEEFDEADBEEF00",
+    ":1100200046414B452D464958545552452D444154411D",
+    ":00000001FF"
+  ],
+  "MCb": [
+    "phase   bar",
+    "  10   0.5",
+    "  20   1.5",
+    "  30   3.0",
+    "  40   5.5"
+  ],
+  "MCf": [
+    "ml   impulses",
+    "  10   10",
+    "  20   20",
+    "  50   50"
+  ]
+}
