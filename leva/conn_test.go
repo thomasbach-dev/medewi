@@ -1,0 +1,394 @@
+package leva
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"net"
+	"os"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+const testGap = 30 * time.Millisecond
+
+// fakeServer is the machine side of a net.Pipe. It records everything the
+// client sends and lets tests write arbitrary byte chunks.
+type fakeServer struct {
+	nc net.Conn
+}
+
+func newPair(t *testing.T, opts ...Option) (*Conn, *fakeServer) {
+	t.Helper()
+	cl, sv := net.Pipe()
+	c := NewConn(cl, append([]Option{WithIdleGap(testGap)}, opts...)...)
+	t.Cleanup(func() {
+		_ = c.Close()
+		_ = sv.Close()
+	})
+	return c, &fakeServer{nc: sv}
+}
+
+// readLine reads up to and including the next LF from the client.
+func (s *fakeServer) readLine(t *testing.T) string {
+	t.Helper()
+	var out []byte
+	b := make([]byte, 1)
+	_ = s.nc.SetReadDeadline(time.Now().Add(2 * time.Second))
+	for {
+		if _, err := s.nc.Read(b); err != nil {
+			t.Fatalf("server read: %v (got %q)", err, out)
+		}
+		out = append(out, b[0])
+		if b[0] == '\n' {
+			return string(out)
+		}
+	}
+}
+
+func (s *fakeServer) write(t *testing.T, p string) {
+	t.Helper()
+	_ = s.nc.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	if _, err := s.nc.Write([]byte(p)); err != nil {
+		t.Fatalf("server write: %v", err)
+	}
+}
+
+func recvReport(t *testing.T, ch <-chan []byte) []byte {
+	t.Helper()
+	select {
+	case r, ok := <-ch:
+		if !ok {
+			t.Fatal("reports channel closed")
+		}
+		return r
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for report")
+		return nil
+	}
+}
+
+func TestDialRefuses2323(t *testing.T) {
+	// If the guard were missing, a listener on 2323 would receive a
+	// connection; try to bind one so the test can prove nothing connects.
+	var accepted chan struct{}
+	if ln, err := net.Listen("tcp", "127.0.0.1:2323"); err == nil {
+		accepted = make(chan struct{}, 1)
+		defer func() { _ = ln.Close() }()
+		go func() {
+			if c, err := ln.Accept(); err == nil {
+				accepted <- struct{}{}
+				_ = c.Close()
+			}
+		}()
+	}
+
+	t.Setenv("MEDEWI_MACHINE_ADDR", "127.0.0.1:2323")
+	for _, addr := range []string{
+		"host:2323",
+		"127.0.0.1:2323",
+		"[::1]:2323",
+		"rancilio:02323",
+		os.Getenv("MEDEWI_MACHINE_ADDR"),
+	} {
+		c, err := Dial(context.Background(), addr)
+		if !errors.Is(err, ErrBootloaderPort) {
+			t.Errorf("Dial(%q) err = %v, want ErrBootloaderPort", addr, err)
+		}
+		if c != nil {
+			t.Errorf("Dial(%q) returned a conn", addr)
+		}
+	}
+	if accepted != nil {
+		select {
+		case <-accepted:
+			t.Fatal("a connection attempt reached port 2323")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func TestDialRejectsBadAddr(t *testing.T) {
+	if _, err := Dial(context.Background(), "no-port"); err == nil {
+		t.Fatal("want error for address without port")
+	}
+}
+
+func TestDialConnects(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		_, _ = c.Write([]byte("$id: leva!\r\n"))
+		_ = c.Close()
+	}()
+	c, err := Dial(context.Background(), ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	<-c.done
+	if got := c.ID(); got != "$id: leva!" {
+		t.Errorf("ID = %q", got)
+	}
+}
+
+func TestCommandCollectsResponse(t *testing.T) {
+	c, s := newPair(t)
+	go func() {
+		if got := s.readLine(t); got != "MCh\r\n" {
+			t.Errorf("tx = %q, want %q", got, "MCh\r\n")
+		}
+		s.write(t, "first\r\nsecond\r\n")
+	}()
+	got, err := c.Command(context.Background(), "MCh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"first", "second"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestCommandContextCancel(t *testing.T) {
+	c, s := newPair(t, WithIdleGap(time.Hour))
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		s.readLine(t)
+		s.write(t, "partial\r\n")
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	_, err := c.Command(ctx, "MCh")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+func TestDemuxInterleaved(t *testing.T) {
+	c, s := newPair(t)
+	go func() {
+		s.readLine(t) // MCr
+	}()
+	reports, err := c.StartReports(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		s.readLine(t) // MCh
+		s.write(t, "line1\r\n{r1}\r\nline2\r\n$id: leva!\r\n{r2}\r\nline3\r\n")
+	}()
+	got, err := c.Command(context.Background(), "MCh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"line1", "line2", "line3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("command lines = %q, want %q", got, want)
+	}
+	for _, want := range []string{"{r1}", "{r2}"} {
+		if r := recvReport(t, reports); string(r) != want {
+			t.Errorf("report = %q, want %q", r, want)
+		}
+	}
+	if id := c.ID(); id != "$id: leva!" {
+		t.Errorf("ID = %q", id)
+	}
+	select {
+	case r := <-reports:
+		t.Errorf("unexpected extra report %q", r)
+	default:
+	}
+}
+
+func TestReportsBinarySafe(t *testing.T) {
+	c, s := newPair(t)
+	go func() { s.readLine(t) }()
+	reports, err := c.StartReports(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := "{1.5;\x00;\xdf;\xe4;x}"
+	s.write(t, raw+"\r\n")
+	if r := recvReport(t, reports); !bytes.Equal(r, []byte(raw)) {
+		t.Errorf("report = %q, want %q", r, raw)
+	}
+}
+
+func TestSplitCRLFAcrossReads(t *testing.T) {
+	c, s := newPair(t)
+	go func() { s.readLine(t) }()
+	reports, err := c.StartReports(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, chunk := range []string{"{a", "b}\r", "\n{c}", "\r", "\n"} {
+		s.write(t, chunk)
+		time.Sleep(5 * time.Millisecond)
+	}
+	for _, want := range []string{"{ab}", "{c}"} {
+		if r := recvReport(t, reports); string(r) != want {
+			t.Errorf("report = %q, want %q", r, want)
+		}
+	}
+}
+
+func TestOversizedLineDropped(t *testing.T) {
+	old := maxLine
+	maxLine = 8192
+	t.Cleanup(func() { maxLine = old })
+	c, s := newPair(t)
+	go func() {
+		s.readLine(t)
+		s.write(t, strings.Repeat("x", maxLine+10)+"\r\nok\r\n")
+	}()
+	got, err := c.Command(context.Background(), "MCh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"ok"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %d lines (first %.20q), want [ok]", len(got), got)
+	}
+	if c.Oversized() != 1 {
+		t.Errorf("Oversized = %d, want 1", c.Oversized())
+	}
+}
+
+func TestReportOverflowDrops(t *testing.T) {
+	c, s := newPair(t, WithReportBuffer(2))
+	go func() { s.readLine(t) }()
+	reports, err := c.StartReports(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.write(t, "{1}\r\n{2}\r\n{3}\r\n{4}\r\n{5}\r\n")
+	deadline := time.Now().Add(2 * time.Second)
+	for c.Dropped() != 3 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if c.Dropped() != 3 {
+		t.Fatalf("Dropped = %d, want 3", c.Dropped())
+	}
+	// Oldest reports are kept; newest are dropped.
+	for _, want := range []string{"{1}", "{2}"} {
+		if r := recvReport(t, reports); string(r) != want {
+			t.Errorf("report = %q, want %q", r, want)
+		}
+	}
+}
+
+func TestStopReportsSendsMCSpace(t *testing.T) {
+	c, s := newPair(t)
+	got := make(chan string, 1)
+	go func() { got <- s.readLine(t) }()
+	if err := c.StopReports(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if g := <-got; g != "MC \r\n" {
+		t.Errorf("tx = %q", g)
+	}
+}
+
+func TestPeerDisconnectClosesReports(t *testing.T) {
+	c, s := newPair(t)
+	go func() { s.readLine(t) }()
+	reports, err := c.StartReports(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Err() != nil {
+		t.Fatalf("Err before disconnect = %v", c.Err())
+	}
+	_ = s.nc.Close()
+
+	select {
+	case _, ok := <-reports:
+		if ok {
+			t.Fatal("unexpected report")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("reports channel not closed after peer disconnect")
+	}
+	select {
+	case <-c.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reader goroutine did not exit")
+	}
+	if c.Err() == nil {
+		t.Error("Err() = nil after peer disconnect")
+	}
+	if _, err := c.Command(context.Background(), "MCh"); err == nil {
+		t.Error("Command on dead conn should fail")
+	}
+	// Close after peer disconnect is safe and idempotent.
+	_ = c.Close()
+	_ = c.Close()
+}
+
+func TestCloseTerminatesReader(t *testing.T) {
+	c, _ := newPair(t)
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-c.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reader goroutine did not exit after Close")
+	}
+	if err := c.Err(); err != nil {
+		t.Errorf("Err after local Close = %v, want nil", err)
+	}
+}
+
+func TestTapSeesBothDirections(t *testing.T) {
+	c, s := newPair(t)
+	var mu sync.Mutex
+	var tx, rx []byte
+	remove := c.Tap(func(dir string, p []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch dir {
+		case "tx":
+			tx = append(tx, p...)
+		case "rx":
+			rx = append(rx, p...)
+		default:
+			t.Errorf("bad dir %q", dir)
+		}
+	})
+	go func() {
+		s.readLine(t)
+		s.write(t, "a\r\n{r}\r\n")
+	}()
+	if _, err := c.Command(context.Background(), "MCh"); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	if string(tx) != "MCh\r\n" || string(rx) != "a\r\n{r}\r\n" {
+		t.Errorf("tx=%q rx=%q", tx, rx)
+	}
+	tx, rx = nil, nil
+	mu.Unlock()
+
+	remove()
+	go func() {
+		s.readLine(t)
+		s.write(t, "b\r\n")
+	}()
+	if _, err := c.Command(context.Background(), "MCh"); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(tx) != 0 || len(rx) != 0 {
+		t.Errorf("tap fired after remove: tx=%q rx=%q", tx, rx)
+	}
+}
