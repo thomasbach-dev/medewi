@@ -18,6 +18,26 @@ tooling (`cmd/levacap`). No daemon and no write path to the machine yet.
 - [Capture-session runbook](docs/runbooks/capture-session.md) (first contact,
   conformance runs, firmware-flash gate)
 
+## Configuration
+
+Instance settings come from two environment variables; neither is checked in:
+
+- `MEDEWI_MACHINE_ADDR` — `host:port` of the machine's leva! text interface
+  (port 23; port 2323 is refused everywhere).
+- `MEDEWI_XML_PATH` — path to your local copy of the firmware release's
+  Status-Monitor XML (vendor content, never committed).
+
+With [direnv](https://direnv.net/), create a local `.envrc` (gitignored):
+
+```sh
+use flake
+export MEDEWI_MACHINE_ADDR=machine.example:23
+export MEDEWI_XML_PATH=/path/to/leva-release.xml
+```
+
+Real captures and settings backups live in the gitignored `private/`
+directory (see the runbook); nothing under it is ever committed.
+
 ## Build and test
 
 ```sh

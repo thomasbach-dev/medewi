@@ -19,23 +19,25 @@ Below, `levacap ...` means `go run ./cmd/levacap ...`.
    it in code; do not work around that, and do not probe it with `nc` either.
 3. **Real `MCu` and `MCm` dumps are settings backups.** The license key is
    embedded (in `MCm` as hex bytes split across records; Intel-HEX redaction
-   is infeasible because it breaks record checksums). Store them
-   **privately** in `private/`. **Never commit them.** The
+   is infeasible because it breaks record checksums). Store them in the
+   gitignored `private/` directory. **Never commit them.** The
    repo only contains synthetic dump fixtures.
 4. **Human review before `git add`.** Every captured fixture (`log.jsonl`,
    `manifest.json`, `responses.json`) is read by a human first. Vendor help
    text (`MCh` output) and the vendor XML are not committed either.
 5. **Machine idle, no other clients.** Nobody brewing, Status Monitor closed, no
-   medewi daemon running, no other clients except the deliberate fan-out checks. Dumps compete with a shot for the single UART and
-   stream toggles are global state.
+   medewi daemon running, no other clients except the deliberate fan-out checks.
+   Dumps compete with a shot for the single UART and stream toggles are global
+   state.
 
 ## Prerequisites
 
 - Machine on, warm or cold as the scenario needs, idle.
 - Status Monitor closed on every computer.
 - `direnv allow` done in the repo, so `MEDEWI_MACHINE_ADDR`
-  (`machine.example:23`) and `MEDEWI_XML_PATH` (local copy of the
-  firmware's release XML, here `leva!-65FCB201.xml`) are set. Check with
+  (the machine's `host:port`) and `MEDEWI_XML_PATH` (local copy of the
+  firmware's release XML, e.g. `leva!-65FCB201.xml`) are set — see the
+  README's Configuration section. Check with
   `echo $MEDEWI_MACHINE_ADDR $MEDEWI_XML_PATH`.
 - Output goes to `captures/` (git-ignored). Review there, then copy what
   passes review into `testdata/fixtures/<name>/`.
@@ -121,8 +123,8 @@ Behavior of the tool you need to know:
 
 ## 3. Sanitization gate
 
-1. Real `MCu` / `MCm` / full `commands` capture: move to
-   `private/` (dated names), keep it out of the repo, and
+1. Real `MCu` / `MCm` / full `commands` capture: move to the gitignored
+   `private/` directory (dated subdirectories; never committed), and
    **delete the real dumps from `captures/`** afterwards.
 2. For stream and shot captures, read `manifest.json` and skim `log.jsonl`
    (`jq -r .data < log.jsonl | base64 -d | less`) for anything private
@@ -189,8 +191,14 @@ every firmware flash, before anything else talks to the machine:
 - **levacap died mid-stream** (crash or network loss; Ctrl-C stops cleanly, see above): `MCr` is
   GLOBAL machine state, so the report stream keeps running. The one
   sanctioned recovery, and the only hand-typed command exception, on port 23
-  only: `nc machine.example 23`, type `MC ` (MC, space) and Enter, then
-  disconnect. Never use port 2323.
+  only:
+
+  ```sh
+  MACHINE_HOST="${MEDEWI_MACHINE_ADDR%%:*}"
+  nc "$MACHINE_HOST" 23    # type "MC " (MC, space), press Enter, disconnect
+  ```
+
+  Never use port 2323.
 - **`failed:` lines from conform**: re-run once. If it fails again, save the
   full output (and any `*.partial*` files) for the issue tracker; do not
   retry in a loop against the machine.

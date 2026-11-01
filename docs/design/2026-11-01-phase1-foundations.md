@@ -22,9 +22,9 @@ truth and the tooling to develop without a hot espresso machine:
 
 ## Machine facts the builder must know
 
-Vendor references live in `private/doc-summaries/` (firmware
-manual, ito module manual, Virtual LCD protocol — all with page refs). Key
-facts:
+Vendor references live in the maintainer's private reference collection,
+outside the repo (firmware manual, ito module manual, Virtual LCD protocol —
+all with page refs). Key facts:
 
 - Port 23: plain text, CR+LF lines. On connect the firmware greets with
   `$id: leva!`. Commands are the `MC*` family (`MCh` lists them). Up to 4
@@ -54,7 +54,7 @@ facts:
   (machine on; two real shots are part of it) and doubles as the
   fixture-recording session.
 - Fixture set committed to the repo (sanitized), raw unsanitized originals
-  stored privately in `private/` (not in the repo).
+  stored in the gitignored `private/` directory (never committed).
 - Protocol library package `leva/`: dial/maintain a connection, send
   commands, demultiplex command responses from stream lines, parse the
   Status-Monitor XML into a column spec, decode `MCr` records into typed Go
@@ -135,23 +135,22 @@ Dump policy (decided): the real `MCu` and `MCm` dumps are **never committed**
 to the repo — text-level redaction provably fails on Intel-HEX (`MCm`
 encodes the license key as hex bytes split across records, and
 length-preserving redaction breaks record checksums), and git history is
-forever once published. The real dumps are stored privately in
-`private/` as the settings backups. The repo's fixtures for
+forever once published. The real dumps are stored in the gitignored
+`private/` directory as the settings backups. The repo's fixtures for
 dump commands are synthetic (hand-written, realistic shape, fake values),
 and the simulator serves those. All other captured fixtures get a
 Thomas-review gate before the commit that adds them.
 
 ## Decided design (changeable on pushback, but these are the defaults)
 
-- **Repo**: `github.com/thomasbach-dev/medewi`, checked out at
-  `the local checkout` (docs for use-cases, decisions, and
-  architecture already live in `docs/`). Layout: `cmd/levacap/`, `cmd/levasim/`, `leva/`
+- **Repo**: `github.com/thomasbach-dev/medewi` (docs for use-cases, decisions,
+  and architecture already live in `docs/`). Layout: `cmd/levacap/`, `cmd/levasim/`, `leva/`
   (the protocol package), `testdata/fixtures/`, `docs/design/`,
   `docs/runbooks/`, `flake.nix`. Commit style: conventional, English.
 - **Module path**: `github.com/thomasbach-dev/medewi`.
 - **Configuration**: instance settings come from environment variables, set
-  up by a committed direnv `.envrc` that also contains `use flake`:
-  `MEDEWI_MACHINE_ADDR=machine.example:23` (the machine), and
+  up by a local, gitignored direnv `.envrc` that also contains `use flake`:
+  `MEDEWI_MACHINE_ADDR` (the machine's `host:port`), and
   `MEDEWI_XML_PATH` pointing at the local copy of the firmware's
   Status-Monitor XML (vendor content, outside the repo). All tooling comes
   from `flake.nix` (devShell).

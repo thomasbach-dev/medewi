@@ -16,7 +16,7 @@
 - **Never dial port 2323** (bootloader: first byte resets the machine). `leva.Dial` refuses it in code; levasim carries a tripwire listener.
 - Never commit: vendor-authored content (Status-Monitor XML, help text), real `MCu`/`MCm` dumps, real personal names. Personas: "barista", "regular".
 - Wire data is `[]byte` end to end; lines are CR+LF; payloads may contain NUL and Latin-1 bytes — no lossy string round-trips.
-- Instance config via env vars from the committed `.envrc` (`use flake`): `MEDEWI_MACHINE_ADDR=machine.example:23`, `MEDEWI_XML_PATH=<local vendor XML>`.
+- Instance config via env vars from a local, gitignored `.envrc` (`use flake`): `MEDEWI_MACHINE_ADDR=<machine host:port>`, `MEDEWI_XML_PATH=<local vendor XML>`.
 - Tests must not require the real machine: anything targeting `MEDEWI_MACHINE_ADDR` skips when unset and additionally requires `MEDEWI_MACHINE_CONFIRM=1`.
 - Formatting law: gofumpt + goimports with local prefix `github.com/thomasbach-dev/medewi`, enforced via golangci-lint v2 formatters (`golangci-lint fmt --diff` must be clean). Lint law: `golangci-lint run` with the repo's `.golangci.yml` (curated set, never enable-all). Tests run with `-race` where a task says so and always in the Task 11 gate and CI.
 - Every commit message ends with these two trailer lines:
@@ -75,7 +75,7 @@ formatters:
 ```bash
 use flake
 export MEDEWI_MACHINE_ADDR=machine.example:23
-export MEDEWI_XML_PATH="private/leva-3.2/leva! (for ito)/xml file for status monitor/leva!-65FCB201.xml"
+export MEDEWI_XML_PATH=/path/to/vendor/leva-release.xml
 ```
 `.gitignore`: `.direnv/`, `result*`, `captures/`.
 
@@ -299,7 +299,7 @@ Expected: prints the Go version (flakes only see tracked files — add first).
 **Interfaces:**
 - Consumes: the design doc's "Conformance suite & capture session" section — the runbook is its executable prose.
 
-- [ ] **Step 1: Write `docs/runbooks/capture-session.md`** — prerequisites (machine on and idle, Status Monitor closed, daemonless, `direnv allow` done); the command whitelist with the one-line purpose of each; the scenario list in capture order (commands → idle stream 60 s → warmup → two shots → optional second-client fan-out check); the assumptions to verify (report-line offset origin, checksum variant, keepalive candidate, 5th-client behavior, idle-timeout duration); the sanitization gate (real dumps → private storage `private/`, review every fixture before `git add`); the firmware-flash gate procedure (stop daemon → flash → `levacap conform` → update `MEDEWI_XML_PATH` → restart).
+- [ ] **Step 1: Write `docs/runbooks/capture-session.md`** — prerequisites (machine on and idle, Status Monitor closed, daemonless, `direnv allow` done); the command whitelist with the one-line purpose of each; the scenario list in capture order (commands → idle stream 60 s → warmup → two shots → optional second-client fan-out check); the assumptions to verify (report-line offset origin, checksum variant, keepalive candidate, 5th-client behavior, idle-timeout duration); the sanitization gate (real dumps → private storage (gitignored `private/`), review every fixture before `git add`); the firmware-flash gate procedure (stop daemon → flash → `levacap conform` → update `MEDEWI_XML_PATH` → restart).
 
 - [ ] **Step 2: Write the synthetic fixtures** — `MCu` response shaped like an indented settings listing with fake values; `MCm` shaped like Intel-HEX records with valid per-record checksums over fake bytes; stream log whose lines decode against `testdata/spec/synthetic.xml`.
 

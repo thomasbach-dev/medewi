@@ -3,3 +3,5 @@ result*
 captures/
 .superpowers/
 .claude/settings.local.json
+.envrc
+/private/
