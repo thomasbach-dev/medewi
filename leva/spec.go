@@ -2,11 +2,14 @@
 package leva
 
 import (
+	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/text/encoding/charmap"
 )
@@ -37,8 +40,8 @@ type RecordSpec struct {
 }
 
 type xmlValue struct {
-	At     int    `xml:"at,attr"`
-	Len    int    `xml:"len,attr"`
+	At     *int   `xml:"at,attr"`
+	Len    *int   `xml:"len,attr"`
 	Export string `xml:"export,attr"`
 	Type   string `xml:"type,attr"`
 	Unit   string `xml:"unit,attr"`
@@ -48,10 +51,21 @@ type xmlCfg struct {
 	Values []xmlValue `xml:"values>value"`
 }
 
-// ParseSpec parses a Status Monitor XML file into a RecordSpec. Input without
-// an encoding declaration that is not valid UTF-8 is read as ISO-8859-1.
+// ParseSpec parses a Status Monitor XML file into a RecordSpec. Input that is
+// not valid UTF-8 is transcoded from ISO-8859-1 before parsing; a declared
+// non-UTF-8 encoding is also treated as ISO-8859-1.
 func ParseSpec(r io.Reader) (*RecordSpec, error) {
-	dec := xml.NewDecoder(r)
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("read spec: %w", err)
+	}
+	if !utf8.Valid(data) {
+		data, err = charmap.ISO8859_1.NewDecoder().Bytes(data)
+		if err != nil {
+			return nil, fmt.Errorf("transcode spec: %w", err)
+		}
+	}
+	dec := xml.NewDecoder(bytes.NewReader(data))
 	dec.CharsetReader = func(_ string, in io.Reader) (io.Reader, error) {
 		return charmap.ISO8859_1.NewDecoder().Reader(in), nil
 	}
@@ -59,14 +73,23 @@ func ParseSpec(r io.Reader) (*RecordSpec, error) {
 	if err := dec.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("parse spec: %w", err)
 	}
+	if len(cfg.Values) == 0 {
+		return nil, errors.New("parse spec: no <values> entries found")
+	}
 	spec := &RecordSpec{}
 	for i, v := range cfg.Values {
 		t, err := parseType(v.Type)
 		if err != nil {
 			return nil, fmt.Errorf("value %d: %w", i, err)
 		}
+		if v.At == nil || *v.At < 0 {
+			return nil, fmt.Errorf("value %d: missing or negative at", i)
+		}
+		if v.Len == nil || *v.Len <= 0 {
+			return nil, fmt.Errorf("value %d: missing or non-positive len", i)
+		}
 		spec.Values = append(spec.Values, ValueSpec{
-			Index: i, Name: v.Export, At: v.At, Len: v.Len, Type: t, Unit: v.Unit,
+			Index: i, Name: v.Export, At: *v.At, Len: *v.Len, Type: t, Unit: v.Unit,
 		})
 	}
 	return spec, nil

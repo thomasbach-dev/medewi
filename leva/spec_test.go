@@ -1,6 +1,7 @@
 package leva
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"testing"
@@ -56,4 +57,34 @@ func TestLoadSpecFileRealXML(t *testing.T) {
 		}
 	}
 	t.Error("Temperature PID1 not found")
+}
+
+func TestParseSpecLatin1Content(t *testing.T) {
+	doc := []byte("<cfg><values><value at=\"1\" len=\"2\" export=\"T\xb0\" type=\"string\">x\xb0y</value></values></cfg>")
+	spec, err := ParseSpec(bytes.NewReader(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := spec.Values[0].Name; got != "T\u00b0" {
+		t.Errorf("name = %q", got)
+	}
+}
+
+func TestParseSpecStructuralErrors(t *testing.T) {
+	cases := map[string]string{
+		"no values":    "<cfg version=\"4\"></cfg>",
+		"zero len":     "<cfg><values><value at=\"1\" len=\"0\" type=\"int\"/></values></cfg>",
+		"negative at":  "<cfg><values><value at=\"-1\" len=\"2\" type=\"int\"/></values></cfg>",
+		"missing at":   "<cfg><values><value len=\"2\" type=\"int\"/></values></cfg>",
+		"unknown type": "<cfg><values><value at=\"1\" len=\"2\" type=\"blob\"/></values></cfg>",
+	}
+	for name, doc := range cases {
+		if _, err := ParseSpec(strings.NewReader(doc)); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+	_, err := ParseSpec(strings.NewReader("<cfg><values><value at=\"1\" len=\"2\" type=\"int\"/><value at=\"3\" len=\"0\" type=\"int\"/></values></cfg>"))
+	if err == nil || !strings.Contains(err.Error(), "value 1") {
+		t.Errorf("want error naming value 1, got %v", err)
+	}
 }
