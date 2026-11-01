@@ -103,12 +103,18 @@ Behavior of the tool you need to know:
   in the target directory, `levacap` exits 1 with "refusing to overwrite";
   use a different `-out` or `-force` (only when you meant to replace a
   *complete* capture).
-- **Interrupted or failed capture** (Ctrl-C, disconnect, timeout) writes
-  `log.partial.jsonl` / `manifest.partial.json` instead, with the reason in
-  the manifest notes, and exits 1. Partial files never overwrite a complete
-  capture. Delete them or keep them for diagnosis; do not feed them to the
-  simulator.
-- A second failed run overwrites existing `.partial` files.
+- **Ctrl-C is a clean stop for `stream` and `shot`.** Once recording has
+  started, Ctrl-C does exactly what Enter does: `levacap` sends `MC `, writes a
+  complete `log.jsonl` and `manifest.json`, and exits 0. Ctrl-C before
+  recording starts (during the banner wait or the `MC?` query) aborts the run.
+  In `commands`, Ctrl-C aborts the run.
+- **Any other failure** (a disconnect, a timeout, a failed `MC `, or an abort
+  as above) writes `log.partial.jsonl` / `manifest.partial.json` with the
+  reason in the manifest notes, and exits 1. Partial files never overwrite a
+  complete capture and are not fixtures; do not feed them to the simulator.
+- **Partials versus retries:** a retry that fails overwrites existing
+  `.partial` files, so move them aside first (into a dated subdirectory such as
+  `captures/commands/failed-<date>/`) if you want to keep them for diagnosis.
 - Files are written under temp names and renamed only after both succeeded.
 - Port 2323 as `-addr` is refused.
 
@@ -155,7 +161,8 @@ every firmware flash, before anything else talks to the machine:
 2. **Before** flashing, back up the settings and record the pre-flash state
    (nothing from here is committed):
    ```sh
-   go run ./cmd/levacap capture -scenario commands -out private/preflash-YYYY-MM-DD
+   PREFLASH_DIR="private/preflash-$(date +%F)"
+   go run ./cmd/levacap capture -scenario commands -out "$PREFLASH_DIR"
    ```
    Then flash per the vendor procedure (`rancilio.org`, "Update").
    `levacap` never goes near port 2323.
@@ -178,7 +185,7 @@ every firmware flash, before anything else talks to the machine:
   limit reached, or the machine is in eco/standby. Close other clients, wake
   the machine at the machine itself (do NOT send `MCa` or anything else),
   wait, retry.
-- **levacap died mid-stream** (crash, Ctrl-C, network loss): `MCr` is
+- **levacap died mid-stream** (crash or network loss; Ctrl-C stops cleanly, see above): `MCr` is
   GLOBAL machine state, so the report stream keeps running. The one
   sanctioned recovery, and the only hand-typed command exception, on port 23
   only: `nc machine.example 23`, type `MC ` (MC, space) and Enter, then

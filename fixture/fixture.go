@@ -59,13 +59,13 @@ func ReadLog(r io.Reader) ([]Event, error) {
 
 // Manifest describes a recording session.
 type Manifest struct {
-	Scenario        string
-	FirmwareVersion string
-	XMLName         string
-	XMLSHA256       string
-	MachineAddr     string
-	Notes           string
-	Recorded        time.Time
+	Scenario        string    `json:"scenario"`
+	FirmwareVersion string    `json:"firmware_version"`
+	XMLName         string    `json:"xml_name"`
+	XMLSHA256       string    `json:"xml_sha256"`
+	MachineAddr     string    `json:"machine_addr"`
+	Notes           string    `json:"notes"`
+	Recorded        time.Time `json:"recorded"`
 }
 
 // Save writes the manifest to path as pretty-printed JSON.

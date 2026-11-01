@@ -2,6 +2,8 @@ package fixture
 
 import (
 	"bytes"
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -64,5 +66,24 @@ func TestManifestRoundTrip(t *testing.T) {
 
 	if !reflect.DeepEqual(out, in) {
 		t.Errorf("LoadManifest = %+v, want %+v", out, in)
+	}
+
+	// Pin the on-disk keys: the snake_case names are part of the format.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	var keys map[string]any
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		t.Fatalf("Unmarshal manifest: %v", err)
+	}
+	wantKeys := []string{"scenario", "firmware_version", "xml_name", "xml_sha256", "machine_addr", "notes", "recorded"}
+	if len(keys) != len(wantKeys) {
+		t.Errorf("manifest has %d keys, want %d: %v", len(keys), len(wantKeys), keys)
+	}
+	for _, k := range wantKeys {
+		if _, ok := keys[k]; !ok {
+			t.Errorf("manifest missing key %q", k)
+		}
 	}
 }
