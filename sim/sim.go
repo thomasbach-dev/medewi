@@ -43,8 +43,8 @@ type Config struct {
 	// IdleTimeout closes a connection that sends nothing for this long
 	// (default 5 minutes).
 	IdleTimeout time.Duration
-	// Speed is the stream replay speed factor (default 1.0). Unused until
-	// stream replay exists.
+	// Speed is the stream replay speed factor (default 1.0): inter-event
+	// delays from the recorded T values are divided by it.
 	Speed float64
 	// Banner is sent, CRLF-terminated, to each new client (default "$id: leva!").
 	Banner string
@@ -52,7 +52,10 @@ type Config struct {
 	// all clients. The sim appends CRLF to each. Must not be mutated after New.
 	Responses map[string][]string
 	// Stream is the recorded traffic for replay. Replay writes Event.Data
-	// verbatim (fixtures carry their own CRLF). Not implemented yet.
+	// verbatim (fixtures carry their own CRLF) as one queue item per RX event;
+	// TX events are skipped. MCr starts replay, MC<space> stops it, MCR while
+	// reporting resends the last item. With no RX events, MCr sets the flag
+	// but emits nothing, and MCR sends nothing.
 	Stream []fixture.Event
 }
 
@@ -65,6 +68,13 @@ type Server struct {
 	clients  map[*client]struct{}
 	started  bool
 	stopped  bool
+
+	// Global reporting state, like the real machine's single UART toggle.
+	// stopReplay is non-nil exactly while a replayer goroutine owns the
+	// stream; closing it (under mu) tells that replayer to exit.
+	reporting  bool
+	stopReplay chan struct{}
+	lastItem   []byte
 
 	wg   sync.WaitGroup
 	hits atomic.Int64
@@ -151,6 +161,7 @@ func (s *Server) Stop() error {
 		return nil
 	}
 	s.stopped = true
+	s.stopReplayLocked()
 	var errs []error
 	for _, l := range []net.Listener{s.ln, s.trip} {
 		if l != nil {
@@ -215,6 +226,17 @@ func (s *Server) readLoop(c *client) {
 			return // EOF, idle timeout, closed, or over-long line
 		}
 		cmd := strings.TrimRight(string(line), "\r\n")
+		switch cmd {
+		case "MCr":
+			s.startReplay()
+			continue
+		case "MC ":
+			s.stopReporting()
+			continue
+		case "MCR":
+			s.resendLast()
+			continue
+		}
 		if resp, ok := s.cfg.Responses[cmd]; ok {
 			s.broadcast(resp)
 		}
@@ -234,9 +256,13 @@ func (s *Server) broadcast(lines []string) {
 		sb.WriteString(l)
 		sb.WriteString("\r\n")
 	}
-	msg := []byte(sb.String()) // shared read-only between clients
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.fanOutLocked([]byte(sb.String()))
+}
+
+// fanOutLocked queues msg (shared read-only) to every client. s.mu must be held.
+func (s *Server) fanOutLocked(msg []byte) {
 	for c := range s.clients {
 		select {
 		case c.out <- msg:
@@ -283,4 +309,120 @@ func (c *client) close() {
 		close(c.done)
 		_ = c.conn.Close()
 	})
+}
+
+// minLoopPause keeps a stream whose events all share one timestamp from
+// spinning when it wraps around.
+const minLoopPause = time.Millisecond
+
+// startReplay handles MCr: set the global flag and, if no replayer runs yet
+// and there is something to replay, start exactly one.
+func (s *Server) startReplay() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopped {
+		return
+	}
+	s.reporting = true
+	if s.stopReplay != nil {
+		return
+	}
+	var events []fixture.Event
+	for _, ev := range s.cfg.Stream {
+		if ev.Dir == fixture.RX {
+			events = append(events, ev)
+		}
+	}
+	if len(events) == 0 {
+		return
+	}
+	stop := make(chan struct{})
+	s.stopReplay = stop
+	s.wg.Add(1)
+	go s.replay(events, stop)
+}
+
+// stopReporting handles MC<space>: clear the flag and stop the replayer, for
+// every client regardless of who started it.
+func (s *Server) stopReporting() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reporting = false
+	s.stopReplayLocked()
+}
+
+// stopReplayLocked signals the current replayer, if any, to exit. s.mu held.
+func (s *Server) stopReplayLocked() {
+	if s.stopReplay != nil {
+		close(s.stopReplay)
+		s.stopReplay = nil
+	}
+}
+
+// resendLast handles MCR: while reporting, resend the last replayed item.
+func (s *Server) resendLast() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reporting && s.lastItem != nil {
+		s.fanOutLocked(s.lastItem)
+	}
+}
+
+// emit queues one replayed item to all clients unless stop was signalled.
+func (s *Server) emit(data []byte, stop chan struct{}) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopReplay != stop { // stopped (or superseded) since we last looked
+		return false
+	}
+	s.lastItem = data
+	s.fanOutLocked(data)
+	return true
+}
+
+// replay emits events verbatim, paced by their T deltas / Speed, looping until
+// stop is closed.
+func (s *Server) replay(events []fixture.Event, stop chan struct{}) {
+	defer s.wg.Done()
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	<-timer.C
+	prev := events[0].T
+	for {
+		for _, ev := range events {
+			if !s.sleep(timer, time.Duration(float64(ev.T-prev)*float64(time.Millisecond)/s.cfg.Speed), stop) {
+				return
+			}
+			prev = ev.T
+			if !s.emit(ev.Data, stop) {
+				return
+			}
+		}
+		if !s.sleep(timer, minLoopPause, stop) {
+			return
+		}
+		prev = events[0].T
+	}
+}
+
+// sleep waits d (if positive) or until stop closes; false means stopped.
+func (s *Server) sleep(timer *time.Timer, d time.Duration, stop chan struct{}) bool {
+	if d <= 0 {
+		select {
+		case <-stop:
+			return false
+		default:
+			return true
+		}
+	}
+	timer.Reset(d)
+	select {
+	case <-stop:
+		if !timer.Stop() {
+			<-timer.C
+		}
+		return false
+	case <-timer.C:
+		return true
+	}
 }
