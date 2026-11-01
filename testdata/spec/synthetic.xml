@@ -1,0 +1,11 @@
+<!-- synthetic spec, grade 20° test -->
+<cfg version="4">
+  <values>
+    <value at="4" len="3" type="string">1:%</value>
+    <value at="7" len="6" export="Temperature PID1" type="float" unit="&#xb0;C"></value>
+    <value at="36" len="5" export="Pressure" type="float" unit="bar"></value>
+    <value at="18" len="3" export="Heat PID" type="int" unit="%"></value>
+    <value at="50" len="4" type="string">Out=%%</value>
+  </values>
+  <views><view name="ignored"/></views>
+</cfg>
