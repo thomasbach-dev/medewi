@@ -185,3 +185,46 @@ func TestMachineConformance(t *testing.T) {
 		}
 	}
 }
+
+func xmlNameResult(t *testing.T, res []Result) Result {
+	t.Helper()
+	for _, r := range res {
+		if r.Name == "xml-name" {
+			return r
+		}
+	}
+	t.Fatal("no xml-name result")
+	return Result{}
+}
+
+func TestXMLNameMismatchFails(t *testing.T) {
+	addr := startSim(t) // cans MC? -> XML=leva!-65FCB201
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	res, err := Run(ctx, addr, ReadOnly, Env{XMLName: "synthetic"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	r := xmlNameResult(t, res)
+	if r.Err == nil {
+		t.Fatal("xml-name passed despite spec/machine XML name mismatch")
+	}
+	for _, want := range []string{"synthetic", "leva!-65FCB201", "MEDEWI_XML_PATH"} {
+		if !strings.Contains(r.Err.Error(), want) {
+			t.Errorf("mismatch error %q does not mention %q", r.Err, want)
+		}
+	}
+}
+
+func TestXMLNameMatchPasses(t *testing.T) {
+	addr := startSim(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	res, err := Run(ctx, addr, ReadOnly, Env{XMLName: "leva!-65FCB201"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if r := xmlNameResult(t, res); r.Err != nil {
+		t.Fatalf("xml-name failed despite matching name: %v", r.Err)
+	}
+}

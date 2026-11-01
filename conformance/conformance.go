@@ -33,6 +33,11 @@ const (
 type Env struct {
 	// Spec decodes report lines; reports-decode only decodes when non-nil.
 	Spec *leva.RecordSpec
+	// XMLName, if non-empty, is the base name (without extension) of the
+	// loaded spec file. The xml-name check then fails when the machine
+	// reports a different name — catching a stale or wrong MEDEWI_XML_PATH
+	// before decode errors make it cryptic.
+	XMLName string
 	// Confirm asks the operator a yes/no question. Run requires it (and a
 	// yes) before touching any non-loopback target.
 	Confirm func(prompt string) bool
@@ -118,13 +123,17 @@ func checkHelp(ctx context.Context, c *leva.Conn, _ Env) error {
 	return nil
 }
 
-func checkXMLName(ctx context.Context, c *leva.Conn, _ Env) error {
+func checkXMLName(ctx context.Context, c *leva.Conn, env Env) error {
 	lines, err := c.Command(ctx, "MC?")
 	if err != nil {
 		return err
 	}
 	for _, l := range lines {
-		if strings.HasPrefix(l, "XML=") {
+		if name, ok := strings.CutPrefix(l, "XML="); ok {
+			if env.XMLName != "" && name != env.XMLName {
+				return fmt.Errorf("machine reports XML %q but loaded spec is %q — wrong MEDEWI_XML_PATH?",
+					name, env.XMLName)
+			}
 			return nil
 		}
 	}

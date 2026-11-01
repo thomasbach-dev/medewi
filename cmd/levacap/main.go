@@ -109,6 +109,7 @@ func runConform(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return 1
 		}
 		env.Spec = spec
+		env.XMLName = strings.TrimSuffix(filepath.Base(p), filepath.Ext(p))
 	} else {
 		_, _ = fmt.Fprintf(stdout, "notice: $%s not set; running without report decode assertions\n", envXML)
 	}

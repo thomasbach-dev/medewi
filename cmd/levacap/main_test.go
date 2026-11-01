@@ -34,7 +34,7 @@ func startSim(t *testing.T, cfg sim.Config) *sim.Server {
 	if cfg.Responses == nil {
 		cfg.Responses = map[string][]string{
 			"MCh": {"MCh help", "MCu setup dump", "MCr reports"},
-			"MC?": {"XML=leva!-65FCB201"},
+			"MC?": {"XML=synthetic"},
 			"MCu": {"setup"}, "MCm": {"m"}, "MCb": {"b"}, "MCf": {"f"},
 		}
 	}
@@ -65,7 +65,11 @@ func TestConformAgainstSim(t *testing.T) {
 }
 
 func TestConformRefuses2323(t *testing.T) {
-	s := startSim(t, sim.Config{TripwireAddr: "127.0.0.1:2323"})
+	s := sim.New(sim.Config{TripwireAddr: "127.0.0.1:2323"})
+	if err := s.Start(); err != nil {
+		t.Skipf("cannot bind 127.0.0.1:2323 (another levasim running?): %v", err)
+	}
+	t.Cleanup(func() { _ = s.Stop() })
 	if s.TripwireAddr() == nil {
 		t.Skip("tripwire not bound")
 	}
@@ -133,7 +137,7 @@ func TestCaptureWritesLogAndManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Scenario != "commands" || m.FirmwareVersion == "" || m.XMLName != "leva!-65FCB201" ||
+	if m.Scenario != "commands" || m.FirmwareVersion == "" || m.XMLName != "synthetic" ||
 		len(m.XMLSHA256) != 64 || m.MachineAddr != s.Addr().String() || m.Recorded.IsZero() {
 		t.Errorf("manifest: %+v", m)
 	}
@@ -313,5 +317,24 @@ func TestCaptureBadXMLPathFailsBeforeDial(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "MEDEWI_XML_PATH") {
 		t.Errorf("stderr %q", errb.String())
+	}
+}
+
+func TestConformXMLMismatchFails(t *testing.T) {
+	s := startSimResponses(t, map[string][]string{
+		"MCh": {"MCu", "MCr"},
+		"MC?": {"XML=other-release"},
+	})
+	t.Setenv("MEDEWI_XML_PATH", "../../testdata/spec/synthetic.xml")
+	var out, errb strings.Builder
+	code := run([]string{"conform", "-addr", s.Addr().String(), "-max", "readonly", "-yes"},
+		strings.NewReader(""), &out, &errb)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; out=%q err=%q", code, out.String(), errb.String())
+	}
+	for _, want := range []string{"other-release", "synthetic"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output does not mention %q:\n%s", want, out.String())
+		}
 	}
 }
