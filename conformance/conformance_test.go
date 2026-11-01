@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -88,24 +89,55 @@ func TestMaxClassSkips(t *testing.T) {
 }
 
 func TestBannerFailureAbortsRest(t *testing.T) {
-	s := sim.New(sim.Config{Banner: "$id: other"})
+	// Valid responses, but a non-banner greeting: later checks would pass if
+	// they ran, so any error on them proves the gate.
+	s := sim.New(sim.Config{
+		Banner: "noise",
+		Responses: map[string][]string{
+			"MCh": {"MCu", "MCr"},
+			"MC?": {"XML=leva!-65FCB201"},
+		},
+	})
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = s.Stop() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	res, err := Run(ctx, s.Addr().String(), ReadOnly, Env{})
+	var tx []string
+	res, err := Run(ctx, s.Addr().String(), StreamState, Env{Record: func(ev fixture.Event) {
+		if ev.Dir == fixture.TX {
+			tx = append(tx, string(ev.Data))
+		}
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res[0].Name != "banner" || res[0].Err == nil {
-		t.Fatalf("banner should fail: %+v", res[0])
+	if res[0].Name != "banner" || res[0].Err == nil || errors.Is(res[0].Err, ErrNotRun) {
+		t.Fatalf("banner should fail on its own: %+v", res[0])
 	}
 	for _, r := range res[1:] {
-		if r.Err == nil && !r.Skipped {
-			t.Errorf("%s ran despite failed banner", r.Name)
+		if !errors.Is(r.Err, ErrNotRun) {
+			t.Errorf("%s: err=%v, want ErrNotRun", r.Name, r.Err)
 		}
+	}
+	if len(tx) != 0 {
+		t.Errorf("commands sent after failed banner: %q", tx)
+	}
+}
+
+func TestBootloaderPortRejectedEarly(t *testing.T) {
+	_, err := Run(context.Background(), "127.0.0.1:2323", ReadOnly, Env{
+		Confirm: func(string) bool { t.Fatal("Confirm called"); return true },
+	})
+	if !errors.Is(err, leva.ErrBootloaderPort) {
+		t.Errorf("err=%v, want ErrBootloaderPort", err)
+	}
+	_, err = Run(context.Background(), "192.0.2.1:2323", ReadOnly, Env{
+		Confirm: func(string) bool { t.Fatal("Confirm called"); return true },
+	})
+	if !errors.Is(err, leva.ErrBootloaderPort) {
+		t.Errorf("non-loopback: err=%v, want ErrBootloaderPort", err)
 	}
 }
 

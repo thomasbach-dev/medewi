@@ -56,6 +56,13 @@ type Result struct {
 	Skipped bool
 }
 
+// bootloaderPort is the raw XMODEM bootloader port; never dialled.
+const bootloaderPort = 2323
+
+// ErrNotRun marks a check that was not executed because the banner readiness
+// gate failed.
+var ErrNotRun = errors.New("conformance: check not run")
+
 const (
 	bannerWait   = 5 * time.Second
 	reportWait   = 5 * time.Second
@@ -125,16 +132,17 @@ func checkXMLName(ctx context.Context, c *leva.Conn, _ Env) error {
 }
 
 func checkReportsDecode(ctx context.Context, c *leva.Conn, env Env) (err error) {
-	ch, err := c.StartReports(ctx)
-	if err != nil {
-		return err
-	}
+	// The MCr may have been delivered even if StartReports fails (e.g. a
+	// timeout), so always try to stop the stream, even when the check failed.
 	defer func() {
-		// Always try to stop the stream, even when the check failed.
 		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
 		err = errors.Join(err, c.StopReports(stopCtx))
 	}()
+	ch, err := c.StartReports(ctx)
+	if err != nil {
+		return err
+	}
 	timeout := time.NewTimer(reportWait)
 	defer timeout.Stop()
 	for i := 0; i < reportsToGet; i++ {
@@ -185,6 +193,13 @@ func isLoopback(addr string) bool {
 // checks are not run and carry an error naming the banner failure. A
 // connection error aborts the run with a non-nil error.
 func Run(ctx context.Context, addr string, maxClass Class, env Env) ([]Result, error) {
+	// Defense in depth: reject the bootloader port before any prompt or
+	// connection (leva.Dial also guards it).
+	if _, portStr, err := net.SplitHostPort(addr); err == nil {
+		if port, err := net.LookupPort("tcp", portStr); err == nil && port == bootloaderPort {
+			return nil, leva.ErrBootloaderPort
+		}
+	}
 	if !isLoopback(addr) {
 		if env.Confirm == nil {
 			return nil, fmt.Errorf("conformance: refusing non-loopback target %s without Confirm", addr)
@@ -223,11 +238,11 @@ func Run(ctx context.Context, addr string, maxClass Class, env Env) ([]Result, e
 		case ck.Class > maxClass:
 			r.Skipped = true
 		case gateErr != nil:
-			r.Err = fmt.Errorf("not run: %w", gateErr)
+			r.Err = gateErr
 		default:
 			r.Err = ck.Run(ctx, c, env)
 			if ck.Name == "banner" && r.Err != nil {
-				gateErr = fmt.Errorf("banner check failed: %w", r.Err)
+				gateErr = fmt.Errorf("%w: banner check failed: %w", ErrNotRun, r.Err)
 			}
 		}
 		results = append(results, r)
