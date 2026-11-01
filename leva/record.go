@@ -42,6 +42,10 @@ func (r Record) Float(name string) (float64, bool) {
 
 // Decode slices line (CR+LF already stripped) according to the spec.
 //
+// Decode does not verify checksums: callers must call VerifyChecksum first and
+// pass the payload it returns, otherwise a trailing "~HH" can land inside the
+// last field window.
+//
 // ASSUMPTION: the spec's At offsets are relative to the raw line as received,
 // including the leading '{'. To be verified in the capture session.
 func (s *RecordSpec) Decode(line []byte) (Record, error) {
@@ -83,13 +87,19 @@ func SplitChecksum(line []byte) (payload []byte, sum byte, present bool) {
 }
 
 // VerifyChecksum returns the payload of line, checking the trailing checksum
-// if one is present. An absent checksum is valid.
+// if one is present. An absent checksum is valid, but a '~' in checksum
+// position (third byte from the end) followed by anything other than two
+// uppercase hex digits is a corrupt checksum and is rejected. Pass the
+// returned payload, not line, to Decode, which never verifies checksums.
 //
 // ASSUMPTION: HH is the one's complement of the 8-bit sum of the payload
 // bytes. To be verified in the capture session.
 func VerifyChecksum(line []byte) (payload []byte, err error) {
 	payload, sum, present := SplitChecksum(line)
 	if !present {
+		if n := len(line); n >= 3 && line[n-3] == '~' {
+			return nil, fmt.Errorf("malformed checksum suffix %q", line[n-3:])
+		}
 		return payload, nil
 	}
 	var acc byte

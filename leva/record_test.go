@@ -109,3 +109,22 @@ func TestChecksumInvalid(t *testing.T) {
 		t.Error("expected error")
 	}
 }
+
+func TestChecksumMalformed(t *testing.T) {
+	for _, l := range []string{"{hello}~ab", "{hello}~G1", "{hello}~F!"} {
+		if _, err := VerifyChecksum([]byte(l)); err == nil {
+			t.Errorf("%q: expected error", l)
+		}
+	}
+}
+
+func TestChecksumPinnedVector(t *testing.T) {
+	// Sum of "{hello}" = 780 = 0x30C -> 0x0C; complement 0xF3.
+	payload, err := VerifyChecksum([]byte("{hello}~F3"))
+	if err != nil || string(payload) != "{hello}" {
+		t.Errorf("payload %q err %v", payload, err)
+	}
+	if _, err := VerifyChecksum([]byte("{hello}~4A")); err == nil {
+		t.Error("~4A must not verify")
+	}
+}
