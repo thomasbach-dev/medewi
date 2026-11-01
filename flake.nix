@@ -10,8 +10,23 @@
       pkgs = nixpkgs.legacyPackages.${system};
     in
     {
-      # Filled in Task 11.
-      packages.${system} = { };
+      packages.${system} =
+        let
+          build =
+            name:
+            pkgs.buildGoModule {
+              pname = name;
+              version = "0.1.0";
+              src = ./.;
+              vendorHash = "sha256-8dBsmXBZ9rFk0XxnBO8qFMzsaGfAGpT744Mvk9tVGxA=";
+              subPackages = [ "cmd/${name}" ];
+              meta.mainProgram = name;
+            };
+        in
+        {
+          levacap = build "levacap";
+          levasim = build "levasim";
+        };
 
       devShells.${system}.default = pkgs.mkShell {
         packages = with pkgs; [
