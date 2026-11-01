@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -29,10 +31,12 @@ func startSim(t *testing.T, cfg sim.Config) *sim.Server {
 		cfg.Stream = append(cfg.Stream, fixture.Event{T: int64(i * 10), Dir: fixture.RX, Data: synthLine(temp)})
 	}
 	cfg.Banner = "$id: leva! 3.2"
-	cfg.Responses = map[string][]string{
-		"MCh": {"MCh help", "MCu setup dump", "MCr reports"},
-		"MC?": {"XML=leva!-65FCB201"},
-		"MCu": {"setup"}, "MCm": {"m"}, "MCb": {"b"}, "MCf": {"f"},
+	if cfg.Responses == nil {
+		cfg.Responses = map[string][]string{
+			"MCh": {"MCh help", "MCu setup dump", "MCr reports"},
+			"MC?": {"XML=leva!-65FCB201"},
+			"MCu": {"setup"}, "MCm": {"m"}, "MCb": {"b"}, "MCf": {"f"},
+		}
 	}
 	s := sim.New(cfg)
 	if err := s.Start(); err != nil {
@@ -40,6 +44,11 @@ func startSim(t *testing.T, cfg sim.Config) *sim.Server {
 	}
 	t.Cleanup(func() { _ = s.Stop() })
 	return s
+}
+
+func startSimResponses(t *testing.T, r map[string][]string) *sim.Server {
+	t.Helper()
+	return startSim(t, sim.Config{Responses: r})
 }
 
 func TestConformAgainstSim(t *testing.T) {
@@ -50,8 +59,8 @@ func TestConformAgainstSim(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
 	}
-	if !strings.Contains(out.String(), "reports-decode") {
-		t.Errorf("output lacks reports-decode: %s", out.String())
+	if !regexp.MustCompile(`(?m)^reports-decode\s+stream\s+ok$`).MatchString(out.String()) {
+		t.Errorf("reports-decode not ok/stream: %s", out.String())
 	}
 }
 
@@ -113,10 +122,9 @@ func TestCaptureWritesLogAndManifest(t *testing.T) {
 			rx++
 		}
 	}
-	for _, c := range []string{"MCh", "MC?", "MCu", "MCm", "MCb", "MCf"} {
-		if !strings.Contains(tx.String(), c) {
-			t.Errorf("tx lacks %s", c)
-		}
+	want := []string{"MCh", "MC?", "MCu", "MCm", "MCb", "MCf"}
+	if got := strings.Split(strings.TrimSuffix(tx.String(), "\r\n"), "\r\n"); !slices.Equal(got, want) {
+		t.Errorf("TX commands = %q, want exactly %q", got, want)
 	}
 	if rx == 0 {
 		t.Error("no rx events")
@@ -142,8 +150,29 @@ func TestCaptureStreamStopsOnEnter(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d stderr %s", code, errb.String())
 	}
-	if _, err := os.Stat(filepath.Join(dir, "stream", "log.jsonl")); err != nil {
-		t.Error(err)
+	f, err := os.Open(filepath.Join(dir, "stream", "log.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	evs, err := fixture.ReadLog(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tx strings.Builder
+	rx := 0
+	for _, e := range evs {
+		if e.Dir == fixture.TX {
+			tx.Write(e.Data)
+		} else {
+			rx++
+		}
+	}
+	if got := tx.String(); got != "MC?\r\nMCr\r\nMC \r\n" {
+		t.Errorf("TX = %q, want MC?, MCr, \"MC \"", got)
+	}
+	if rx == 0 {
+		t.Error("no rx events")
 	}
 }
 
@@ -154,5 +183,92 @@ func TestUsage(t *testing.T) {
 	}
 	if run([]string{"capture", "-scenario", "bogus"}, strings.NewReader(""), &out, &errb) != 2 {
 		t.Error("bogus scenario want exit 2")
+	}
+}
+
+func TestCaptureRefusesOverwriteAndForce(t *testing.T) {
+	old := cmdWait
+	cmdWait = 10 * time.Millisecond
+	t.Cleanup(func() { cmdWait = old })
+	s := startSim(t, sim.Config{})
+	dir := t.TempDir()
+	args := []string{"capture", "-scenario", "commands", "-addr", s.Addr().String(), "-out", dir}
+	var out, errb bytes.Buffer
+	if code := run(args, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("first run exit %d: %s", code, errb.String())
+	}
+	errb.Reset()
+	if code := run(args, strings.NewReader(""), &out, &errb); code != 1 || !strings.Contains(errb.String(), "-force") {
+		t.Errorf("second run exit %d stderr %q", code, errb.String())
+	}
+	if code := run(append(args, "-force"), strings.NewReader(""), &out, &errb); code != 0 {
+		t.Errorf("-force run exit %d: %s", code, errb.String())
+	}
+}
+
+func TestFailedCaptureWritesPartialAndKeepsGood(t *testing.T) {
+	old := cmdWait
+	cmdWait = 10 * time.Millisecond
+	t.Cleanup(func() { cmdWait = old })
+	oldT := cmdTimeout
+	cmdTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { cmdTimeout = oldT })
+	s := startSim(t, sim.Config{})
+	dir := t.TempDir()
+	good := filepath.Join(dir, "commands")
+	if err := os.MkdirAll(good, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"log.jsonl", "manifest.json"} {
+		if err := os.WriteFile(filepath.Join(good, n), []byte("GOOD"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Use a fresh scenario dir for the failing run: stop the sim mid-way by
+	// pointing at a sim that does not answer MCm.
+	s2 := startSimResponses(t, map[string][]string{"MCh": {"h"}, "MC?": {"XML=x"}, "MCu": {"u"}})
+	cmdWait = 400 * time.Millisecond
+	go func() {
+		time.Sleep(700 * time.Millisecond)
+		_ = s2.Stop() // connection dies mid-scenario
+	}()
+	var out, errb bytes.Buffer
+	code := run([]string{"capture", "-scenario", "commands", "-addr", s2.Addr().String(), "-out", dir, "-force"}, strings.NewReader(""), &out, &errb)
+	if code != 1 {
+		t.Fatalf("exit %d, want 1; stderr %s", code, errb.String())
+	}
+	b, _ := os.ReadFile(filepath.Join(good, "log.jsonl"))
+	if string(b) != "GOOD" {
+		t.Errorf("good log was modified: %q", b)
+	}
+	m, err := fixture.LoadManifest(filepath.Join(good, "manifest.partial.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(m.Notes, "capture failed") {
+		t.Errorf("notes = %q", m.Notes)
+	}
+	if _, err := os.Stat(filepath.Join(good, "log.partial.jsonl")); err != nil {
+		t.Error(err)
+	}
+	_ = s
+}
+
+func TestCaptureMissingXMLWarns(t *testing.T) {
+	old := cmdWait
+	cmdWait = 10 * time.Millisecond
+	t.Cleanup(func() { cmdWait = old })
+	s := startSimResponses(t, map[string][]string{"MCh": {"h"}, "MC?": {"nothing"}, "MCu": {"u"}, "MCm": {"m"}, "MCb": {"b"}, "MCf": {"f"}})
+	dir := t.TempDir()
+	var out, errb bytes.Buffer
+	if code := run([]string{"capture", "-scenario", "commands", "-addr", s.Addr().String(), "-out", dir}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "no XML=") {
+		t.Errorf("stderr %q", errb.String())
+	}
+	m, err := fixture.LoadManifest(filepath.Join(dir, "commands", "manifest.json"))
+	if err != nil || !strings.Contains(m.Notes, "MC? returned no XML= line") {
+		t.Errorf("manifest %+v err %v", m, err)
 	}
 }

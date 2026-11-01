@@ -28,11 +28,13 @@ const (
 	envXML  = "MEDEWI_XML_PATH"
 
 	bannerTimeout = 5 * time.Second
-	cmdTimeout    = 10 * time.Second
 )
 
 // cmdWait is the pause after each scripted command (shrunk in tests).
 var cmdWait = time.Second
+
+// cmdTimeout bounds each command round trip (shrunk in tests).
+var cmdTimeout = 10 * time.Second
 
 // safeCommands is the complete, read-only command whitelist capture may send
 // in the "commands" scenario. Do not add anything else.
@@ -173,6 +175,7 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs, addr := newFlagSet("capture", stderr)
 	scenario := fs.String("scenario", "", "scenario: commands|stream|shot (required)")
 	out := fs.String("out", "captures", "output directory")
+	force := fs.Bool("force", false, "overwrite an existing complete capture")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -185,6 +188,16 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if *addr == "" {
 		_, _ = fmt.Fprintf(stderr, "levacap: no target: set $%s or pass -addr\n", envAddr)
 		return 2
+	}
+
+	outDir := filepath.Join(*out, *scenario)
+	if !*force {
+		for _, n := range []string{"log.jsonl", "manifest.json"} {
+			if _, err := os.Stat(filepath.Join(outDir, n)); err == nil {
+				_, _ = fmt.Fprintf(stderr, "levacap: %s already exists; refusing to overwrite (use -force)\n", filepath.Join(outDir, n))
+				return 1
+			}
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -233,20 +246,29 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return captureStream(ctx, c, *scenario, stdin, stdout)
 	}()
 
-	// Write whatever was recorded, even after an error: partial captures of
-	// a live machine are valuable.
+	var notes []string
+	if xmlName == "" {
+		_, _ = fmt.Fprintln(stderr, "levacap: warning: MC? returned no XML= line")
+		notes = append(notes, "MC? returned no XML= line")
+	}
+	logName, manName := "log.jsonl", "manifest.json"
+	if capErr != nil {
+		// Never mix incomplete data into the names fixtures are loaded by.
+		logName, manName = "log.partial.jsonl", "manifest.partial.json"
+		notes = append(notes, "capture failed: "+capErr.Error())
+	}
 	mu.Lock()
 	snapshot := append([]fixture.Event(nil), events...)
 	mu.Unlock()
-	if err := writeOutput(filepath.Join(*out, *scenario), *scenario, *addr, c.ID(), xmlName, snapshot); err != nil {
+	if err := writeOutput(outDir, logName, manName, *scenario, *addr, c.ID(), xmlName, strings.Join(notes, "; "), snapshot); err != nil {
 		_, _ = fmt.Fprintf(stderr, "levacap: %v\n", err)
 		return 1
 	}
 	if capErr != nil {
-		_, _ = fmt.Fprintf(stderr, "levacap: capture incomplete: %v\n", capErr)
+		_, _ = fmt.Fprintf(stderr, "levacap: capture incomplete (wrote %s): %v\n", logName, capErr)
 		return 1
 	}
-	_, _ = fmt.Fprintf(stdout, "wrote %d events to %s\n", len(snapshot), filepath.Join(*out, *scenario))
+	_, _ = fmt.Fprintf(stdout, "wrote %d events to %s\n", len(snapshot), outDir)
 	return 0
 }
 
@@ -345,11 +367,11 @@ func captureStream(ctx context.Context, c *leva.Conn, scenario string, stdin io.
 	return nil
 }
 
-func writeOutput(dir, scenario, addr, banner, xmlName string, events []fixture.Event) error {
+func writeOutput(dir, logName, manName, scenario, addr, banner, xmlName, notes string, events []fixture.Event) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	f, err := os.Create(filepath.Join(dir, "log.jsonl"))
+	f, err := os.Create(filepath.Join(dir, logName))
 	if err != nil {
 		return err
 	}
@@ -365,6 +387,7 @@ func writeOutput(dir, scenario, addr, banner, xmlName string, events []fixture.E
 		FirmwareVersion: banner,
 		XMLName:         xmlName,
 		MachineAddr:     addr,
+		Notes:           notes,
 		Recorded:        time.Now(),
 	}
 	if p := os.Getenv(envXML); p != "" {
@@ -375,5 +398,5 @@ func writeOutput(dir, scenario, addr, banner, xmlName string, events []fixture.E
 		sum := sha256.Sum256(b)
 		m.XMLSHA256 = hex.EncodeToString(sum[:])
 	}
-	return m.Save(filepath.Join(dir, "manifest.json"))
+	return m.Save(filepath.Join(dir, manName))
 }
