@@ -99,22 +99,37 @@ func TestMCSpaceStopsGlobally(t *testing.T) {
 	}
 }
 
+// slowCfg replays x1 immediately and x2 only after ~10s, so anything that
+// arrives between the two can only come from MCR.
+func slowCfg() Config {
+	return Config{
+		Speed:       1,
+		IdleTimeout: time10s * 6,
+		Stream:      []fixture.Event{rx(0, "x1\r\n"), rx(10000, "x2\r\n")},
+		Responses:   map[string][]string{"MCh": {"pong"}},
+	}
+}
+
 func TestMCRResendsLast(t *testing.T) {
-	cfg := Config{Speed: 1000, IdleTimeout: time10s, Stream: []fixture.Event{rx(0, "only\r\n")}}
-	s := start(t, cfg)
+	s := start(t, slowCfg())
 	c, r := dial(t, s)
 	readLine(t, r, c)
 	send(t, c, "MCr\r\n")
-	expect(t, r, c, "only\r\n")
-	send(t, c, "MC \r\n")
-	send(t, c, "MCr\r\n")
-	send(t, c, "MC \r\n")
-	// Stopped now: MCR must be ignored.
+	expect(t, r, c, "x1\r\n")
 	send(t, c, "MCR\r\n")
-	// Restart to be reporting, then MCR must resend the last item.
+	expect(t, r, c, "x1\r\n") // x2 is ~10s away: only MCR can produce this
+}
+
+func TestMCRIgnoredAfterStop(t *testing.T) {
+	s := start(t, slowCfg())
+	c, r := dial(t, s)
+	readLine(t, r, c)
 	send(t, c, "MCr\r\n")
+	expect(t, r, c, "x1\r\n")
+	send(t, c, "MC \r\n")
 	send(t, c, "MCR\r\n")
-	expect(t, r, c, "only\r\n")
+	send(t, c, "MCh\r\n")
+	expect(t, r, c, "pong\r\n") // nothing may precede the sentinel response
 }
 
 func TestMCRWhenIdleSendsNothing(t *testing.T) {
