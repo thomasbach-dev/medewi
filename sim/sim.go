@@ -49,7 +49,7 @@ type Config struct {
 	// Banner is sent, CRLF-terminated, to each new client (default "$id: leva!").
 	Banner string
 	// Responses maps a received command line to the lines sent in reply to
-	// all clients. The sim appends CRLF to each.
+	// all clients. The sim appends CRLF to each. Must not be mutated after New.
 	Responses map[string][]string
 	// Stream is the recorded traffic for replay. Replay writes Event.Data
 	// verbatim (fixtures carry their own CRLF). Not implemented yet.
@@ -221,19 +221,27 @@ func (s *Server) readLoop(c *client) {
 	}
 }
 
-// broadcast queues lines (CRLF appended) for every client. It never blocks:
-// a client whose queue is full is too slow and gets disconnected, so one
-// stalled reader cannot hold up the others.
+// broadcast queues one response, CRLF-joined, as a single queue item for every
+// client, so a response is never cut off mid-way. It never blocks: a client
+// whose queue is full (outQueueLen whole responses behind) is too slow and
+// gets disconnected, so one stalled reader cannot hold up the others.
 func (s *Server) broadcast(lines []string) {
+	if len(lines) == 0 {
+		return
+	}
+	var sb strings.Builder
+	for _, l := range lines {
+		sb.WriteString(l)
+		sb.WriteString("\r\n")
+	}
+	msg := []byte(sb.String()) // shared read-only between clients
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for c := range s.clients {
-		for _, l := range lines {
-			select {
-			case c.out <- []byte(l + "\r\n"):
-			default:
-				c.close()
-			}
+		select {
+		case c.out <- msg:
+		default:
+			c.close()
 		}
 	}
 }

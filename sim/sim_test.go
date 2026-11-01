@@ -2,8 +2,11 @@ package sim
 
 import (
 	"bufio"
+	"fmt"
 	"net"
 	"runtime"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -152,26 +155,52 @@ func TestStopIdempotentNoLeak(t *testing.T) {
 	}
 }
 
-func TestSlowClientDroppedNotBlocking(t *testing.T) {
-	big := make([]string, 200)
-	for i := range big {
-		big[i] = string(make([]byte, 1000))
+func TestSlowClientDroppedHealthyClientGetsEverything(t *testing.T) {
+	const (
+		lines    = 300 // larger than the out queue: must not drop a healthy client
+		triggers = 1500
+		window   = 100 // max unread responses the healthy client may lag
+	)
+	resp := make([]string, lines)
+	for i := range resp {
+		resp[i] = fmt.Sprintf("L%03d-%s", i, strings.Repeat("x", 40))
 	}
-	s := start(t, Config{Responses: map[string][]string{"X": big}})
-	slow, rs := dial(t, s) // never reads beyond banner
+	s := start(t, Config{Responses: map[string][]string{"X": resp}})
+	slow, rs := dial(t, s) // never reads after the banner
 	fast, rf := dial(t, s)
 	readLine(t, rs, slow)
 	readLine(t, rf, fast)
-	done := make(chan struct{})
+
+	var received atomic.Int64 // complete responses read by the healthy client
 	go func() {
-		defer close(done)
-		for range 200 {
-			_, _ = fast.Write([]byte("X\n"))
+		for i := range triggers {
+			for int64(i)-received.Load() >= window {
+				time.Sleep(time.Millisecond)
+			}
+			if _, err := fast.Write([]byte("X\n")); err != nil {
+				return
+			}
 		}
 	}()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("fan-out blocked on slow client")
+	for r := range triggers {
+		for i := range lines {
+			want := resp[i] + "\r\n"
+			if got := readLine(t, rf, fast); got != want {
+				t.Fatalf("response %d line %d = %q, want %q", r, i, got, want)
+			}
+		}
+		received.Add(1)
+	}
+
+	// The non-reader must have been dropped: draining it ends in EOF/reset.
+	_ = slow.SetReadDeadline(time.Now().Add(10 * time.Second))
+	buf := make([]byte, 1<<16)
+	for {
+		if _, err := slow.Read(buf); err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				t.Fatal("slow client was not disconnected")
+			}
+			break
+		}
 	}
 }
