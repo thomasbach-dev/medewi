@@ -37,6 +37,8 @@ func startSim(t *testing.T) string {
 			"MC?": {"XML=leva!-65FCB201"},
 		},
 		Stream: stream,
+		// Idle heartbeat: the banner check takes the second-banner fast path.
+		BannerInterval: 30 * time.Millisecond,
 	})
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
