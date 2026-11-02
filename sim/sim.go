@@ -57,6 +57,11 @@ type Config struct {
 	// reporting resends the last item. With no RX events, MCr sets the flag
 	// but emits nothing, and MCR sends nothing.
 	Stream []fixture.Event
+	// BannerInterval, if positive, makes the sim repeat Banner to all clients
+	// at this interval while reporting is off, like the real machine's idle
+	// heartbeat. It pauses while MCr reporting is active and resumes after
+	// MC<space>. Zero (default): the banner is sent once, on connect.
+	BannerInterval time.Duration
 }
 
 // Server is a fake leva! controller.
@@ -75,6 +80,8 @@ type Server struct {
 	reporting  bool
 	stopReplay chan struct{}
 	lastItem   []byte
+
+	quit chan struct{} // closed by Stop; ends the heartbeat goroutine
 
 	wg   sync.WaitGroup
 	hits atomic.Int64
@@ -97,7 +104,7 @@ func New(cfg Config) *Server {
 	if cfg.Banner == "" {
 		cfg.Banner = defaultBanner
 	}
-	return &Server{cfg: cfg, clients: make(map[*client]struct{})}
+	return &Server{cfg: cfg, clients: make(map[*client]struct{}), quit: make(chan struct{})}
 }
 
 // Start opens the listeners and begins serving. It may be called once.
@@ -126,7 +133,32 @@ func (s *Server) Start() error {
 		s.wg.Add(1)
 		go s.tripwireLoop(trip)
 	}
+	if s.cfg.BannerInterval > 0 {
+		s.wg.Add(1)
+		go s.heartbeat()
+	}
 	return nil
+}
+
+// heartbeat re-sends the banner to every client each BannerInterval unless
+// reporting is on. The banner is one whole queue item, like any other output.
+func (s *Server) heartbeat() {
+	defer s.wg.Done()
+	t := time.NewTicker(s.cfg.BannerInterval)
+	defer t.Stop()
+	msg := []byte(s.cfg.Banner + "\r\n")
+	for {
+		select {
+		case <-s.quit:
+			return
+		case <-t.C:
+			s.mu.Lock()
+			if !s.reporting && !s.stopped {
+				s.fanOutLocked(msg)
+			}
+			s.mu.Unlock()
+		}
+	}
 }
 
 // Addr returns the main listener address, or nil before Start.
@@ -161,6 +193,7 @@ func (s *Server) Stop() error {
 		return nil
 	}
 	s.stopped = true
+	close(s.quit)
 	s.stopReplayLocked()
 	var errs []error
 	for _, l := range []net.Listener{s.ln, s.trip} {

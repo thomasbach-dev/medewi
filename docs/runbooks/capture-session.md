@@ -46,8 +46,9 @@ Below, `levacap ...` means `go run ./cmd/levacap ...`.
 
 - Banner `$id: leva! (3.2)`, repeated about once per second.
 - **Wait for the banner before sending.** A command sent immediately after
-  connecting is silently swallowed. `levacap` waits up to 5 s for the first
-  banner and refuses to send otherwise.
+  connecting is silently swallowed. `levacap` waits up to 5 s for a banner,
+  then until a second banner arrives or 1.5 s have passed since the first, and
+  refuses to send otherwise.
 - `MC?` answers `XML=leva!-65FCB201`. The name must match the file behind
   `MEDEWI_XML_PATH`; Status Monitor and medewi cannot decode reports with a
   mismatched XML.

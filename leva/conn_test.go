@@ -435,3 +435,100 @@ func TestCancelledCommandReplyDoesNotLeak(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+func TestCommandWaitsForSlowFirstLine(t *testing.T) {
+	c, s := newPair(t, WithFirstLineTimeout(2*time.Second))
+	go func() {
+		s.readLine(t)
+		time.Sleep(3 * testGap)
+		s.write(t, "slow\r\nsecond\r\n")
+	}()
+	got, err := c.Command(context.Background(), "MCh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"slow", "second"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestCommandNoOutputBounded(t *testing.T) {
+	const first = 100 * time.Millisecond
+	c, s := newPair(t, WithFirstLineTimeout(first))
+	go func() { s.readLine(t) }()
+	start := time.Now()
+	got, err := c.Command(context.Background(), "MC ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %q, want no lines", got)
+	}
+	if d := time.Since(start); d < first || d > 1500*time.Millisecond {
+		t.Errorf("took %v, want about %v", d, first)
+	}
+}
+
+func TestCommandFirstLineWaitHonoursContext(t *testing.T) {
+	c, s := newPair(t, WithFirstLineTimeout(time.Hour))
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		s.readLine(t)
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	start := time.Now()
+	_, err := c.Command(ctx, "MCh")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("cancel took %v", d)
+	}
+}
+
+func TestWaitReadyTwoBannersFast(t *testing.T) {
+	c, sv := newPair(t)
+	go func() {
+		_, _ = sv.nc.Write([]byte("$id: leva!\r\n"))
+		time.Sleep(100 * time.Millisecond)
+		_, _ = sv.nc.Write([]byte("$id: leva!\r\n"))
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	if err := WaitReady(ctx, c, 3*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("took %v, want well under settle", d)
+	}
+	if c.Banners() < 2 {
+		t.Errorf("Banners=%d", c.Banners())
+	}
+}
+
+func TestWaitReadySingleBannerSettles(t *testing.T) {
+	c, sv := newPair(t)
+	go func() { _, _ = sv.nc.Write([]byte("$id: leva!\r\n")) }()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	settle := 300 * time.Millisecond
+	start := time.Now()
+	if err := WaitReady(ctx, c, settle); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d < settle {
+		t.Errorf("returned after %v, before settle %v", d, settle)
+	}
+}
+
+func TestWaitReadyNoBannerDeadline(t *testing.T) {
+	c, _ := newPair(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	err := WaitReady(ctx, c, 50*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err=%v, want deadline exceeded", err)
+	}
+}
