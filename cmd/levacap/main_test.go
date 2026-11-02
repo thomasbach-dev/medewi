@@ -338,3 +338,5 @@ func TestConformXMLMismatchFails(t *testing.T) {
 		}
 	}
 }
+
+func init() { bannerSettle = 50 * time.Millisecond }

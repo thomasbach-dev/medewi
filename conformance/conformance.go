@@ -68,6 +68,10 @@ const bootloaderPort = 2323
 // gate failed.
 var ErrNotRun = errors.New("conformance: check not run")
 
+// bannerSettle is how long checkBanner waits after a lone first banner for a
+// second one before accepting it (shrunk in tests).
+var bannerSettle = 1500 * time.Millisecond
+
 const (
 	bannerWait   = 5 * time.Second
 	reportWait   = 5 * time.Second
@@ -87,26 +91,21 @@ func All() []Check {
 }
 
 func checkBanner(ctx context.Context, c *leva.Conn, _ Env) error {
-	deadline := time.Now().Add(bannerWait)
-	for {
-		if id := c.ID(); id != "" {
-			if !strings.Contains(id, "leva!") {
-				return fmt.Errorf("banner %q does not contain %q", id, "leva!")
-			}
-			return nil
+	wctx, cancel := context.WithTimeout(ctx, bannerWait+bannerSettle)
+	defer cancel()
+	if err := leva.WaitReady(wctx, c, bannerSettle); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
-		if err := c.Err(); err != nil {
-			return err
-		}
-		if time.Now().After(deadline) {
+		if errors.Is(err, context.DeadlineExceeded) {
 			return fmt.Errorf("no $id banner within %s", bannerWait)
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(20 * time.Millisecond):
-		}
+		return err
 	}
+	if id := c.ID(); !strings.Contains(id, "leva!") {
+		return fmt.Errorf("banner %q does not contain %q", id, "leva!")
+	}
+	return nil
 }
 
 func checkHelp(ctx context.Context, c *leva.Conn, _ Env) error {

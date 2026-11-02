@@ -30,6 +30,10 @@ const (
 	bannerTimeout = 5 * time.Second
 )
 
+// bannerSettle is how long waitBanner waits after a lone first banner for a
+// second one (shrunk in tests).
+var bannerSettle = 1500 * time.Millisecond
+
 // cmdWait is the pause after each scripted command (shrunk in tests).
 var cmdWait = time.Second
 
@@ -286,19 +290,20 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// waitBanner polls for the banner; the real machine swallows commands sent
-// right after connect.
+// waitBanner waits until the machine is ready (second banner, or first
+// banner plus settle); the real machine swallows commands sent right after
+// connect.
 func waitBanner(ctx context.Context, c *leva.Conn) error {
-	deadline := time.Now().Add(bannerTimeout)
-	for c.ID() == "" {
-		if time.Now().After(deadline) {
+	wctx, cancel := context.WithTimeout(ctx, bannerTimeout+bannerSettle)
+	defer cancel()
+	if err := leva.WaitReady(wctx, c, bannerSettle); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
 			return errors.New("no $id banner within 5s; refusing to send commands")
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(20 * time.Millisecond):
-		}
+		return err
 	}
 	return nil
 }

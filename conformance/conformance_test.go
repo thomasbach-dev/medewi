@@ -228,3 +228,5 @@ func TestXMLNameMatchPasses(t *testing.T) {
 		t.Fatalf("xml-name failed despite matching name: %v", r.Err)
 	}
 }
+
+func init() { bannerSettle = 50 * time.Millisecond }

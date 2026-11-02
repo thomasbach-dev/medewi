@@ -88,6 +88,7 @@ type Conn struct {
 
 	dropped   atomic.Uint64
 	oversized atomic.Uint64
+	banners   atomic.Uint64
 }
 
 // Dial connects to a leva! controller's command port. The port is resolved
@@ -158,6 +159,43 @@ func (c *Conn) Dropped() uint64 { return c.dropped.Load() }
 // Oversized returns the number of lines discarded for exceeding the
 // maximum line length (1 MiB).
 func (c *Conn) Oversized() uint64 { return c.oversized.Load() }
+
+// Banners returns the number of "$id:" banner lines seen so far.
+func (c *Conn) Banners() uint64 { return c.banners.Load() }
+
+// WaitReady blocks until the machine is ready to take commands: it has sent
+// two banners, or it has sent one and settle has elapsed since WaitReady
+// first observed it. The real machine swallows commands sent shortly after
+// connect, and its idle banner heartbeat (about 1/s) makes the second banner
+// a reliable readiness signal. It returns ctx.Err() when ctx is done first,
+// or the connection error if the connection dies.
+func WaitReady(ctx context.Context, c *Conn, settle time.Duration) error {
+	tick := time.NewTicker(25 * time.Millisecond)
+	defer tick.Stop()
+	var seen time.Time
+	for {
+		n := c.Banners()
+		if n >= 2 {
+			return nil
+		}
+		if n >= 1 {
+			if seen.IsZero() {
+				seen = time.Now()
+			}
+			if time.Since(seen) >= settle {
+				return nil
+			}
+		}
+		if err := c.Err(); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tick.C:
+		}
+	}
+}
 
 // Tap registers fn to observe all raw traffic. dir is "tx" or "rx". fn is
 // called synchronously from the writing caller (tx) or the reader goroutine
@@ -447,6 +485,7 @@ func (c *Conn) dispatch(raw []byte) {
 		c.mu.Lock()
 		c.id = string(line)
 		c.mu.Unlock()
+		c.banners.Add(1)
 	default:
 		c.mu.Lock()
 		if c.collect {
