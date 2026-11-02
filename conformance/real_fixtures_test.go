@@ -29,7 +29,8 @@ func TestCommittedFixturesShape(t *testing.T) {
 		t.Log("MEDEWI_XML_PATH not set; skipping decode assertions")
 	}
 	leaks := [][]byte{[]byte("fritz.box"), []byte("rancilio"), []byte("Nextcloud"), []byte("/home/")}
-	txAllowed := map[string]bool{"MC?": true, "MCr": true, "MC ": true}
+	// The trailing space in "MC " is the real stop command (MC + space).
+	txAllowed := map[string]bool{"MC?": true, "MCr": true, "MC ": true} //nolint:gocritic // mapKey: intentional
 
 	for _, dir := range dirs {
 		if filepath.Base(dir) == "synthetic" {
@@ -40,7 +41,7 @@ func TestCommittedFixturesShape(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 			events, err := fixture.ReadLog(f)
 			if err != nil || len(events) == 0 {
 				t.Fatalf("ReadLog: %v (%d events)", err, len(events))
