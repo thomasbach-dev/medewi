@@ -1,0 +1,9 @@
+{
+  "scenario": "stream",
+  "firmware_version": "$id: leva! (3.2)",
+  "xml_name": "leva!-65FCB201",
+  "xml_sha256": "e63ed0ccef7d8a8dc77a20f3bc78c93a297387081a542ba91307b40687e95d63",
+  "machine_addr": "machine.example:23",
+  "notes": "",
+  "recorded": "2026-11-02T07:43:24.264073918+01:00"
+}
