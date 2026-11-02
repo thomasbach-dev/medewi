@@ -31,6 +31,9 @@ func startSim(t *testing.T, cfg sim.Config) *sim.Server {
 		cfg.Stream = append(cfg.Stream, fixture.Event{T: int64(i * 10), Dir: fixture.RX, Data: synthLine(temp)})
 	}
 	cfg.Banner = "$id: leva! 3.2"
+	if cfg.BannerInterval == 0 {
+		cfg.BannerInterval = 30 * time.Millisecond
+	}
 	if cfg.Responses == nil {
 		cfg.Responses = map[string][]string{
 			"MCh": {"MCh help", "MCu setup dump", "MCr reports"},
