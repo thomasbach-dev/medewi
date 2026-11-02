@@ -74,6 +74,8 @@ the firmware-flash gate. `cmd/levacap` records fixtures atomically;
 - A command sent shortly after connect is silently swallowed — even just
   after the first banner. Always go through `leva.WaitReady`.
 - A reply's first byte can take >300 ms (hence the two-phase `Command`).
-- Eco entry: setpoint drops (e.g. 91 → 79) in-band; in eco, most report
-  fields are `?`-masked.
+- Eco entry: mode field (offset 4) reads `ECO` and the setpoint drops
+  (e.g. 91 → 79), temperatures stay live. STANDBY is the deeper state:
+  nearly all report fields are `?`-masked while the stream keeps flowing.
+  Report lines can include user-defined profile/dose label strings.
 - No `~HH` checksums in the default machine config.
