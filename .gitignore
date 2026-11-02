@@ -5,3 +5,4 @@ captures/
 .claude/settings.local.json
 .envrc
 /private/
+CLAUDE.local.md
