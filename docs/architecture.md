@@ -59,16 +59,18 @@ flowchart LR
   shot into the database (the firmware itself stores no curves), executes
   recipes ("make the machine ready for coffee X / drink Y" = select
   profile, dose, setpoint), serves the HTTP API and the embedded web UI,
-  and exposes machine-health metrics for Prometheus. Runs on a home server;
-  phones are thin clients.
+  and exposes machine-health metrics for Prometheus. Runs on the
+  **brewhost**; phones are thin clients.
 - **Database** — SQLite. Shots are events with identity (timestamp, coffee,
   drink, recipe version, curves, optional verdict); recipes carry their
   edit history. Exports to LLM-friendly text.
 
 ## Deployment modes
 
-1. **Reference setup (now):** daemon on a home server next to
-   Prometheus/Grafana; all phones are browsers.
+1. **Reference setup (now):** daemon on the **brewhost** — the role name
+   for the always-on host (any home server) that runs medewid,
+   Prometheus/Grafana and the operator's backup machinery; all phones are
+   browsers.
 2. **Display phone (planned evaluation):** the daemon plus a kiosk UI on an
    always-plugged Android phone mounted at the machine — a server with a
    screen in the right place.

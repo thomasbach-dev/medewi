@@ -53,6 +53,7 @@
   - `type Event struct { Kind Kind; Temp, Setpoint float64 }`
   - `type Config struct { ReadyBand float64; ReadyCount int; SteamLow, SteamHigh float64; BrewSetpointMin float64 }` with `func DefaultConfig() Config` returning `{0.5, 10, 113, 119, 85}`.
   - `func NewDetector(cfg Config) *Detector`; `func (d *Detector) Feed(rec leva.Record) []Event` — pure state machine, no time, no I/O.
+  - `func (d *Detector) Ready() bool` — the current readiness LEVEL (true from the moment the Ready criterion holds until the episode re-arms); the phase-2 daemon consumes this for its gauge. Add a test: level goes true with the Ready event, stays true in-band, drops false when the episode re-arms.
 - Field access: `rec.Float("Temperature PID1")` and `rec.Float("Setpoint PID")`; if EITHER returns ok=false (masked `?` fields, short line), `Feed` returns nil and MUST NOT change episode state.
 - Rules (pin exactly):
   - **READY:** fires when setpoint ≥ BrewSetpointMin AND |temp−setpoint| ≤ ReadyBand for ReadyCount consecutive fed records. Fires once per episode; the episode re-arms when |temp−setpoint| > 2.0 OR setpoint < BrewSetpointMin.
