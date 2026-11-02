@@ -24,6 +24,8 @@ const (
 	// defaultReportBuf is the default capacity of the reports channel.
 	defaultReportBuf = 256
 	defaultIdleGap   = 300 * time.Millisecond
+	// defaultFirstLine is how long Command waits for the first output line.
+	defaultFirstLine = 2 * time.Second
 )
 
 // maxLine bounds a single wire line. A longer line is discarded in full (up
@@ -34,6 +36,7 @@ var maxLine = 1 << 20
 
 type config struct {
 	idleGap   time.Duration
+	firstLine time.Duration
 	reportBuf int
 }
 
@@ -43,6 +46,13 @@ type Option func(*config)
 // WithIdleGap sets how long Command waits without new output before it
 // considers the response complete (default 300 ms).
 func WithIdleGap(d time.Duration) Option { return func(c *config) { c.idleGap = d } }
+
+// WithFirstLineTimeout sets how long Command waits for the first output line
+// of a reply before giving up with an empty result (default 2 s). It should be
+// well above the idle gap, since the machine can be slow to start answering.
+func WithFirstLineTimeout(d time.Duration) Option {
+	return func(c *config) { c.firstLine = d }
+}
 
 // WithReportBuffer sets the capacity of the reports channel (default 256).
 func WithReportBuffer(n int) Option { return func(c *config) { c.reportBuf = n } }
@@ -107,7 +117,7 @@ func Dial(ctx context.Context, addr string, opts ...Option) (*Conn, error) {
 // The Conn takes ownership of nc; Close closes it. NewConn performs no port
 // check; use Dial for real machines.
 func NewConn(nc net.Conn, opts ...Option) *Conn {
-	cfg := config{idleGap: defaultIdleGap, reportBuf: defaultReportBuf}
+	cfg := config{idleGap: defaultIdleGap, firstLine: defaultFirstLine, reportBuf: defaultReportBuf}
 	for _, o := range opts {
 		o(&cfg)
 	}
@@ -236,8 +246,12 @@ func (c *Conn) send(ctx context.Context, line string) error {
 }
 
 // Command sends cmd and returns the command-output lines (CR+LF stripped;
-// no reports, no banners) received until no new line has arrived for the
-// idle gap. Reports and banners that interleave are routed to their own
+// no reports, no banners). Collection is two-phase: first Command waits up to
+// the first-line timeout (WithFirstLineTimeout, default 2 s) for the first
+// output line; once one has arrived it collects further lines until no new
+// line has arrived for the idle gap. If no line arrives within the first-line
+// timeout, Command returns an empty slice and a nil error, so a command that
+// produces no output costs the full first-line timeout. Reports and banners that interleave are routed to their own
 // consumers and do not extend the gap. Command calls are serialised. Lines
 // arriving while no Command is in flight are discarded. If the connection
 // dies mid-command, the lines collected so far are returned together with
@@ -277,12 +291,18 @@ func (c *Conn) Command(ctx context.Context, cmd string) ([]string, error) {
 	}
 
 	if c.quiet {
-		if err := c.waitIdle(ctx, notify); err != nil {
+		if err := c.waitIdle(ctx, notify, c.cfg.idleGap); err != nil {
 			return fail(err)
 		}
 		c.quiet = false
 		c.mu.Lock()
 		c.lines = nil
+		// Drop tokens for the discarded lines so phase 1 below only reacts to
+		// output of this command. Under mu, so no new token is lost.
+		select {
+		case <-notify:
+		default:
+		}
 		c.mu.Unlock()
 	}
 
@@ -291,7 +311,7 @@ func (c *Conn) Command(ctx context.Context, cmd string) ([]string, error) {
 		c.quiet = true // the write may have been partially delivered
 		return nil, err
 	}
-	if err := c.waitIdle(ctx, notify); err != nil {
+	if err := c.waitIdle(ctx, notify, c.cfg.firstLine); err != nil {
 		if err != errConnDone {
 			c.quiet = true // command sent, reply still pending
 		}
@@ -303,9 +323,10 @@ func (c *Conn) Command(ctx context.Context, cmd string) ([]string, error) {
 var errConnDone = errors.New("leva: reader finished")
 
 // waitIdle blocks until no notification arrived for one idle gap (nil), ctx
-// is done (ctx.Err()) or the reader exited (errConnDone).
-func (c *Conn) waitIdle(ctx context.Context, notify <-chan struct{}) error {
-	timer := time.NewTimer(c.cfg.idleGap)
+// is done (ctx.Err()) or the reader exited (errConnDone). The wait for the
+// first notification is bounded by first instead of the idle gap.
+func (c *Conn) waitIdle(ctx context.Context, notify <-chan struct{}, first time.Duration) error {
+	timer := time.NewTimer(first)
 	defer timer.Stop()
 	for {
 		select {

@@ -435,3 +435,54 @@ func TestCancelledCommandReplyDoesNotLeak(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+func TestCommandWaitsForSlowFirstLine(t *testing.T) {
+	c, s := newPair(t, WithFirstLineTimeout(2*time.Second))
+	go func() {
+		s.readLine(t)
+		time.Sleep(3 * testGap)
+		s.write(t, "slow\r\nsecond\r\n")
+	}()
+	got, err := c.Command(context.Background(), "MCh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"slow", "second"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestCommandNoOutputBounded(t *testing.T) {
+	const first = 100 * time.Millisecond
+	c, s := newPair(t, WithFirstLineTimeout(first))
+	go func() { s.readLine(t) }()
+	start := time.Now()
+	got, err := c.Command(context.Background(), "MC ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %q, want no lines", got)
+	}
+	if d := time.Since(start); d < first || d > 1500*time.Millisecond {
+		t.Errorf("took %v, want about %v", d, first)
+	}
+}
+
+func TestCommandFirstLineWaitHonoursContext(t *testing.T) {
+	c, s := newPair(t, WithFirstLineTimeout(time.Hour))
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		s.readLine(t)
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	start := time.Now()
+	_, err := c.Command(ctx, "MCh")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("cancel took %v", d)
+	}
+}
