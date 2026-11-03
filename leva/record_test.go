@@ -69,7 +69,7 @@ func TestDecodeBinaryBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := rec.Fields[4]
+	f := rec.Fields[5]
 	if f.Raw != "\x00\xDF" {
 		t.Errorf("Raw = %q, want NUL+0xDF", f.Raw)
 	}

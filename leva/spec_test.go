@@ -17,13 +17,14 @@ func TestParseSpecSynthetic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.Values) != 5 {
-		t.Fatalf("got %d values, want 5", len(spec.Values))
+	if len(spec.Values) != 6 {
+		t.Fatalf("got %d values, want 6", len(spec.Values))
 	}
 	want := map[int]ValueSpec{
 		0: {Index: 0, Name: "", At: 4, Len: 3, Type: String},
 		1: {Index: 1, Name: "Temperature PID1", At: 7, Len: 6, Type: Float, Unit: "°C"},
-		3: {Index: 3, Name: "Heat PID", At: 18, Len: 3, Type: Int, Unit: "%"},
+		2: {Index: 2, Name: "Setpoint PID", At: 13, Len: 5, Type: Float, Unit: "°C"},
+		4: {Index: 4, Name: "Heat PID", At: 18, Len: 3, Type: Int, Unit: "%"},
 	}
 	for i, w := range want {
 		if got := spec.Values[i]; got != w {
