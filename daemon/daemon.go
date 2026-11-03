@@ -18,6 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/thomasbach-dev/medewi/brew"
 	"github.com/thomasbach-dev/medewi/leva"
 	"github.com/thomasbach-dev/medewi/store"
@@ -73,6 +75,8 @@ type Config struct {
 	// BackoffMin and BackoffMax bound the reconnect delay, which doubles
 	// per failed attempt (defaults 1 s and 30 s).
 	BackoffMin, BackoffMax time.Duration
+	// Registry receives the Prometheus metrics; nil disables them.
+	Registry prometheus.Registerer
 }
 
 // Daemon owns the machine connection. Create it with New and start it with Run.
@@ -94,6 +98,8 @@ type Daemon struct {
 
 	hooks        sync.WaitGroup // running event hooks
 	decodeErrors atomic.Uint64  // report lines skipped (checksum or decode)
+	met          *metrics
+	connections  int // successful connections so far; Run goroutine only
 }
 
 // New returns a Daemon for cfg with defaults applied.
@@ -121,6 +127,7 @@ func New(cfg Config) *Daemon {
 		workerDone: make(chan struct{}),
 		det:        watch.NewDetector(cfg.Watch),
 		rec:        brew.NewRecorder(cfg.Brew),
+		met:        newMetrics(cfg.Registry),
 	}
 }
 
@@ -202,8 +209,12 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 		return false
 	}
 	fw := leva.FirmwareVersion(conn.ID())
+	if d.connections++; d.connections > 1 {
+		d.met.reconnects.Inc()
+	}
+	d.update(func(s *Status) { s.Connected, s.Firmware = true, fw })
 	d.mu.Lock()
-	d.st.Connected, d.st.Firmware, d.conn = true, fw, conn
+	d.conn = conn
 	d.mu.Unlock()
 	slog.Info("connected", "addr", d.cfg.Addr, "firmware", fw)
 
@@ -214,6 +225,7 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	if name != d.cfg.SpecName {
 		slog.Error("machine XML does not match the loaded spec; not starting reports",
 			"machine", name, "spec", d.cfg.SpecName)
+		d.met.specMismatch.Set(1)
 		d.holdUntilEnd(ctx, conn)
 		return false
 	}
@@ -297,6 +309,7 @@ func (d *Daemon) stopReports(ctx context.Context, conn *leva.Conn) {
 func (d *Daemon) disconnected(ctx context.Context, conn *leva.Conn) {
 	d.mu.Lock()
 	d.conn, d.st.Connected = nil, false // new requests are refused from here
+	d.met.status(d.st)
 	d.mu.Unlock()
 	_ = conn.Close() // aborts a request still running on conn
 	if sum := d.rec.Abort(); sum != nil {
@@ -308,9 +321,11 @@ func (d *Daemon) disconnected(ctx context.Context, conn *leva.Conn) {
 
 // handle processes one report line (CR+LF stripped).
 func (d *Daemon) handle(ctx context.Context, raw []byte) {
+	d.met.lines.Inc()
 	payload, err := leva.VerifyChecksum(raw)
 	if err != nil {
 		d.decodeErrors.Add(1)
+		d.met.decodeErrors.Inc()
 		slog.Debug("report line skipped", "err", err)
 		return
 	}
@@ -318,6 +333,7 @@ func (d *Daemon) handle(ctx context.Context, raw []byte) {
 	rec, err := d.cfg.Spec.Decode(payload)
 	if err != nil {
 		d.decodeErrors.Add(1)
+		d.met.decodeErrors.Inc()
 		slog.Debug("report line skipped", "err", err)
 		d.update(func(s *Status) { s.Power, s.Ready = power, d.det.Ready() && power == PowerActive })
 		return
@@ -346,6 +362,9 @@ func (d *Daemon) handle(ctx context.Context, raw []byte) {
 		d.water(*res.Water)
 	}
 
+	if smp.Heat != nil {
+		d.met.heaterPercent.Set(*smp.Heat)
+	}
 	ready, open := d.det.Ready() && power == PowerActive, d.rec.Open()
 	d.update(func(s *Status) {
 		s.Power, s.Ready, s.BrewOpen = power, ready, open
@@ -390,6 +409,7 @@ func (d *Daemon) begin(ctx context.Context, at time.Time) {
 
 // finish stores a closed brew's summary and refreshes LastBrew.
 func (d *Daemon) finish(ctx context.Context, sum brew.Summary) {
+	d.met.brewClosed(sum)
 	id := d.brewID
 	d.brewID = 0
 	if id == 0 {
@@ -408,9 +428,9 @@ func (d *Daemon) finish(ctx context.Context, sum brew.Summary) {
 	d.refreshLastBrew(ctx)
 }
 
-// water handles a finished wand draw: water that is not a brew. Metrics
-// (Task 9) hook in here.
+// water handles a finished wand draw: water that is not a brew.
 func (d *Daemon) water(w brew.WaterDraw) {
+	d.met.waterDrawn(w)
 	slog.Debug("water draw", "volume_ml", w.VolumeML, "duration", w.Duration)
 }
 

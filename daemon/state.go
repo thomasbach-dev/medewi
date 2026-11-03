@@ -67,6 +67,7 @@ func (d *Daemon) update(fn func(*Status)) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	fn(&d.st)
+	d.met.status(d.st)
 }
 
 func clonef(p *float64) *float64 {
