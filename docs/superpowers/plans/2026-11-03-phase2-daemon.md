@@ -16,9 +16,9 @@
 - The only strings medewid ever sends: `MC?`, `MCr`, `MC ` (stream/handshake), `MCu`, `MCm` (backup), `MCa`, `MCe`, `MCE` (power). Nothing else, anywhere.
 - Real vendor XML is never committed: tests needing real field offsets use `os.Getenv("MEDEWI_XML_PATH")` and `t.Skip` when unset (pattern: `conformance/real_fixtures_test.go`). CI-run tests use specs built in Go (`leva.RecordSpec{Values: …}`) with the real export names.
 - Field names used (export names from the vendor XML): `Temperature PID1`, `Setpoint PID`, `Heat PID`, `Pressure`, `Pressure SP`, `Flow rate` (index 30, int, `factor="0.0166"`, ml/s), `Volume` (int, ml). The pump marker is raw payload byte `[2]`: `*` = leva! drives the pump. Power state comes from the raw payload bytes `[4:7]` (no export name): `PID` → active, `ECO` → eco, `???` → standby, anything else → unknown.
-- Adding a Go dependency changes the flake's `vendorHash` (shared by all packages). The task that adds a dependency updates it in `flake.nix` (set it to `pkgs.lib.fakeHash`, run `nix build .#levacap`, copy the `got:` hash) and verifies `nix build .#levacap .#levasim`.
+- Adding a Go dependency changes the flake's `vendorHash` (shared by all packages). The task that adds a dependency updates it in `flake.nix` (set it to `pkgs.lib.fakeHash`, run `nix build .#levacap`, copy the `got:` hash) and verifies with the full gate.
 - Commits: `git -c commit.gpgsign=false commit`, conventional messages, trailer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
-- Full gate (CLAUDE.md): `nix develop --command bash -c 'set -o pipefail; golangci-lint run && golangci-lint fmt --diff && go vet ./... && go test -race ./... && go mod tidy -diff'`.
+- Full gate (CLAUDE.md, from branch `nix-flake-checks`, which merges first): `nix flake check -L`. It only sees git-tracked files, so `git add` new files before running it. Tests that need `MEDEWI_XML_PATH` skip in the sandbox; run those via `nix develop --command go test …` as the task says.
 - Logging: `log/slog`, text handler to stderr.
 
 ## Review Focus
@@ -136,7 +136,7 @@ Execute levawatch plan Task 2 exactly as written, including `(d *Detector) Ready
 - [ ] **Step 1: Write failing tests** (temp-dir DB): `TestRoundTrip` (Begin, AddPoints with one nil field and two points with the same `At`, Finish → Brews/Points return all points in order, nil stays nil); `TestReopenKeepsData`; `TestCloseDangling` (an unfinished brew → count 1, kind `interrupted` — Review Focus 3); `TestUnknownSchemaVersion` (set version 99 by hand → Open fails); `TestBrewsLimitNewestFirst`; `TestPointsUnknownBrew` → `ErrNotFound`.
 - [ ] **Step 2: Run** `nix develop --command go test -race ./store/ -v` — FAIL.
 - [ ] **Step 3: Implement**; `go get modernc.org/sqlite`; update the flake `vendorHash` (Global Constraints).
-- [ ] **Step 4: Run** — PASS. Then run the full gate and `nix build .#levacap .#levasim`.
+- [ ] **Step 4: Run** — PASS. Then run the full gate.
 - [ ] **Step 5: Commit** — `feat(store): SQLite brew database`.
 
 ### Task 7: daemon — connection owner and state
@@ -210,7 +210,7 @@ Execute levawatch plan Task 2 exactly as written, including `(d *Detector) Ready
 - [ ] **Step 1: Write failing tests** with `prometheus.NewRegistry()` and `testutil.GatherAndCompare` / `testutil.ToFloat64`: `TestMetricsAfterShot` (shots_total 1, pump seconds > 0, volume liters = fixture volume/1000); `TestMetricsWandDraw` (water_draws_total 1, water liters added to volume liters, shots and flushes unchanged); `TestPowerStateOneHot`; `TestNilRegistryNoPanic`.
 - [ ] **Step 2: Run** `nix develop --command go test -race ./daemon/ -run Metrics -v` — FAIL.
 - [ ] **Step 3: Implement**; `go get github.com/prometheus/client_golang`; update `vendorHash`.
-- [ ] **Step 4: Run** — PASS. Then run the full gate and `nix build .#levacap .#levasim`.
+- [ ] **Step 4: Run** — PASS. Then run the full gate.
 - [ ] **Step 5: Commit** — `feat(daemon): prometheus metrics`.
 
 ### Task 10: daemon — HTTP API and ops panel
@@ -292,11 +292,11 @@ Execute levawatch plan Task 2 exactly as written, including `(d *Detector) Ready
 - Produces:
   - `packages.x86_64-linux.medewid` and `.medewictl` (via the existing `build` helper).
   - `nixosModules.medewid` with options `services.medewid.{enable, package, environmentFile, listen, healthAddr}`. It defines a systemd service with `DynamicUser=true`, `StateDirectory=medewid`, `EnvironmentFile=` (machine address, XML path and TLS paths live there), `Restart=always`, `RestartSec=5`, `ExecStart=${package}/bin/medewid -listen … -health-addr …`.
-  - The flake's `outputs` binds `self` (`{ self, nixpkgs, ... }:`) so the module can default `package` to `self.packages.${system}.medewid`.
-  - CI builds `.#medewid .#medewictl` next to the existing packages and runs `nix flake check`.
+  - The module defaults `package` to `self.packages.${system}.medewid` (`outputs` already binds `self`).
+  - The new packages join `checks` automatically (it includes every package); CI already runs `nix flake check`.
 
 - [ ] **Step 1: Implement** the flake outputs and the module. The module must evaluate in the check: add `checks.x86_64-linux.medewid-module` = `pkgs.writeText "medewid-module-eval" (builtins.toJSON eval.config.systemd.services.medewid.serviceConfig)`, where `eval` is `nixpkgs.lib.nixosSystem { system = "x86_64-linux"; modules = [ self.nixosModules.medewid { services.medewid.enable = true; services.medewid.environmentFile = "/dev/null"; fileSystems."/" = { device = "none"; fsType = "tmpfs"; }; boot.loader.grub.enable = false; system.stateVersion = "25.11"; } ]; }`. This forces evaluation of the unit without building a system closure; it must be a derivation, not a string.
-- [ ] **Step 2: Run** `nix build .#medewid .#medewictl .#levacap .#levasim && nix flake check` — success.
+- [ ] **Step 2: Run** `nix flake check -L` — success, with `medewid`, `medewictl` and `medewid-module` among the checks.
 - [ ] **Step 3: Docs.** README gets a "Daemon" section covering the env vars, the TLS requirement, `medewictl backup -out DIR` and the file-name scheme. `docs/architecture.md` marks phase 2 as implemented and lists the new packages.
-- [ ] **Step 4: Run** the full gate.
+- [ ] **Step 4: Run** the full gate (it is Step 2 again after the docs change; the docs alone leave it cached).
 - [ ] **Step 5: Commit** — `feat(nix): medewid packages and NixOS module`.
