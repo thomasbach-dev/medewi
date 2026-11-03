@@ -109,7 +109,11 @@ func (s *Store) migrate() error {
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
 
-func ts(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
+// tsLayout is RFC 3339 with all nine fraction digits kept: fixed-width UTC
+// text sorts chronologically. time.RFC3339Nano parses it.
+const tsLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
+func ts(t time.Time) string { return t.UTC().Format(tsLayout) }
 
 // BeginBrew inserts an open brew and returns its id.
 func (s *Store) BeginBrew(ctx context.Context, startedAt time.Time) (int64, error) {
@@ -179,8 +183,7 @@ func (s *Store) CloseDangling(ctx context.Context) (int64, error) {
 	return res.RowsAffected()
 }
 
-// Brews returns up to limit brews, newest first. (Ordered by id: RFC 3339
-// with trimmed nanoseconds does not sort lexically.)
+// Brews returns up to limit brews, newest first.
 func (s *Store) Brews(ctx context.Context, limit int) ([]Brew, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, started_at, ended_at, kind,
 		duration_s, peak_bar, volume_ml, notes FROM brews ORDER BY id DESC LIMIT ?`, limit)

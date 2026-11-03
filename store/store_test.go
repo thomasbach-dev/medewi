@@ -182,3 +182,54 @@ func TestPointsUnknownBrew(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// TestTimestampsSortAsText: started_at and ended_at are fixed-width UTC
+// text, so ORDER BY on them is chronological.
+func TestTimestampsSortAsText(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+	base := time.Date(2026, 11, 3, 8, 0, 0, 0, time.UTC)
+	early, err := s.BeginBrew(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	late, err := s.BeginBrew(ctx, base.Add(500*time.Millisecond).In(time.FixedZone("CET", 3600)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, started_at FROM brews ORDER BY started_at`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	var (
+		ids  []int64
+		txts []string
+	)
+	for rows.Next() {
+		var (
+			id  int64
+			txt string
+		)
+		if err := rows.Scan(&id, &txt); err != nil {
+			t.Fatal(err)
+		}
+		ids, txts = append(ids, id), append(txts, txt)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 || ids[0] != early || ids[1] != late {
+		t.Errorf("ORDER BY started_at = %v (%q), want [%d %d]", ids, txts, early, late)
+	}
+	if len(txts) == 2 && len(txts[0]) != len(txts[1]) {
+		t.Errorf("timestamps differ in width: %q", txts)
+	}
+	got, err := s.Brews(ctx, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || !got[0].StartedAt.Equal(base.Add(500*time.Millisecond)) || !got[1].StartedAt.Equal(base) {
+		t.Errorf("round trip = %+v", got)
+	}
+}
