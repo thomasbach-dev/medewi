@@ -4,29 +4,76 @@
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   outputs =
-    { nixpkgs, ... }:
+    { self, nixpkgs, ... }:
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
+      inherit (pkgs) lib;
+
+      # Only what the build, lint and tests read: a docs-only change keeps
+      # every check cached.
+      goSrc = lib.fileset.toSource {
+        root = ./.;
+        fileset = lib.fileset.unions [
+          ./go.mod
+          ./go.sum
+          ./.golangci.yml
+          ./testdata
+          (lib.fileset.fileFilter (f: f.hasExt "go") ./.)
+        ];
+      };
+
+      build =
+        name:
+        pkgs.buildGoModule {
+          pname = name;
+          version = "0.1.0";
+          src = goSrc;
+          # proxyVendor: goModules is a module cache, so the checks can also
+          # run `go mod tidy -diff` offline against it.
+          proxyVendor = true;
+          vendorHash = "sha256-H93Cl1cOupGt5z4SesETOLum308xC0U8e8ggiOh1l6Y=";
+          subPackages = [ "cmd/${name}" ];
+          meta.mainProgram = name;
+        };
+
+      # One sandboxed derivation per gate step; it builds iff the step passes.
+      check =
+        name: script:
+        pkgs.stdenv.mkDerivation {
+          name = "medewi-${name}";
+          src = goSrc;
+          nativeBuildInputs = with pkgs; [
+            go
+            golangci-lint
+            gofumpt
+          ];
+          dontConfigure = true;
+          buildPhase = ''
+            runHook preBuild
+            export HOME=$TMPDIR GOPATH=$TMPDIR/go GOCACHE=$TMPDIR/go-cache
+            export GOLANGCI_LINT_CACHE=$TMPDIR/lint-cache
+            export GOPROXY=file://${self.packages.${system}.levacap.goModules}
+            export GOSUMDB=off GOTOOLCHAIN=local GOFLAGS=-mod=mod CGO_ENABLED=1
+            ${script}
+            runHook postBuild
+          '';
+          installPhase = "touch $out";
+        };
     in
     {
-      packages.${system} =
-        let
-          build =
-            name:
-            pkgs.buildGoModule {
-              pname = name;
-              version = "0.1.0";
-              src = ./.;
-              vendorHash = "sha256-8dBsmXBZ9rFk0XxnBO8qFMzsaGfAGpT744Mvk9tVGxA=";
-              subPackages = [ "cmd/${name}" ];
-              meta.mainProgram = name;
-            };
-        in
-        {
-          levacap = build "levacap";
-          levasim = build "levasim";
-        };
+      packages.${system} = {
+        levacap = build "levacap";
+        levasim = build "levasim";
+      };
+
+      checks.${system} = self.packages.${system} // {
+        lint = check "lint" "golangci-lint run";
+        fmt = check "fmt" "golangci-lint fmt --diff";
+        vet = check "vet" "go vet ./...";
+        test = check "test" "go test -race ./...";
+        tidy = check "tidy" "go mod tidy -diff";
+      };
 
       devShells.${system}.default = pkgs.mkShell {
         packages = with pkgs; [
