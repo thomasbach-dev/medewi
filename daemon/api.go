@@ -236,5 +236,9 @@ func (a *api) backup(w http.ResponseWriter, r *http.Request, dump func(context.C
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Medewi-Firmware", dp.Firmware)
 	w.Header().Set("X-Medewi-Lines", strconv.Itoa(len(dp.Lines)))
-	_, _ = w.Write([]byte(strings.Join(dp.Lines, "\n")))
+	body := strings.Join(dp.Lines, "\n")
+	if len(dp.Lines) > 0 {
+		body += "\n" // so dumps concatenated by medewictl keep their last line
+	}
+	_, _ = w.Write([]byte(body))
 }

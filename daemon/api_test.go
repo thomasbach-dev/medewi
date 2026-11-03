@@ -369,7 +369,8 @@ func TestAPIBackup(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("code = %d, body %s", rec.Code, rec.Body)
 	}
-	if got := rec.Body.String(); got != strings.Join(fakeMCm, "\n") {
+	// Newline-terminated, so concatenated dumps keep their last line whole.
+	if got := rec.Body.String(); got != strings.Join(fakeMCm, "\n")+"\n" {
 		t.Errorf("body = %q", got)
 	}
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
@@ -380,7 +381,8 @@ func TestAPIBackup(t *testing.T) {
 	}
 
 	rec = apiDo(t, h, "GET", "/api/backup/mcu", "")
-	if rec.Code != 200 || rec.Header().Get("X-Medewi-Lines") != "2" || !strings.HasPrefix(rec.Body.String(), "user setting 1 = 42\n") {
+	if rec.Code != 200 || rec.Header().Get("X-Medewi-Lines") != "2" || !strings.HasPrefix(rec.Body.String(), "user setting 1 = 42\n") ||
+		!strings.HasSuffix(rec.Body.String(), "\n") || strings.Count(rec.Body.String(), "\n") != 2 {
 		t.Errorf("mcu = %d %v %q", rec.Code, rec.Header(), rec.Body)
 	}
 	assertOnlyAllowed(t, s, "MCm", "MCu")
