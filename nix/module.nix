@@ -10,6 +10,12 @@ self:
 let
   cfg = config.services.medewid;
   xmlName = baseNameOf cfg.xmlFile;
+  # An absolute path string outside the store: a path literal (./medewid.key)
+  # would copy the key or the vendor XML into the world-readable store.
+  secretPath = lib.types.pathWith {
+    inStore = false;
+    absolute = true;
+  };
   # Quote one ExecStart word for systemd, keeping `%d` (the credentials
   # directory specifier) live while neutralising other specifiers.
   credArg =
@@ -41,7 +47,7 @@ in
     };
 
     xmlFile = lib.mkOption {
-      type = lib.types.path;
+      type = secretPath;
       example = "/run/secrets/leva!-65FCB201.xml";
       description = ''
         The firmware's vendor Status-Monitor XML. Delivered via systemd
@@ -53,19 +59,19 @@ in
     };
 
     tlsCert = lib.mkOption {
-      type = lib.types.path;
+      type = secretPath;
       example = "/run/secrets/medewid.crt";
       description = "Server certificate PEM, delivered via systemd credentials.";
     };
 
     tlsKey = lib.mkOption {
-      type = lib.types.path;
+      type = secretPath;
       example = "/run/secrets/medewid.key";
       description = "Server key PEM, delivered via systemd credentials (may be root-owned 0600).";
     };
 
     tlsClientCA = lib.mkOption {
-      type = lib.types.path;
+      type = secretPath;
       example = "/run/secrets/clients-ca.crt";
       description = "CA PEM that client certificates must chain to, delivered via systemd credentials.";
     };
