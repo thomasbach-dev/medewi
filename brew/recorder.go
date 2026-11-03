@@ -148,6 +148,10 @@ func (r *Recorder) feedPumping(s Sample, res *Result) {
 func (r *Recorder) feedIdle(s Sample, res *Result) {
 	b := &r.brew
 	if b.open {
+		// ASSUMPTION: a wand draw started within the coast (e.g. hot water for
+		// an Americano right after a shot) adds what it draws until CoastMax to
+		// the brew's volume: growth keeps the coast open, so up to 3 s, about
+		// 24 ml at about 8 ml/s. Accepted.
 		b.coasting = true
 		r.trackVolume(s)
 		if s.At.Sub(b.lastGrowth) >= r.cfg.CoastQuiet || s.At.Sub(b.lastPmp) >= r.cfg.CoastMax {
