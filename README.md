@@ -90,6 +90,49 @@ medewictl -insecure -url http://127.0.0.1:8080 status
 the license key: they are written `0600` and must never be committed. If the
 `mcm` dump fails, the `mcu` file already written stays in `DIR`.
 
+### Local trial run without TLS
+
+To try the daemon from a checkout against the real machine, without NixOS
+or certificates. Stop every other client first (`levawatch`, `levacap`, the
+vendor Status-Monitor app): only one client may talk to the machine, and
+starting or stopping the report stream affects every client.
+
+Terminal 1, the daemon (the `.envrc` above provides `MEDEWI_MACHINE_ADDR` and
+`MEDEWI_XML_PATH`):
+
+```sh
+BIN=$HOME/tmp/medewi-bin
+DATA=$HOME/tmp/medewi-data
+nix develop --command go build -o "$BIN/" ./cmd/medewid ./cmd/medewictl
+mkdir -p "$DATA"
+"$BIN/medewid" -insecure-http -listen 127.0.0.1:8080 -db "$DATA/medewi.db"
+```
+
+Expect `medewid serving … tls=false`, then `connected … firmware=…` and
+`reports started`. If `spec_ok` stays false, the XML name does not match
+the machine's `XML=` reply (logged as an error). Ctrl-C stops the reports
+(`MC `) and exits.
+
+The ops panel is at <http://127.0.0.1:8080/>. Its buttons send real power
+commands (`MCa`, `MCe`, `MCE`), verified against the report stream for up
+to 10 s. They are refused while a brew is open (including the few seconds
+after the pump stops), before the first report arrives, and when the
+machine is already in that state.
+
+Terminal 2, the client:
+
+```sh
+BIN=$HOME/tmp/medewi-bin
+export MEDEWID_URL=http://127.0.0.1:8080
+"$BIN/medewictl" -insecure status
+"$BIN/medewictl" -insecure power eco        # active | eco | standby
+mkdir -p private/backups
+"$BIN/medewictl" -insecure backup -out private/backups
+```
+
+Pull a flush and a shot: they appear in `medewictl status` (`last_brew`)
+and under `$MEDEWID_URL/api/brews`; counters are at `$MEDEWID_URL/metrics`.
+
 ## Build and test
 
 ```sh
