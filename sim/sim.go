@@ -62,6 +62,15 @@ type Config struct {
 	// heartbeat. It pauses while MCr reporting is active and resumes after
 	// MC<space>. Zero (default): the banner is sent once, on connect.
 	BannerInterval time.Duration
+	// Switch maps a received command line to a replacement for Stream, so
+	// tests can model commands that change what the machine reports (eco,
+	// wake). If reporting is on, the current replay stops and the new stream
+	// starts from its beginning; otherwise it is used at the next MCr. A key
+	// that is also in Responses gets both. Must not be mutated after New.
+	Switch map[string][]fixture.Event
+	// Once replays the stream a single time instead of looping. After the
+	// last event the replayer exits; reporting stays on (MCR still resends).
+	Once bool
 }
 
 // Server is a fake leva! controller.
@@ -80,6 +89,9 @@ type Server struct {
 	reporting  bool
 	stopReplay chan struct{}
 	lastItem   []byte
+	stream     []fixture.Event // current replay source; Switch replaces it
+
+	received []string // every command line from any client, in order
 
 	quit chan struct{} // closed by Stop; ends the heartbeat goroutine
 
@@ -104,7 +116,15 @@ func New(cfg Config) *Server {
 	if cfg.Banner == "" {
 		cfg.Banner = defaultBanner
 	}
-	return &Server{cfg: cfg, clients: make(map[*client]struct{}), quit: make(chan struct{})}
+	return &Server{cfg: cfg, clients: make(map[*client]struct{}), quit: make(chan struct{}), stream: cfg.Stream}
+}
+
+// Received returns a copy of every command line received from any client so
+// far, CR+LF stripped, in arrival order.
+func (s *Server) Received() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.received...)
 }
 
 // Start opens the listeners and begins serving. It may be called once.
@@ -259,6 +279,12 @@ func (s *Server) readLoop(c *client) {
 			return // EOF, idle timeout, closed, or over-long line
 		}
 		cmd := strings.TrimRight(string(line), "\r\n")
+		s.mu.Lock()
+		s.received = append(s.received, cmd)
+		s.mu.Unlock()
+		if events, ok := s.cfg.Switch[cmd]; ok {
+			s.switchStream(events)
+		}
 		switch cmd {
 		case "MCr":
 			s.startReplay()
@@ -360,8 +386,14 @@ func (s *Server) startReplay() {
 	if s.stopReplay != nil {
 		return
 	}
+	s.startReplayerLocked()
+}
+
+// startReplayerLocked starts a replayer on the current stream if it has RX
+// events. s.mu held; no replayer may be running.
+func (s *Server) startReplayerLocked() {
 	var events []fixture.Event
-	for _, ev := range s.cfg.Stream {
+	for _, ev := range s.stream {
 		if ev.Dir == fixture.RX {
 			events = append(events, ev)
 		}
@@ -373,6 +405,19 @@ func (s *Server) startReplay() {
 	s.stopReplay = stop
 	s.wg.Add(1)
 	go s.replay(events, stop)
+}
+
+// switchStream handles a Switch command: replace the stream and, while
+// reporting, restart replay on it.
+func (s *Server) switchStream(events []fixture.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stream = events
+	if !s.reporting || s.stopped {
+		return
+	}
+	s.stopReplayLocked()
+	s.startReplayerLocked()
 }
 
 // stopReporting handles MC<space>: clear the flag and stop the replayer, for
@@ -414,7 +459,7 @@ func (s *Server) emit(data []byte, stop chan struct{}) bool {
 }
 
 // replay emits events verbatim, paced by their T deltas / Speed, looping until
-// stop is closed.
+// stop is closed (or, with Once, until the last event).
 func (s *Server) replay(events []fixture.Event, stop chan struct{}) {
 	defer s.wg.Done()
 	timer := time.NewTimer(0)
@@ -431,10 +476,24 @@ func (s *Server) replay(events []fixture.Event, stop chan struct{}) {
 				return
 			}
 		}
+		if s.cfg.Once {
+			s.finishReplay(stop)
+			return
+		}
 		if !s.sleep(timer, minLoopPause, stop) {
 			return
 		}
 		prev = events[0].T
+	}
+}
+
+// finishReplay releases the stream after a Once replay so a later MCr or
+// Switch can start a new replayer. Reporting stays on.
+func (s *Server) finishReplay(stop chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopReplay == stop {
+		s.stopReplay = nil
 	}
 }
 

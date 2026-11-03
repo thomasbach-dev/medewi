@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/thomasbach-dev/medewi/fixture"
 )
 
 func start(t *testing.T, cfg Config) *Server {
@@ -202,5 +204,85 @@ func TestSlowClientDroppedHealthyClientGetsEverything(t *testing.T) {
 			}
 			break
 		}
+	}
+}
+
+func TestSwitchReplacesStream(t *testing.T) {
+	cfg := Config{
+		Speed:       10000,
+		IdleTimeout: time10s,
+		Stream:      []fixture.Event{rx(0, "a\r\n"), rx(10, "a\r\n")},
+		Switch:      map[string][]fixture.Event{"GO": {rx(0, "b\r\n"), rx(10, "b\r\n")}},
+	}
+	t.Run("while reporting", func(t *testing.T) {
+		s := start(t, cfg)
+		c, r := dial(t, s)
+		readLine(t, r, c)
+		send(t, c, "MCr\r\n")
+		expect(t, r, c, "a\r\n")
+		send(t, c, "GO\r\n")
+		// Items queued before the switch may still arrive; after the first
+		// "b" the old stream must be gone.
+		line := readLine(t, r, c)
+		for line == "a\r\n" {
+			line = readLine(t, r, c)
+		}
+		if line != "b\r\n" {
+			t.Fatalf("got %q, want b", line)
+		}
+		for range 20 {
+			expect(t, r, c, "b\r\n")
+		}
+	})
+	t.Run("idle switch applies at next MCr", func(t *testing.T) {
+		s := start(t, cfg)
+		c, r := dial(t, s)
+		readLine(t, r, c)
+		send(t, c, "GO\r\n")
+		_ = c.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+		if line, err := r.ReadString('\n'); err == nil {
+			t.Fatalf("switch while idle emitted %q", line)
+		}
+		send(t, c, "MCr\r\n")
+		expect(t, r, c, "b\r\n")
+	})
+}
+
+func TestOnceDoesNotLoop(t *testing.T) {
+	cfg := replayCfg()
+	cfg.Once = true
+	cfg.IdleTimeout = time10s
+	s := start(t, cfg)
+	c, r := dial(t, s)
+	readLine(t, r, c)
+	send(t, c, "MCr\r\n")
+	expect(t, r, c, "a1\r\n")
+	expect(t, r, c, "a2\r\n")
+	_ = c.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	if line, err := r.ReadString('\n'); err == nil {
+		t.Fatalf("replay looped: %q", line)
+	}
+	// Reporting stays on: MCR still resends the last item.
+	send(t, c, "MCR\r\n")
+	expect(t, r, c, "a2\r\n")
+}
+
+func TestReceivedLogsCommands(t *testing.T) {
+	s := start(t, Config{Responses: map[string][]string{"MCh": {"x"}}})
+	c, r := dial(t, s)
+	readLine(t, r, c)
+	send(t, c, "MCh\r\nMCr\nMC \r\n")
+	want := []string{"MCh", "MCr", "MC "}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(s.Received()) < len(want) && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	got := s.Received()
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("Received = %q, want %q", got, want)
+	}
+	got[0] = "mutated"
+	if s.Received()[0] != "MCh" {
+		t.Fatal("Received must return a copy")
 	}
 }
