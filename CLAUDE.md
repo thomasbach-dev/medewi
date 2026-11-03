@@ -53,6 +53,9 @@ local, gitignored `.envrc` — see the README's Configuration section.
   `MCr`/`MC ` stream control. Anything that writes (setpoints, `MCc`
   functions, `MCa`, PID constants) only lands via an explicitly planned
   write feature with a setpoint clamp, watchdog and verify-after-write.
+  For the pure power toggles `MCa`/`MCe`/`MCE` (phase-2 daemon design) the
+  clamp is vacuous and the watchdog is the firmware's own eco/standby
+  timers; verify-after-write is still mandatory.
 - **Never commit:** vendor-authored content (the Status-Monitor XML, help
   text), real `MCu`/`MCm` dumps (license key inside), private hostnames or
   paths. `private/` and `captures/` are gitignored;
