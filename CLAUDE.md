@@ -31,7 +31,8 @@ nix build .#checks.x86_64-linux.test -L   # one check
 
 The flake only sees files git tracks: `git add` new files first, or the
 check runs without them. The checks' source is only Go files, `go.mod`,
-`go.sum`, `.golangci.yml` and `testdata/`, so docs-only commits hit the
+`go.sum`, `.golangci.yml`, `testdata/` and embedded assets
+(`daemon/panel.html`), so docs-only commits hit the
 cache. Tests needing `MEDEWI_XML_PATH` skip inside the sandbox; run them
 with `nix develop --command go test …` when you touch them. After
 `go.mod`/`go.sum` changes, update `vendorHash` in `flake.nix` (the build

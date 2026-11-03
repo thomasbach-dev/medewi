@@ -72,7 +72,10 @@
         levacap = build "levacap";
         levasim = build "levasim";
         medewid = build "medewid";
+        medewictl = build "medewictl";
       };
+
+      nixosModules.medewid = import ./nix/module.nix self;
 
       checks.${system} = self.packages.${system} // {
         lint = check "lint" "golangci-lint run";
@@ -80,6 +83,30 @@
         vet = check "vet" "go vet ./...";
         test = check "test" "go test -race ./...";
         tidy = check "tidy" "go mod tidy -diff";
+
+        # Forces evaluation of the unit without building a system closure.
+        medewid-module =
+          let
+            eval = nixpkgs.lib.nixosSystem {
+              inherit system;
+              modules = [
+                self.nixosModules.medewid
+                {
+                  services.medewid.enable = true;
+                  services.medewid.environmentFile = "/dev/null";
+                  fileSystems."/" = {
+                    device = "none";
+                    fsType = "tmpfs";
+                  };
+                  boot.loader.grub.enable = false;
+                  system.stateVersion = "25.11";
+                }
+              ];
+            };
+          in
+          pkgs.writeText "medewid-module-eval" (
+            builtins.toJSON eval.config.systemd.services.medewid.serviceConfig
+          );
       };
 
       devShells.${system}.default = pkgs.mkShell {

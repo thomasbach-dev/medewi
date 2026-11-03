@@ -79,11 +79,23 @@ flowchart LR
    only happens while the app is open. The pure-Go/no-cgo policy exists to
    keep this path (gomobile) open.
 
+## Phase 2 packages (implemented)
+
+- `watch/` — brew detector over the decoded report stream.
+- `brew/` — brew recorder (episodes, classification, curves).
+- `store/` — SQLite persistence of brews and settings backups.
+- `daemon/` — connection supervision, HTTP API, metrics, ops panel
+  (`panel.html`, embedded) and power control.
+- `cmd/medewid` — the daemon binary (mTLS API, plaintext health listener).
+- `cmd/medewictl` — client for status, power and backups.
+- `nix/module.nix` — the `nixosModules.medewid` service.
+
 ## Build order
 
 1. Capture session against the real machine → protocol fixtures.
 2. Simulator + protocol library (developed against the fixtures).
-3. Daemon: exporter, shot capture → DB, recipe execution, HTTP API.
+3. Daemon: exporter, shot capture → DB, HTTP API — **implemented** (phase 2);
+   recipe execution is still to come.
 4. Web UI: guided mode and barista mode.
 5. Extensions: hot-water dosing, steam guidance, settings push via the
    firmware's Virtual-LCD protocol, V60 program, optional
