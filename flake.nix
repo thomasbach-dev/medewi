@@ -38,7 +38,7 @@
           overrideModAttrs = _: {
             postBuild = "go mod tidy";
           };
-          vendorHash = "sha256-D/HFg3JpIgnnBCahXdsKGv7Ub5c+/41YjeuNeCd9Zc4=";
+          vendorHash = "sha256-xknT6gbXSfSD2C9CsukoUqLC7G58abfYayGDROMvYeg=";
           subPackages = [ "cmd/${name}" ];
           meta.mainProgram = name;
         };
@@ -71,6 +71,7 @@
       packages.${system} = {
         levacap = build "levacap";
         levasim = build "levasim";
+        medewid = build "medewid";
       };
 
       checks.${system} = self.packages.${system} // {
