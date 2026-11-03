@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -32,6 +34,9 @@ type ValueSpec struct {
 	Len   int
 	Type  ValueType
 	Unit  string
+	// Factor scales the raw value to Unit (the XML factor attribute). Zero
+	// means 1, so specs built in Go need not set it.
+	Factor float64
 }
 
 // RecordSpec describes a whole telemetry record.
@@ -45,6 +50,7 @@ type xmlValue struct {
 	Export string `xml:"export,attr"`
 	Type   string `xml:"type,attr"`
 	Unit   string `xml:"unit,attr"`
+	Factor string `xml:"factor,attr"`
 }
 
 type xmlCfg struct {
@@ -93,8 +99,15 @@ func ParseSpec(r io.Reader) (*RecordSpec, error) {
 		if v.Len == nil || *v.Len <= 0 {
 			return nil, fmt.Errorf("value %d: missing or non-positive len", i)
 		}
+		factor := 1.0
+		if v.Factor != "" {
+			factor, err = strconv.ParseFloat(v.Factor, 64)
+			if err != nil || !(factor > 0) || math.IsInf(factor, 0) {
+				return nil, fmt.Errorf("value %d: invalid factor %q", i, v.Factor)
+			}
+		}
 		spec.Values = append(spec.Values, ValueSpec{
-			Index: i, Name: v.Export, At: *v.At, Len: *v.Len, Type: t, Unit: v.Unit,
+			Index: i, Name: v.Export, At: *v.At, Len: *v.Len, Type: t, Unit: v.Unit, Factor: factor,
 		})
 	}
 	return spec, nil
