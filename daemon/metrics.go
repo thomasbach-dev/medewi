@@ -47,7 +47,7 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 		waterL:       c("medewi_water_liters_total", "Liters drawn at the wand."),
 		lines:        c("medewi_report_lines_total", "Report lines received."),
 		decodeErrors: c("medewi_decode_errors_total", "Report lines skipped (checksum or decode error)."),
-		reconnects:   c("medewi_reconnects_total", "Connections made after the first."),
+		reconnects:   c("medewi_reconnects_total", "Connection attempts after the first, failed ones included."),
 	}
 	for _, s := range powerStates {
 		m.power.WithLabelValues(string(s)).Set(0)

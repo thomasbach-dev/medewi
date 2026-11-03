@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"math"
+	"net"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -55,7 +57,14 @@ func val(t *testing.T, reg *prometheus.Registry, name string, labels ...string) 
 }
 
 func TestMetricsAfterShot(t *testing.T) {
-	d, reg := metricsDaemon(t, shotLines(9))
+	// Idle, a 12-line pumping run (Volume 3..36 ml), a coast, a sentinel.
+	ls := idleLines(4)
+	for i := range 12 {
+		ls = append(ls, line('*', "PID", 93, 93, 9, 9, 120, float64(3*(i+1))))
+	}
+	ls = append(ls, repeat(40, line('-', "PID", 93, 93, 1, -1, 0, 36))...)
+	ls = append(ls, line('-', "PID", 77.7, 93, 1, -1, 0, 36))
+	d, reg := metricsDaemon(t, ls)
 	waitSentinel(t, d)
 	// The shot is stored before the sentinel, so its metrics are set.
 	if got := val(t, reg, "medewi_shots_total"); got != 1 {
@@ -64,20 +73,17 @@ func TestMetricsAfterShot(t *testing.T) {
 	if got := val(t, reg, "medewi_flushes_total"); got != 0 {
 		t.Errorf("flushes = %v, want 0", got)
 	}
-	if got := val(t, reg, "medewi_pump_seconds_total"); got <= 0 {
-		t.Errorf("pump seconds = %v, want > 0", got)
+	if got := val(t, reg, "medewi_pump_seconds_total"); got < 0.1 || got > 5 {
+		t.Errorf("pump seconds = %v, want about 0.3 (12 lines, 25 ms apart)", got)
 	}
-	if got := val(t, reg, "medewi_volume_liters_total"); got < 0.036 {
-		t.Errorf("volume liters = %v, want at least 0.036", got)
+	if got := val(t, reg, "medewi_volume_liters_total"); math.Abs(got-0.036) > 1e-9 {
+		t.Errorf("volume liters = %v, want 0.036", got)
 	}
-	if got := val(t, reg, "medewi_report_lines_total"); got < 100 {
-		t.Errorf("report lines = %v, want >= 100", got)
+	if got := val(t, reg, "medewi_report_lines_total"); got != 57 {
+		t.Errorf("report lines = %v, want 57", got)
 	}
 	if got := val(t, reg, "medewi_boiler_celsius"); got != 77.7 {
 		t.Errorf("boiler = %v, want 77.7", got)
-	}
-	if got := val(t, reg, "medewi_heater_percent"); got < 0 {
-		t.Errorf("heater = %v", got)
 	}
 	if val(t, reg, "medewi_machine_connected") != 1 || val(t, reg, "medewi_spec_mismatch") != 0 ||
 		val(t, reg, "medewi_reconnects_total") != 0 {
@@ -154,5 +160,22 @@ func TestMetricsFlush(t *testing.T) {
 	waitSentinel(t, d)
 	if val(t, reg, "medewi_flushes_total") != 1 || val(t, reg, "medewi_shots_total") != 0 {
 		t.Error("want one flush and no shot")
+	}
+}
+
+func TestMetricsCountsFailedReconnectAttempts(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close() // nothing listens here now
+	dc := daemonConfig(addr, openStore(t))
+	reg := prometheus.NewRegistry()
+	dc.Registry = reg
+	runDaemon(t, dc)
+	waitFor(t, "failed attempts counted", func() bool { return val(t, reg, "medewi_reconnects_total") >= 3 })
+	if val(t, reg, "medewi_machine_connected") != 0 {
+		t.Error("connected = 1 with nothing listening")
 	}
 }

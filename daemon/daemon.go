@@ -99,7 +99,7 @@ type Daemon struct {
 	hooks        sync.WaitGroup // running event hooks
 	decodeErrors atomic.Uint64  // report lines skipped (checksum or decode)
 	met          *metrics
-	connections  int // successful connections so far; Run goroutine only
+	attempts     int // Dial calls so far; Run goroutine only
 }
 
 // New returns a Daemon for cfg with defaults applied.
@@ -183,6 +183,9 @@ func (d *Daemon) checkFields() {
 // session runs one connection from Dial to its end. It reports whether
 // StartReports succeeded, which resets the reconnect backoff.
 func (d *Daemon) session(ctx context.Context) (started bool) {
+	if d.attempts++; d.attempts > 1 {
+		d.met.reconnects.Inc()
+	}
 	conn, err := leva.Dial(ctx, d.cfg.Addr)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -209,9 +212,6 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 		return false
 	}
 	fw := leva.FirmwareVersion(conn.ID())
-	if d.connections++; d.connections > 1 {
-		d.met.reconnects.Inc()
-	}
 	d.update(func(s *Status) { s.Connected, s.Firmware = true, fw })
 	d.mu.Lock()
 	d.conn = conn
