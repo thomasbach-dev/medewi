@@ -23,7 +23,7 @@ func masked() leva.Record {
 	}}
 }
 
-// feedAll feeds each (temp, setpoint) pair and counts events by kind.
+// feedAll feeds each record and counts events by kind.
 func feedAll(d *Detector, recs ...leva.Record) map[Kind]int {
 	got := map[Kind]int{}
 	for _, r := range recs {
@@ -133,7 +133,7 @@ func TestSteamWindowOnRisingEdgeOnly(t *testing.T) {
 	if got := feedAll(d, ramp(116, 119)...); got[SteamWindow] != 0 {
 		t.Fatalf("SteamWindow events on continued climb = %d, want 0", got[SteamWindow])
 	}
-	// Falling above SteamLow must not fire either.
+	// Falling to the re-arm point.
 	if got := feedAll(d, ramp(118, 100)...); got[SteamWindow] != 0 {
 		t.Fatalf("SteamWindow events on fall = %d, want 0", got[SteamWindow])
 	}
@@ -200,5 +200,18 @@ func TestMaskedLinesIgnored(t *testing.T) {
 	// A masked line must not count as a setpoint drop either.
 	if got := feedAll(d, masked(), rec(91, 91)); got[Eco] != 0 {
 		t.Fatalf("Eco events around masked line = %d, want 0", got[Eco])
+	}
+}
+
+func TestSteamNeedsRisingTemperature(t *testing.T) {
+	d := NewDetector(DefaultConfig())
+	// Armed, above SteamLow and setpoint+5, but never rising: the first record
+	// has no predecessor, then a plateau and a falling step.
+	plateau := []leva.Record{rec(118, 91), rec(118, 91), rec(117, 91), rec(117, 91)}
+	if got := feedAll(d, plateau...); got[SteamWindow] != 0 {
+		t.Fatalf("SteamWindow events without a rising temperature = %d, want 0", got[SteamWindow])
+	}
+	if got := feedAll(d, rec(118, 91)); got[SteamWindow] != 1 {
+		t.Fatalf("SteamWindow events on first rising record = %d, want 1", got[SteamWindow])
 	}
 }
