@@ -227,6 +227,47 @@ func TestStatusOutput(t *testing.T) {
 	}
 }
 
+func TestInsecurePlainHTTP(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"connected":true,"spec_ok":true,"ready":true,"brew_open":false,` +
+			`"power":"active","firmware":"3.2","temp":91,"setpoint":91,"last_brew":null}`))
+	}))
+	defer srv.Close()
+	t.Setenv("MEDEWID_CTL_CERT", "")
+	t.Setenv("MEDEWID_CTL_KEY", "")
+	t.Setenv("MEDEWID_CTL_CA", "")
+	for _, args := range [][]string{
+		{"-insecure", "-url", srv.URL, "status"},
+		{"status", "-insecure", "-url", srv.URL},
+	} {
+		var out, errb bytes.Buffer
+		if code := run(args, &out, &errb); code != 0 || !strings.Contains(out.String(), "power: active\n") {
+			t.Errorf("%v: exit %d out %q err %q", args, code, out.String(), errb.String())
+		}
+	}
+}
+
+func TestInsecureNeedsHTTPURL(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	// -insecure never means "skip certificate checks over https".
+	var out, errb bytes.Buffer
+	if code := run([]string{"-insecure", "-url", srv.URL, "status"}, &out, &errb); code != 2 {
+		t.Fatalf("-insecure with https: exit %d, want 2", code)
+	}
+	// An http:// URL without -insecure must not silently send plaintext.
+	plain := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("plaintext request reached the server")
+	}))
+	defer plain.Close()
+	args := append(tlsArgs(t, srv), "-url", plain.URL, "status")
+	if code := run(args, &out, &errb); code != 2 {
+		t.Fatalf("http URL without -insecure: exit %d, want 2", code)
+	}
+}
+
 func TestEnvAndMissingConfig(t *testing.T) {
 	t.Setenv("MEDEWID_URL", "")
 	t.Setenv("MEDEWID_CTL_CERT", "")

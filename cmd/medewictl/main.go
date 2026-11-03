@@ -24,24 +24,30 @@ func main() {
 }
 
 // config holds the connection settings; flags override the environment.
-type config struct{ url, cert, key, ca string }
+type config struct {
+	url, cert, key, ca string
+	insecure           bool
+}
 
 func (c *config) register(fs *flag.FlagSet) {
 	fs.StringVar(&c.url, "url", c.url, "medewid base URL (env MEDEWID_URL)")
 	fs.StringVar(&c.cert, "cert", c.cert, "client certificate (env MEDEWID_CTL_CERT)")
 	fs.StringVar(&c.key, "key", c.key, "client key (env MEDEWID_CTL_KEY)")
 	fs.StringVar(&c.ca, "ca", c.ca, "CA file trusted for the server (env MEDEWID_CTL_CA)")
+	fs.BoolVar(&c.insecure, "insecure", c.insecure, "plain HTTP without certificates, for a medewid run with -insecure-http (needs an http:// URL)")
 }
 
 func usage(w io.Writer) {
-	_, _ = fmt.Fprintln(w, `usage: medewictl [-url U] [-cert F] [-key F] [-ca F] <subcommand>
+	_, _ = fmt.Fprintln(w, `usage: medewictl [-url U] [-cert F] [-key F] [-ca F] [-insecure] <subcommand>
 
   status
   power active|eco|standby
   backup -out DIR|-
 
 Defaults come from $MEDEWID_URL (e.g. https://brewhost:8443),
-$MEDEWID_CTL_CERT, $MEDEWID_CTL_KEY and $MEDEWID_CTL_CA.`)
+$MEDEWID_CTL_CERT, $MEDEWID_CTL_KEY and $MEDEWID_CTL_CA.
+-insecure talks plain HTTP to a medewid started with -insecure-http
+(e.g. -url http://127.0.0.1:8080); it never skips certificate checks.`)
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -124,6 +130,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func (c *config) client() (*http.Client, error) {
+	plain := strings.HasPrefix(c.url, "http://")
+	switch {
+	case c.insecure && !plain:
+		return nil, errors.New("-insecure needs an http:// URL")
+	case c.insecure:
+		return &http.Client{Timeout: requestTimeout}, nil
+	case plain:
+		return nil, errors.New("an http:// URL needs -insecure (medewid serves mTLS unless run with -insecure-http)")
+	}
 	if c.url == "" || c.cert == "" || c.key == "" || c.ca == "" {
 		return nil, errors.New("url, cert, key and ca are required (flags or MEDEWID_URL, MEDEWID_CTL_CERT, MEDEWID_CTL_KEY, MEDEWID_CTL_CA)")
 	}

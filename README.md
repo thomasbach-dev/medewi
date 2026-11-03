@@ -73,12 +73,15 @@ optionally `MEDEWID_EVENT_EXEC`); a `MEDEWID_DB` override must stay under
 
 `medewictl` is the client: `MEDEWID_URL` plus `MEDEWID_CTL_CERT`,
 `MEDEWID_CTL_KEY` and `MEDEWID_CTL_CA` for the client certificate and the
-server CA.
+server CA. Against a local `medewid -insecure-http`, pass `-insecure` with an
+`http://` URL instead; `-insecure` never skips certificate checks over
+`https://`, and an `http://` URL without it is refused.
 
 ```sh
 medewictl status
 medewictl power eco            # active | eco | standby
 medewictl backup -out DIR
+medewictl -insecure -url http://127.0.0.1:8080 status
 ```
 
 `backup` reads the controller settings and writes two files into `DIR`:
