@@ -22,12 +22,20 @@ nix develop --command go test -race ./leva/ -run TestName -v   # one test
 go run ./cmd/levasim -fixtures testdata/fixtures/shot-genlever # replay a real shot
 ```
 
-The full gate — run it before EVERY commit, and never pipe it through
-anything that eats the exit code (use `set -o pipefail` if you must pipe):
+The full gate — run it before EVERY commit (CI runs the same):
 
 ```sh
-nix develop --command bash -c 'set -o pipefail; golangci-lint run && golangci-lint fmt --diff && go vet ./... && go test -race ./... && go mod tidy -diff'
+nix flake check -L     # builds + lint, fmt, vet, test -race, tidy; each a cached check
+nix build .#checks.x86_64-linux.test -L   # one check
 ```
+
+The flake only sees files git tracks: `git add` new files first, or the
+check runs without them. The checks' source is only Go files, `go.mod`,
+`go.sum`, `.golangci.yml` and `testdata/`, so docs-only commits hit the
+cache. Tests needing `MEDEWI_XML_PATH` skip inside the sandbox; run them
+with `nix develop --command go test …` when you touch them. After
+`go.mod`/`go.sum` changes, update `vendorHash` in `flake.nix` (the build
+error prints the new one).
 
 Config comes from env vars (`MEDEWI_MACHINE_ADDR`, `MEDEWI_XML_PATH`) via a
 local, gitignored `.envrc` — see the README's Configuration section.

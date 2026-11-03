@@ -13,8 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4 # bump to current majors when touched
       - uses: DeterminateSystems/nix-installer-action@v16 # bump to current majors when touched
-      - run: nix build .#levacap .#levasim
-      - run: nix develop --command bash -c 'golangci-lint run && golangci-lint fmt --diff && go vet ./... && go test -race ./... && go mod tidy -diff'
+      - run: nix flake check -L
   vulncheck:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
