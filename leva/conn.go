@@ -302,6 +302,14 @@ func (c *Conn) send(ctx context.Context, line string) error {
 // idle gap can still leak into a later Command's result; that is inherent
 // to idle-gap collection.
 func (c *Conn) Command(ctx context.Context, cmd string) ([]string, error) {
+	return c.CommandOpts(ctx, cmd, c.cfg.firstLine, c.cfg.idleGap)
+}
+
+// CommandOpts is Command with per-call timings: firstLine bounds the wait for
+// the first output line and idleGap ends collection after that. Use it for
+// replies that pause mid-stream (long settings dumps). The quiet-drain before
+// sending still uses the configured idle gap.
+func (c *Conn) CommandOpts(ctx context.Context, cmd string, firstLine, idleGap time.Duration) ([]string, error) {
 	c.cmdMu.Lock()
 	defer c.cmdMu.Unlock()
 
@@ -329,7 +337,7 @@ func (c *Conn) Command(ctx context.Context, cmd string) ([]string, error) {
 	}
 
 	if c.quiet {
-		if err := c.waitIdle(ctx, notify, c.cfg.idleGap); err != nil {
+		if err := c.waitIdle(ctx, notify, c.cfg.idleGap, c.cfg.idleGap); err != nil {
 			return fail(err)
 		}
 		c.quiet = false
@@ -349,7 +357,7 @@ func (c *Conn) Command(ctx context.Context, cmd string) ([]string, error) {
 		c.quiet = true // the write may have been partially delivered
 		return nil, err
 	}
-	if err := c.waitIdle(ctx, notify, c.cfg.firstLine); err != nil {
+	if err := c.waitIdle(ctx, notify, firstLine, idleGap); err != nil {
 		if err != errConnDone {
 			c.quiet = true // command sent, reply still pending
 		}
@@ -362,14 +370,14 @@ var errConnDone = errors.New("leva: reader finished")
 
 // waitIdle blocks until no notification arrived for one idle gap (nil), ctx
 // is done (ctx.Err()) or the reader exited (errConnDone). The wait for the
-// first notification is bounded by first instead of the idle gap.
-func (c *Conn) waitIdle(ctx context.Context, notify <-chan struct{}, first time.Duration) error {
+// first notification is bounded by first instead of gap.
+func (c *Conn) waitIdle(ctx context.Context, notify <-chan struct{}, first, gap time.Duration) error {
 	timer := time.NewTimer(first)
 	defer timer.Stop()
 	for {
 		select {
 		case <-notify:
-			timer.Reset(c.cfg.idleGap)
+			timer.Reset(gap)
 		case <-timer.C:
 			return nil
 		case <-ctx.Done():

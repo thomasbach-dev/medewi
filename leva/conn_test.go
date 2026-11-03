@@ -532,3 +532,37 @@ func TestWaitReadyNoBannerDeadline(t *testing.T) {
 		t.Fatalf("err=%v, want deadline exceeded", err)
 	}
 }
+
+func TestCommandOptsLongGap(t *testing.T) {
+	reply := func(s *fakeServer) {
+		s.readLine(t)
+		s.write(t, "a\r\n")
+		time.Sleep(3 * testGap)
+		// In the Command case nobody may be reading any more; a failed late
+		// write must not fail the (finished) test.
+		_ = s.nc.SetWriteDeadline(time.Now().Add(time.Second))
+		_, _ = s.nc.Write([]byte("b\r\n"))
+	}
+	t.Run("long idle gap bridges the pause", func(t *testing.T) {
+		c, s := newPair(t)
+		go reply(s)
+		got, err := c.CommandOpts(context.Background(), "MCm", time.Second, 5*testGap)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{"a", "b"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+	t.Run("Command keeps the configured gap", func(t *testing.T) {
+		c, s := newPair(t)
+		go reply(s)
+		got, err := c.Command(context.Background(), "MCm")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{"a"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+}
