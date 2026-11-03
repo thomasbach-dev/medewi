@@ -32,7 +32,12 @@
           # proxyVendor: goModules is a module cache, so the checks can also
           # run `go mod tidy -diff` offline against it.
           proxyVendor = true;
-          vendorHash = "sha256-H93Cl1cOupGt5z4SesETOLum308xC0U8e8ggiOh1l6Y=";
+          # tidy also resolves the test dependencies of dependencies, which a
+          # plain build never downloads; fetch them into the same cache.
+          overrideModAttrs = _: {
+            postBuild = "go mod tidy";
+          };
+          vendorHash = "sha256-B/BeS1080F0xc0fppXIjGf/KN87+Ej2Y5utrs/uHWmo=";
           subPackages = [ "cmd/${name}" ];
           meta.mainProgram = name;
         };
