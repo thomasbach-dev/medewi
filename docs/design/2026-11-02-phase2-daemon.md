@@ -46,13 +46,14 @@ phase-2-relevant facts, all verified live on 2026-11-02:
    enters a degraded mode — no decoding, no writes, connectivity-only
    metrics, a loud log line and `medewi_spec_mismatch 1`.
 3. **Brew capture**: a recorder state machine turns decoded records into
-   stored brews. Every pump episode is stored (pressure above 1.0 bar
-   opens an episode; 5 s below closes it) and classified: `shot` if
+   stored brews. Every pump episode is stored (metered flow > 0 opens an
+   episode; 5 s of zero flow closes it — amended 2026-11-03, see
+   "Planning amendments") and classified: `shot` if
    duration ≥ 20 s AND peak ≥ 5 bar, else `flush` (initial thresholds —
    `// ASSUMPTION:` markers, tunable against the fixtures). Curves are
    stored at full report resolution.
 4. **SQLite** (`modernc.org/sqlite`, WAL): `brews` (id, started_at,
-   ended_at, kind, duration_s, peak_bar, notes) and `brew_points`
+   ended_at, kind, duration_s, peak_bar, volume_ml, notes) and `brew_points`
    (brew_id, t_ms, temp, setpoint, pressure, flow, heat), plus a
    `schema_version` meta table. DB path `MEDEWID_DB`, default
    `/var/lib/medewid/medewi.db`. No retention logic in phase 2; the file
@@ -62,8 +63,8 @@ phase-2-relevant facts, all verified live on 2026-11-02:
    active/eco/standby/unknown), `medewi_boiler_celsius`,
    `medewi_setpoint_celsius`, `medewi_heater_percent`, `medewi_ready`,
    `medewi_shots_total`, `medewi_flushes_total`,
-   `medewi_pump_seconds_total`, `medewi_volume_liters_total` (flow
-   integral, best-effort), `medewi_spec_mismatch`,
+   `medewi_pump_seconds_total`, `medewi_volume_liters_total` (sum of
+   per-episode firmware volume), `medewi_spec_mismatch`,
    `medewi_report_lines_total`, `medewi_decode_errors_total`,
    `medewi_reconnects_total`. No pressure/flow time series — curves live
    in the DB.
@@ -169,10 +170,11 @@ lifecycle capture (separate review pass); Beanconqueror/Visualizer.
      dump endpoints must not rely on the 300 ms idle gap (the machine can
      pause mid-dump); dumps use a ~2 s inter-line gap. `Command` becomes a
      thin wrapper.
-- **Volume accounting**: `medewi_volume_liters_total` derives from the
-  firmware's cumulative exported "Volume" field (ml) — deltas, robust
-  across reconnects — not from integrating flow. `brew_points.flow` stores
-  the factor-scaled metered flow in ml/s.
+- **Volume accounting** (amended 2026-11-03): the firmware's "Volume"
+  field (ml) is a per-pump-run counter, not a cumulative one — see
+  "Planning amendments". Each brew stores its final Volume reading as
+  `volume_ml`; `medewi_volume_liters_total` adds it on episode close.
+  `brew_points.flow` stores the factor-scaled metered flow in ml/s.
 - **Dump completeness**: `/api/backup/mcm` validates the Intel-HEX EOF
   record (`:00000001FF`) before returning 200. `MCu` has no known
   terminator: the endpoint uses the 2 s gap heuristic, returns the line
@@ -189,6 +191,29 @@ lifecycle capture (separate review pass); Beanconqueror/Visualizer.
   Grafana left-on alert (decision 0002), NOT duplicated in the daemon;
   verify-after-write — implemented as specified. CLAUDE.md gets one
   clarifying clause so future executors don't trip on this.
+
+## Planning amendments (2026-11-03, from the committed fixtures)
+
+Re-reading the fixtures while planning disproved two assumptions:
+
+- **Pressure is not a pump signal.** With the pump off and the brew valve
+  closed, pressure climbs to the OPV by thermal expansion: right after the
+  genlever shot it rises from 4 to 9.9 bar at zero flow, and the steam
+  fixture opens with 54 s at ≈10 bar and zero flow. A 1-bar trigger would
+  never close the shot episode and would log the steam phase as a shot.
+  Conversely, flushes (≈220 ticks flow) and hot-water draws (≈490 ticks)
+  run at ≈0.05 bar and would never open one. Metered flow (raw "Flow
+  rate" > 0) is the pump signal; pressure only feeds `peak_bar` and the
+  curve. Peak and duration are taken over the episode up to the last
+  flowing report; the 5 s zero-flow tail is not stored.
+- **"Volume" resets at every pump start** (reads 000, then counts the run's
+  ml: 101 for the genlever shot, 71–73 for flushes, 216 for a hot-water
+  draw) and holds afterwards. Cumulative deltas would be wrong; the
+  per-episode maximum is the run's volume.
+
+Classification thresholds are unchanged and fit all four fixture
+episodes (shot 54 s/9.9 bar; flushes 16–21 s/<0.1 bar; hot water
+20 s/0.45 bar → `flush`).
 
 ## Left to the builder
 
