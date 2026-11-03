@@ -17,10 +17,23 @@ import (
 
 func f64(v float64) *float64 { return &v }
 
-// apiDo performs one request against h.
+// apiDo performs one request against h; a POST carries a JSON Content-Type.
 func apiDo(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	var hdr map[string]string
+	if method == http.MethodPost {
+		hdr = map[string]string{"Content-Type": "application/json"}
+	}
+	return apiDoHeaders(t, h, method, path, body, hdr)
+}
+
+// apiDoHeaders performs one request against h with exactly the given headers.
+func apiDoHeaders(t *testing.T, h http.Handler, method, path, body string, hdr map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
@@ -84,6 +97,45 @@ func TestAPIPower(t *testing.T) {
 	}
 	if m := decode[map[string]any](t, rec); m["ok"] != true || m["state"] != "eco" {
 		t.Errorf("body = %v", m)
+	}
+	if p := powerSent(s.Received()); len(p) != 1 || p[0] != "MCe" {
+		t.Errorf("sent %q", p)
+	}
+}
+
+// TestAPIPowerCrossOrigin: a browser page on another origin must not be
+// able to switch the machine, even with a "simple" (non-preflighted) POST.
+func TestAPIPowerCrossOrigin(t *testing.T) {
+	_, h, s := apiSetup(t, powerSim(idleLines(20)))
+	const body = `{"state":"standby"}`
+	for name, hdr := range map[string]map[string]string{
+		"sec-fetch-site cross-site": {"Content-Type": "application/json", "Sec-Fetch-Site": "cross-site"},
+		"origin differs from host":  {"Content-Type": "application/json", "Origin": "https://evil.example"},
+	} {
+		if rec := apiDoHeaders(t, h, "POST", "/api/power", body, hdr); rec.Code != 403 {
+			t.Errorf("%s: code = %d, want 403", name, rec.Code)
+		}
+	}
+	for name, ct := range map[string]string{
+		"text/plain": "text/plain", "form": "application/x-www-form-urlencoded", "none": "",
+	} {
+		hdr := map[string]string{}
+		if ct != "" {
+			hdr["Content-Type"] = ct
+		}
+		if rec := apiDoHeaders(t, h, "POST", "/api/power", body, hdr); rec.Code != 415 {
+			t.Errorf("%s: code = %d, want 415", name, rec.Code)
+		}
+	}
+	if p := powerSent(s.Received()); len(p) != 0 {
+		t.Fatalf("sent %q on refused requests", p)
+	}
+	// Same origin, JSON with a charset: accepted.
+	rec := apiDoHeaders(t, h, "POST", "/api/power", `{"state":"eco"}`, map[string]string{
+		"Content-Type": "application/json; charset=utf-8", "Sec-Fetch-Site": "same-origin",
+	})
+	if rec.Code != 200 {
+		t.Fatalf("same-origin: code = %d, body %s", rec.Code, rec.Body)
 	}
 	if p := powerSent(s.Received()); len(p) != 1 || p[0] != "MCe" {
 		t.Errorf("sent %q", p)
@@ -375,7 +427,7 @@ func TestAPIMiscRoutes(t *testing.T) {
 		t.Fatalf("/ = %d %v", rec.Code, rec.Header())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"/api/power", "/api/status", "viewport", "2000"} {
+	for _, want := range []string{"/api/power", "/api/status", "viewport", "2000", `"Content-Type": "application/json"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("panel lacks %q", want)
 		}

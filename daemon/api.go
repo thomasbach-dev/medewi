@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -28,7 +29,8 @@ const (
 func (d *Daemon) Store() *store.Store { return d.cfg.Store }
 
 // NewHandler serves the HTTP API and the ops panel for d. metrics, if not
-// nil, is mounted at /metrics.
+// nil, is mounted at /metrics. Cross-origin browser requests that are not
+// GET, HEAD or OPTIONS are refused with 403 (http.CrossOriginProtection).
 func NewHandler(d *Daemon, metrics http.Handler) http.Handler {
 	a := &api{d: d}
 	mux := http.NewServeMux()
@@ -49,7 +51,7 @@ func NewHandler(d *Daemon, metrics http.Handler) http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(panelHTML)
 	})
-	return mux
+	return http.NewCrossOriginProtection().Handler(mux)
 }
 
 type api struct{ d *Daemon }
@@ -111,6 +113,11 @@ func (a *api) status(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *api) power(w http.ResponseWriter, r *http.Request) {
+	// A JSON body cannot come from a "simple" cross-origin form or fetch.
+	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
+		writeErr(w, http.StatusUnsupportedMediaType, errors.New("content type must be application/json"))
+		return
+	}
 	var body struct {
 		State PowerState `json:"state"`
 	}
