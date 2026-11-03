@@ -95,14 +95,28 @@ func TestSetPowerVerifyTimeout(t *testing.T) {
 	}
 }
 
+// noReportSim answers the handshake but its stream is empty: MCr starts
+// reports that never come, so the daemon never sees a report line.
+func noReportSim() sim.Config { return dumpSim(nil, fakeMCm) }
+
+func waitSpecOK(t *testing.T, d *Daemon) {
+	t.Helper()
+	waitFor(t, "connected and spec ok", func() bool {
+		st := d.Status()
+		return st.Connected && st.SpecOK
+	})
+}
+
 // TestSetPowerRefusals pins Review Focus 4: each wrong situation has its own
-// error and sends no power command.
+// error and sends no machine command. With dump set, the case requests both
+// dumps instead of a power change.
 func TestSetPowerRefusals(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		cfg     func() sim.Config
 		prepare func(t *testing.T, s *sim.Server, d *Daemon)
 		want    PowerState
+		dump    bool
 		wantErr error
 	}{
 		{
@@ -143,6 +157,35 @@ func TestSetPowerRefusals(t *testing.T) {
 			wantErr: ErrSpecMismatch,
 		},
 		{
+			name: "spec mismatch dump",
+			cfg: func() sim.Config {
+				cfg := dumpSim(idleLines(20), fakeMCm)
+				cfg.Responses["MC?"] = []string{"XML=other"}
+				return cfg
+			},
+			prepare: func(t *testing.T, s *sim.Server, d *Daemon) {
+				waitFor(t, "connected and MC? sent", func() bool {
+					return d.Status().Connected && count(s.Received(), "MC?") > 0
+				})
+			},
+			dump:    true,
+			wantErr: ErrDisconnected,
+		},
+		{
+			name:    "no report yet",
+			cfg:     noReportSim,
+			prepare: func(t *testing.T, _ *sim.Server, d *Daemon) { waitSpecOK(t, d) },
+			want:    PowerEco,
+			wantErr: ErrDisconnected,
+		},
+		{
+			name:    "no report yet dump",
+			cfg:     noReportSim,
+			prepare: func(t *testing.T, _ *sim.Server, d *Daemon) { waitSpecOK(t, d) },
+			dump:    true,
+			wantErr: ErrDisconnected,
+		},
+		{
 			name:    "already active",
 			cfg:     func() sim.Config { return powerSim(idleLines(20)) },
 			prepare: func(t *testing.T, _ *sim.Server, d *Daemon) { waitActive(t, d) },
@@ -155,12 +198,22 @@ func TestSetPowerRefusals(t *testing.T) {
 			tc.prepare(t, s, d)
 
 			start := time.Now()
-			got, err := d.SetPower(reqCtx(t), tc.want)
-			if !errors.Is(err, tc.wantErr) || (tc.wantErr == nil && err != nil) {
-				t.Fatalf("SetPower(%q) error = %v, want %v", tc.want, err, tc.wantErr)
-			}
-			if tc.wantErr == nil && got != tc.want {
-				t.Errorf("SetPower(%q) = %q", tc.want, got)
+			if tc.dump {
+				for name, dump := range map[string]func(context.Context) (Dump, error){
+					"MCm": d.DumpMCm, "MCu": d.DumpMCu,
+				} {
+					if _, err := dump(reqCtx(t)); !errors.Is(err, tc.wantErr) {
+						t.Errorf("%s dump error = %v, want %v", name, err, tc.wantErr)
+					}
+				}
+			} else {
+				got, err := d.SetPower(reqCtx(t), tc.want)
+				if !errors.Is(err, tc.wantErr) || (tc.wantErr == nil && err != nil) {
+					t.Fatalf("SetPower(%q) error = %v, want %v", tc.want, err, tc.wantErr)
+				}
+				if tc.wantErr == nil && got != tc.want {
+					t.Errorf("SetPower(%q) = %q", tc.want, got)
+				}
 			}
 			if el := time.Since(start); el > time.Second {
 				t.Errorf("refusal took %v, want prompt", el)
@@ -245,6 +298,17 @@ func TestDumpRefusedWhileBrewOpen(t *testing.T) {
 		if _, err := dump(reqCtx(t)); !errors.Is(err, ErrBrewOpen) {
 			t.Errorf("%s dump error = %v, want ErrBrewOpen", name, err)
 		}
+	}
+	time.Sleep(100 * time.Millisecond)
+	assertOnlyAllowed(t, s)
+}
+
+func TestSetPowerInvalid(t *testing.T) {
+	s := startSim(t, powerSim(idleLines(20)))
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
+	waitActive(t, d)
+	if _, err := d.SetPower(reqCtx(t), "bogus"); !errors.Is(err, ErrInvalidPower) {
+		t.Errorf("SetPower(bogus) error = %v, want ErrInvalidPower", err)
 	}
 	time.Sleep(100 * time.Millisecond)
 	assertOnlyAllowed(t, s)

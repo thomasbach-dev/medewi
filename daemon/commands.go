@@ -12,13 +12,17 @@ import (
 )
 
 // Request refusals and failures. A refusal (ErrDisconnected, ErrBrewOpen,
-// ErrSpecMismatch) means nothing was sent.
+// ErrSpecMismatch, ErrInvalidPower) means nothing was sent.
+// ErrDisconnected also covers a connection on which no report line has been
+// observed yet (just connected, or a spec mismatch, which never starts
+// reports): until then nothing is known about a running brew.
 var (
 	ErrDisconnected   = errors.New("daemon: not connected to the machine")
 	ErrBrewOpen       = errors.New("daemon: a brew is in progress")
 	ErrSpecMismatch   = errors.New("daemon: machine XML does not match the loaded spec")
 	ErrVerifyFailed   = errors.New("daemon: machine did not reach the requested power state")
 	ErrIncompleteDump = errors.New("daemon: settings dump is incomplete")
+	ErrInvalidPower   = errors.New("daemon: invalid power state")
 )
 
 // Timings of the command worker. Variables so tests can shrink them.
@@ -92,10 +96,16 @@ func (d *Daemon) do(ctx context.Context, run func(context.Context, *leva.Conn)) 
 	return nil
 }
 
-// refuse runs the checks every request makes before sending anything.
-func (d *Daemon) refuse(conn *leva.Conn, st Status) error {
+// refuse runs the checks a request makes before sending anything, in this
+// order: disconnected, (power only) spec mismatch, no report observed yet on
+// this connection (power unknown), brew open.
+func (d *Daemon) refuse(conn *leva.Conn, st Status, power bool) error {
 	switch {
 	case conn == nil || !st.Connected:
+		return ErrDisconnected
+	case power && !st.SpecOK:
+		return ErrSpecMismatch
+	case st.Power == PowerUnknown:
 		return ErrDisconnected
 	case st.BrewOpen:
 		return ErrBrewOpen
@@ -105,15 +115,17 @@ func (d *Daemon) refuse(conn *leva.Conn, st Status) error {
 
 // SetPower switches the machine to want (active, eco or standby) and
 // verifies the switch from the report stream. It returns the observed state,
-// also on failure. It refuses without sending anything when disconnected,
-// while a brew is open (pumping or coasting) or on a spec mismatch, and
-// succeeds without sending anything when the machine is already in want.
+// also on failure. It refuses without sending anything on an invalid want
+// (ErrInvalidPower), when disconnected or before the first report line on
+// this connection (ErrDisconnected), on a spec mismatch (ErrSpecMismatch) or
+// while a brew is open, pumping or coasting (ErrBrewOpen); it succeeds
+// without sending anything when the machine is already in want.
 // ErrVerifyFailed means the command went out but the state did not follow
 // within verifyTimeout.
 func (d *Daemon) SetPower(ctx context.Context, want PowerState) (PowerState, error) {
 	cmd, ok := powerCmd[want]
 	if !ok {
-		return d.Status().Power, fmt.Errorf("daemon: cannot set power to %q", want)
+		return d.Status().Power, fmt.Errorf("%w: %q", ErrInvalidPower, want)
 	}
 	var (
 		got  PowerState
@@ -122,11 +134,7 @@ func (d *Daemon) SetPower(ctx context.Context, want PowerState) (PowerState, err
 	err := d.do(ctx, func(ctx context.Context, conn *leva.Conn) {
 		st := d.Status()
 		got = st.Power
-		if rerr = d.refuse(conn, st); rerr != nil {
-			return
-		}
-		if !st.SpecOK {
-			rerr = ErrSpecMismatch
+		if rerr = d.refuse(conn, st, true); rerr != nil {
 			return
 		}
 		if st.Power == want {
@@ -175,14 +183,16 @@ func (d *Daemon) DumpMCu(ctx context.Context) (Dump, error) { return d.dump(ctx,
 func (d *Daemon) DumpMCm(ctx context.Context) (Dump, error) { return d.dump(ctx, "MCm") }
 
 // dump runs cmd with the dump timings. It refuses, sending nothing, when
-// disconnected or while a brew is open. An empty reply is incomplete.
+// disconnected or before the first report line on this connection (so also
+// on a spec mismatch, where reports never start) with ErrDisconnected, and
+// while a brew is open with ErrBrewOpen. An empty reply is incomplete.
 func (d *Daemon) dump(ctx context.Context, cmd string) (Dump, error) {
 	var (
 		out  Dump
 		rerr error
 	)
 	err := d.do(ctx, func(ctx context.Context, conn *leva.Conn) {
-		if rerr = d.refuse(conn, d.Status()); rerr != nil {
+		if rerr = d.refuse(conn, d.Status(), false); rerr != nil {
 			return
 		}
 		lines, err := conn.CommandOpts(ctx, cmd, dumpFirstLine, dumpIdleGap)
