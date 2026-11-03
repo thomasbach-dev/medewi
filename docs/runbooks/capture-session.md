@@ -34,6 +34,11 @@ Below, `levacap ...` means `go run ./cmd/levacap ...`.
 
 - Machine on, warm or cold as the scenario needs, idle.
 - Status Monitor closed on every computer.
+- medewid stopped on the host that runs it: `systemctl stop medewid`
+  (start it again afterwards with `systemctl start medewid`). Only one
+  client may talk to the machine, and stream toggles are global: a capture's
+  `MC ` stops medewid's stream too (it then reconnects after its stall
+  timeout and restarts the stream with `MCr` mid-capture).
 - `direnv allow` done in the repo, so `MEDEWI_MACHINE_ADDR`
   (the machine's `host:port`) and `MEDEWI_XML_PATH` (local copy of the
   firmware's release XML, e.g. `leva!-65FCB201.xml`) are set — see the

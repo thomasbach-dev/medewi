@@ -266,3 +266,45 @@ func TestDanglingClosedAtStartup(t *testing.T) {
 		return lb != nil && lb.ID == id && lb.Kind == string(brew.Interrupted)
 	})
 }
+
+// TestStalledStreamReconnects: another client's "MC " stops the global
+// stream while TCP stays healthy. The daemon must notice the silence,
+// store the open brew as interrupted and reconnect.
+func TestStalledStreamReconnects(t *testing.T) {
+	old := reportStallTimeout
+	reportStallTimeout = 300 * time.Millisecond
+	// Registered before runDaemon, so it runs after the daemon has stopped.
+	t.Cleanup(func() { reportStallTimeout = old })
+
+	var pump [][]byte
+	for i := range 20 {
+		pump = append(pump, line('*', "PID", 93, 93, 9, 9, 120, float64(i+1)))
+	}
+	s := startSim(t, simConfig(pump))
+	st := openStore(t)
+	cfg := daemonConfig(s.Addr().String(), st)
+	cfg.BackoffMin, cfg.BackoffMax = 500*time.Millisecond, 500*time.Millisecond
+	d, stop := runDaemon(t, cfg)
+	waitFor(t, "brew open", func() bool { return d.Status().BrewOpen })
+
+	// A second client stops the stream for everyone; TCP stays up.
+	c, err := net.Dial("tcp", s.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	if _, err := c.Write([]byte("MC \r\n")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "disconnected", func() bool { return !d.Status().Connected })
+	waitFor(t, "interrupted brew stored", func() bool {
+		bs := brews(t, st)
+		return len(bs) >= 1 && bs[0].Kind == string(brew.Interrupted) && bs[0].EndedAt != nil
+	})
+	waitFor(t, "reconnected with reports restarted", func() bool {
+		st := d.Status()
+		return st.Connected && st.SpecOK && count(s.Received(), "MCr") >= 2
+	})
+	stop()
+	assertOnlyAllowed(t, s)
+}

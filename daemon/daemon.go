@@ -59,6 +59,12 @@ var (
 	mcqSpacing = 2 * time.Second // start-to-start; also the first-line timeout
 )
 
+// reportStallTimeout ends a session whose report stream has gone silent: the
+// stream runs ~4/s in every power state, so silence means a dead link, a
+// power-cycled machine or another client's "MC " (stream toggles are
+// global). A variable so tests can shrink it.
+var reportStallTimeout = 10 * time.Second
+
 // Config configures a Daemon. Zero durations and zero Brew/Watch configs
 // select the defaults.
 type Config struct {
@@ -239,10 +245,15 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 		return false
 	}
 	slog.Info("reports started")
+	stall := time.NewTimer(reportStallTimeout)
+	defer stall.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			d.stopReports(ctx, conn)
+			return true
+		case <-stall.C:
+			slog.Warn("report stream silent; reconnecting", "after", reportStallTimeout)
 			return true
 		case line, ok := <-reports:
 			if !ok {
@@ -250,6 +261,7 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 				return true
 			}
 			d.handle(ctx, line)
+			stall.Reset(reportStallTimeout)
 		}
 	}
 }
