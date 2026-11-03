@@ -330,9 +330,6 @@ func writeAtomic(path string, data []byte) (err error) {
 	if _, err = f.Write(data); err != nil {
 		return err
 	}
-	if err = f.Chmod(0o644); err != nil {
-		return err
-	}
 	if err = f.Sync(); err != nil {
 		return err
 	}

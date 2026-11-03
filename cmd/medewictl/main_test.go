@@ -106,6 +106,9 @@ func TestBackupFileNames(t *testing.T) {
 	var sawU, sawM bool
 	for _, e := range ents {
 		b, _ := os.ReadFile(filepath.Join(out, e.Name()))
+		if info, err := e.Info(); err != nil || info.Mode().Perm() != 0o600 {
+			t.Errorf("%s: mode %v (err %v), want 0600", e.Name(), info.Mode().Perm(), err)
+		}
 		switch {
 		case mcu.MatchString(e.Name()):
 			sawU = true
