@@ -94,6 +94,10 @@
                 {
                   services.medewid.enable = true;
                   services.medewid.environmentFile = "/dev/null";
+                  services.medewid.xmlFile = "/run/secrets/leva!-65FCB201.xml";
+                  services.medewid.tlsCert = "/run/secrets/medewid.crt";
+                  services.medewid.tlsKey = "/run/secrets/medewid.key";
+                  services.medewid.tlsClientCA = "/run/secrets/clients-ca.crt";
                   fileSystems."/" = {
                     device = "none";
                     fsType = "tmpfs";
@@ -104,9 +108,16 @@
               ];
             };
           in
-          pkgs.writeText "medewid-module-eval" (
-            builtins.toJSON eval.config.systemd.services.medewid.serviceConfig
-          );
+          pkgs.runCommand "medewid-module-eval"
+            {
+              json = builtins.toJSON eval.config.systemd.services.medewid.serviceConfig;
+              passAsFile = [ "json" ];
+            }
+            ''
+              grep -q '"DynamicUser":true' "$jsonPath"
+              ! grep -q -- '-insecure-http' "$jsonPath"
+              cp "$jsonPath" $out
+            '';
       };
 
       devShells.${system}.default = pkgs.mkShell {

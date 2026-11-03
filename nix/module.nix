@@ -9,6 +9,12 @@ self:
 }:
 let
   cfg = config.services.medewid;
+  xmlName = baseNameOf cfg.xmlFile;
+  # Quote one ExecStart word for systemd, keeping `%d` (the credentials
+  # directory specifier) live while neutralising other specifiers.
+  credArg =
+    name:
+    "\"%d/${lib.replaceStrings [ "%" "$" "\"" ] [ "%%" "$$" "\\\"" ] name}\"";
 in
 {
   options.services.medewid = {
@@ -25,12 +31,43 @@ in
       type = lib.types.path;
       example = "/run/secrets/medewid.env";
       description = ''
-        systemd EnvironmentFile holding the instance settings:
-        `MEDEWID_MACHINE_ADDR`, `MEDEWID_XML_PATH` and the TLS paths
-        `MEDEWID_TLS_CERT`, `MEDEWID_TLS_KEY`, `MEDEWID_TLS_CLIENT_CA`.
-        Kept out of the Nix store because it names private paths. The
+        systemd EnvironmentFile with the remaining instance settings:
+        `MEDEWID_MACHINE_ADDR` (required) and optionally
+        `MEDEWID_EVENT_EXEC`. A `MEDEWID_DB` override must stay under
+        `/var/lib/medewid` (the only writable path). The XML and TLS files
+        are not read from here; see `xmlFile` and the `tls*` options. The
         service never passes `-insecure-http`.
       '';
+    };
+
+    xmlFile = lib.mkOption {
+      type = lib.types.path;
+      example = "/run/secrets/leva!-65FCB201.xml";
+      description = ''
+        The firmware's vendor Status-Monitor XML. Delivered via systemd
+        credentials, so it may be root-owned 0600 and live anywhere
+        (including /home or /run/secrets). Its base name (without
+        extension) must match the machine's `XML=` reply, so it is kept
+        as the credential name.
+      '';
+    };
+
+    tlsCert = lib.mkOption {
+      type = lib.types.path;
+      example = "/run/secrets/medewid.crt";
+      description = "Server certificate PEM, delivered via systemd credentials.";
+    };
+
+    tlsKey = lib.mkOption {
+      type = lib.types.path;
+      example = "/run/secrets/medewid.key";
+      description = "Server key PEM, delivered via systemd credentials (may be root-owned 0600).";
+    };
+
+    tlsClientCA = lib.mkOption {
+      type = lib.types.path;
+      example = "/run/secrets/clients-ca.crt";
+      description = "CA PEM that client certificates must chain to, delivered via systemd credentials.";
     };
 
     listen = lib.mkOption {
@@ -57,8 +94,18 @@ in
           "${cfg.package}/bin/medewid"
           "-listen ${lib.escapeShellArg cfg.listen}"
           "-health-addr ${lib.escapeShellArg cfg.healthAddr}"
+          "-xml ${credArg xmlName}"
+          "-tls-cert ${credArg "tls-cert"}"
+          "-tls-key ${credArg "tls-key"}"
+          "-tls-client-ca ${credArg "tls-client-ca"}"
         ];
         EnvironmentFile = cfg.environmentFile;
+        LoadCredential = [
+          "${xmlName}:${cfg.xmlFile}"
+          "tls-cert:${cfg.tlsCert}"
+          "tls-key:${cfg.tlsKey}"
+          "tls-client-ca:${cfg.tlsClientCA}"
+        ];
         DynamicUser = true;
         StateDirectory = "medewid";
         Restart = "always";

@@ -57,10 +57,19 @@ environment variables (flags win):
 
 The API requires mutual TLS: set the server certificate, key and client CA.
 `-insecure-http` exists for local testing only and exits with an error when
-combined with TLS settings. The NixOS module (`nixosModules.medewid`, options
-`services.medewid.{enable,package,environmentFile,listen,healthAddr}`) never
-passes it; put the machine address, XML path and TLS paths in the
-`environmentFile`.
+combined with TLS settings.
+
+NixOS module (`nixosModules.medewid`): options
+`services.medewid.{enable,package,environmentFile,xmlFile,tlsCert,tlsKey,tlsClientCA,listen,healthAddr}`.
+The service runs with `DynamicUser`, so it cannot open root-owned files
+itself. `xmlFile`, `tlsCert`, `tlsKey` and `tlsClientCA` are therefore
+delivered via systemd credentials (`LoadCredential`, read as root before
+privileges drop): the files may be root-owned `0600` and live anywhere,
+including `/home` or `/run/secrets`. The XML keeps its base name as
+credential name, because the spec name must match the machine's `XML=`
+reply. The `environmentFile` must contain `MEDEWID_MACHINE_ADDR` (and
+optionally `MEDEWID_EVENT_EXEC`); a `MEDEWID_DB` override must stay under
+`/var/lib/medewid`. The module never passes `-insecure-http`.
 
 `medewictl` is the client: `MEDEWID_URL` plus `MEDEWID_CTL_CERT`,
 `MEDEWID_CTL_KEY` and `MEDEWID_CTL_CA` for the client certificate and the
