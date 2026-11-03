@@ -90,3 +90,10 @@ the firmware-flash gate. `cmd/levacap` records fixtures atomically;
   nearly all report fields are `?`-masked while the stream keeps flowing.
   Report lines can include user-defined profile/dose label strings.
 - No `~HH` checksums in the default machine config.
+- Report byte 2 (not in the XML) is the pump marker: `*` while leva!
+  drives the pump, `-` otherwise, `?` in standby. Wand draws (hot-water
+  switch, wired past leva!) show flow with marker `-`. Pressure rises to
+  the OPV with the pump off (thermal expansion) — not a pump signal.
+  The Volume field resets to 0 at each leva! pump start and keeps
+  counting during wand draws; the Flow rate field is a decaying estimate
+  that lingers for seconds after the pump stops.

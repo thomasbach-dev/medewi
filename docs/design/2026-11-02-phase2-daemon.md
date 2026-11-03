@@ -46,12 +46,12 @@ phase-2-relevant facts, all verified live on 2026-11-02:
    enters a degraded mode — no decoding, no writes, connectivity-only
    metrics, a loud log line and `medewi_spec_mismatch 1`.
 3. **Brew capture**: a recorder state machine turns decoded records into
-   stored brews. Every pump episode is stored (metered flow > 0 opens an
-   episode; 5 s of zero flow closes it — amended 2026-11-03, see
-   "Planning amendments") and classified: `shot` if
-   duration ≥ 20 s AND peak ≥ 5 bar, else `flush` (initial thresholds —
-   `// ASSUMPTION:` markers, tunable against the fixtures). Curves are
-   stored at full report resolution.
+   stored brews (amended 2026-11-03, see "Planning amendments"). A brew
+   is one leva!-driven pump run (pump marker, report byte 2, is `*`) and
+   is classified `shot` if a pressure profile ran (the `Pressure SP` field
+   was populated at least once), else `flush`. Wand draws (hot water,
+   refilling after steaming) are counted in metrics only, never stored.
+   Curves are stored at full report resolution.
 4. **SQLite** (`modernc.org/sqlite`, WAL): `brews` (id, started_at,
    ended_at, kind, duration_s, peak_bar, volume_ml, notes) and `brew_points`
    (brew_id, t_ms, temp, setpoint, pressure, flow, heat), plus a
@@ -63,8 +63,9 @@ phase-2-relevant facts, all verified live on 2026-11-02:
    active/eco/standby/unknown), `medewi_boiler_celsius`,
    `medewi_setpoint_celsius`, `medewi_heater_percent`, `medewi_ready`,
    `medewi_shots_total`, `medewi_flushes_total`,
-   `medewi_pump_seconds_total`, `medewi_volume_liters_total` (sum of
-   per-episode firmware volume), `medewi_spec_mismatch`,
+   `medewi_pump_seconds_total`, `medewi_volume_liters_total` (all water
+   through the machine: brews plus wand draws), `medewi_water_draws_total`,
+   `medewi_water_liters_total`, `medewi_spec_mismatch`,
    `medewi_report_lines_total`, `medewi_decode_errors_total`,
    `medewi_reconnects_total`. No pressure/flow time series — curves live
    in the DB.
@@ -170,10 +171,9 @@ lifecycle capture (separate review pass); Beanconqueror/Visualizer.
      dump endpoints must not rely on the 300 ms idle gap (the machine can
      pause mid-dump); dumps use a ~2 s inter-line gap. `Command` becomes a
      thin wrapper.
-- **Volume accounting** (amended 2026-11-03): the firmware's "Volume"
-  field (ml) is a per-pump-run counter, not a cumulative one — see
-  "Planning amendments". Each brew stores its final Volume reading as
-  `volume_ml`; `medewi_volume_liters_total` adds it on episode close.
+- **Volume accounting** (amended 2026-11-03): see "Planning amendments".
+  Each brew stores its final Volume reading as `volume_ml`; a wand draw's
+  volume is the counter's growth during the draw.
   `brew_points.flow` stores the factor-scaled metered flow in ml/s.
 - **Dump completeness**: `/api/backup/mcm` validates the Intel-HEX EOF
   record (`:00000001FF`) before returning 200. `MCu` has no known
@@ -194,26 +194,52 @@ lifecycle capture (separate review pass); Beanconqueror/Visualizer.
 
 ## Planning amendments (2026-11-03, from the committed fixtures)
 
-Re-reading the fixtures while planning disproved two assumptions:
+Re-reading the fixtures while planning disproved the pressure-based
+episode trigger and the cumulative-volume assumption.
 
 - **Pressure is not a pump signal.** With the pump off and the brew valve
   closed, pressure climbs to the OPV by thermal expansion: right after the
   genlever shot it rises from 4 to 9.9 bar at zero flow, and the steam
-  fixture opens with 54 s at ≈10 bar and zero flow. A 1-bar trigger would
-  never close the shot episode and would log the steam phase as a shot.
-  Conversely, flushes (≈220 ticks flow) and hot-water draws (≈490 ticks)
-  run at ≈0.05 bar and would never open one. Metered flow (raw "Flow
-  rate" > 0) is the pump signal; pressure only feeds `peak_bar` and the
-  curve. Peak and duration are taken over the episode up to the last
-  flowing report; the 5 s zero-flow tail is not stored.
-- **"Volume" resets at every pump start** (reads 000, then counts the run's
-  ml: 101 for the genlever shot, 71–73 for flushes, 216 for a hot-water
-  draw) and holds afterwards. Cumulative deltas would be wrong; the
-  per-episode maximum is the run's volume.
+  fixture opens with 54 s at ≈10 bar and zero flow. Flushes run at
+  ≈0.05 bar.
+- **Flow alone is not a brew signal either.** The machine's hot-water
+  switch is wired to the pump directly, bypassing leva!
+  (hardware-installation manual p. 21), so wand draws (hot water,
+  refilling the boiler after steaming) show up as flow (≈490 ticks,
+  ≈0.4 bar) without being brews.
+- **The pump marker separates them.** Byte 2 of every report line (before
+  the first XML-described field at offset 4) reads `*` exactly while
+  leva! drives the pump, `-` otherwise, `?` in standby. In all captures
+  the transitions to `*` coincide with the Volume counter resetting to 0
+  and the Phase field becoming populated; wand draws keep `-`.
 
-Classification thresholds are unchanged and fit all four fixture
-episodes (shot 54 s/9.9 bar; flushes 16–21 s/<0.1 bar; hot water
-20 s/0.45 bar → `flush`).
+  | run | byte 2 | Pressure SP | Phase | Volume | peak |
+  |---|---|---|---|---|---|
+  | shot (2×) | `*` | populated | populated | resets | ≈9 bar |
+  | push-button flush (3×) | `*` | masked | 85° fixed | resets | <0.2 bar |
+  | wand draw (1×) | `-` | masked | masked | keeps counting (72→216) | 0.45 bar |
+
+- **Rules.** A brew opens on the `*` edge and closes on the next non-`*`
+  report; no timers. It is a `shot` if `Pressure SP` was populated during
+  the run, else a `flush` — correct while all profiles are
+  pressure-driven; volume-driven profiles and fixed-power doses are
+  issue #10. The flow field is a decaying rate estimate that lingers for
+  seconds after the pump stops, so it decides nothing. After the marker
+  drops, a brew coasts until the Volume counter has been still for 2 s
+  (at most 3 s), because the last 1–2 ml land after the marker. A wand
+  draw is the Volume counter growing while no brew is open or coasting;
+  it ends after 2 s without growth, its volume is the summed growth, and
+  draws under 5 ml are dropped. A prototype of these rules reproduces
+  every run in the captures (shot 101 ml; flushes 71–73 ml; wand draw
+  144 ml; no spurious draws).
+- **Verify live:** a refill after steaming is assumed to look like the
+  captured wand draw (same switch, same path); only one wand draw has been
+  captured so far. The conformance suite asserts the marker byte's
+  alphabet so a firmware update that moves it fails the flash gate
+  instead of silently breaking recording. Also verify live: what the
+  3-digit Volume field does past 999 ml without a leva! pump run (wrap or
+  saturate), and that `MC ` after a 10 s WaitReady timeout recovers a
+  stream left on by a killed daemon.
 
 ## Left to the builder
 
