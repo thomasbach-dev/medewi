@@ -17,6 +17,7 @@ import (
 func synthLine(temp string) []byte {
 	line := []byte(strings.Repeat(" ", 54))
 	line[0] = '{'
+	line[2] = '-'
 	copy(line[4:], "1:%")
 	copy(line[7:], temp)
 	copy(line[18:], " 42")

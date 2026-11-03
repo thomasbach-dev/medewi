@@ -163,6 +163,9 @@ func checkReportsDecode(ctx context.Context, c *leva.Conn, env Env) (err error) 
 			if verr != nil {
 				return fmt.Errorf("report %d: %w", i+1, verr)
 			}
+			if len(payload) < 3 || !strings.ContainsRune("*-?", rune(payload[2])) {
+				return fmt.Errorf("report %d: pump marker (byte 2) is not one of * - ?: %q", i+1, payload[:min(len(payload), 3)])
+			}
 			if env.Spec != nil {
 				if _, derr := env.Spec.Decode(payload); derr != nil {
 					return fmt.Errorf("report %d: %w", i+1, derr)
