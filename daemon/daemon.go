@@ -1,10 +1,12 @@
 // Package daemon is medewid's core: it owns the single connection to the
 // machine, reconnects with backoff, gates the report stream on a spec-name
 // handshake, feeds report lines to the watch detector and the brew recorder,
-// stores brews, and publishes a Status snapshot.
+// stores brews, and publishes a Status snapshot. A single command worker
+// runs power changes and settings dumps on the same connection.
 //
-// The only strings it sends are the handshake and stream commands: "MC?",
-// "MCr" and "MC ".
+// The only strings it sends are the handshake and stream commands "MC?",
+// "MCr" and "MC ", the dumps "MCu" and "MCm", and the power toggles "MCa",
+// "MCe" and "MCE".
 package daemon
 
 import (
@@ -77,8 +79,12 @@ type Config struct {
 type Daemon struct {
 	cfg Config
 
-	mu sync.RWMutex // guards st
-	st Status
+	mu   sync.RWMutex // guards st and conn
+	st   Status
+	conn *leva.Conn // set while st.Connected; the worker's connection
+
+	reqs       chan request  // to the command worker
+	workerDone chan struct{} // closed when the worker has exited
 
 	// Owned by the Run goroutine.
 	det    *watch.Detector
@@ -109,10 +115,12 @@ func New(cfg Config) *Daemon {
 		cfg.Watch = watch.DefaultConfig()
 	}
 	return &Daemon{
-		cfg: cfg,
-		st:  Status{Power: PowerUnknown},
-		det: watch.NewDetector(cfg.Watch),
-		rec: brew.NewRecorder(cfg.Brew),
+		cfg:        cfg,
+		st:         Status{Power: PowerUnknown},
+		reqs:       make(chan request),
+		workerDone: make(chan struct{}),
+		det:        watch.NewDetector(cfg.Watch),
+		rec:        brew.NewRecorder(cfg.Brew),
 	}
 }
 
@@ -123,9 +131,12 @@ func New(cfg Config) *Daemon {
 // fails on a config without Spec or Store.
 func (d *Daemon) Run(ctx context.Context) error {
 	if d.cfg.Spec == nil || d.cfg.Store == nil {
+		close(d.workerDone) // requests fail instead of waiting for a worker
 		return errors.New("daemon: Config.Spec and Config.Store are required")
 	}
 	defer d.hooks.Wait()
+	go d.worker(ctx)
+	defer func() { <-d.workerDone }()
 
 	sctx, cancel := storeCtx(ctx)
 	if n, err := d.cfg.Store.CloseDangling(sctx); err != nil {
@@ -191,7 +202,9 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 		return false
 	}
 	fw := leva.FirmwareVersion(conn.ID())
-	d.update(func(s *Status) { s.Connected, s.Firmware = true, fw })
+	d.mu.Lock()
+	d.st.Connected, d.st.Firmware, d.conn = true, fw, conn
+	d.mu.Unlock()
 	slog.Info("connected", "addr", d.cfg.Addr, "firmware", fw)
 
 	name, ok := d.xmlName(ctx, conn)
@@ -282,7 +295,10 @@ func (d *Daemon) stopReports(ctx context.Context, conn *leva.Conn) {
 // disconnected closes conn, ends any open episode and resets the state.
 // A pumping brew is stored as interrupted, a coasting one with its kind.
 func (d *Daemon) disconnected(ctx context.Context, conn *leva.Conn) {
-	_ = conn.Close()
+	d.mu.Lock()
+	d.conn, d.st.Connected = nil, false // new requests are refused from here
+	d.mu.Unlock()
+	_ = conn.Close() // aborts a request still running on conn
 	if sum := d.rec.Abort(); sum != nil {
 		d.finish(ctx, *sum)
 	}

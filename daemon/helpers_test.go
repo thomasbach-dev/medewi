@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -200,12 +201,12 @@ func count(cmds []string, want string) int {
 }
 
 // assertOnlyAllowed fails if the daemon sent anything but the handshake and
-// stream commands this task may send.
-func assertOnlyAllowed(t *testing.T, s *sim.Server) {
+// stream commands, plus the extra commands a test expects.
+func assertOnlyAllowed(t *testing.T, s *sim.Server, extra ...string) {
 	t.Helper()
 	for _, c := range s.Received() {
-		switch c {
-		case "MC?", "MCr", "MC ":
+		switch {
+		case c == "MC?", c == "MCr", c == "MC ", slices.Contains(extra, c):
 		default:
 			t.Errorf("daemon sent %q", c)
 		}
