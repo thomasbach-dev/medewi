@@ -7,8 +7,11 @@ Guidance for Claude Code when working in this repository.
 medewi: a per-coffee recipe system for espresso machines running the leva!
 controller firmware. Phase 1 (complete): protocol library (`leva/`),
 machine simulator (`sim/`, `cmd/levasim`), conformance suite
-(`conformance/`), capture tooling (`cmd/levacap`). Phase 2 (next): an
-always-on daemon (exporter, shot DB, recipe execution). Start with
+(`conformance/`), capture tooling (`cmd/levacap`). Phase 2 (implemented):
+the always-on daemon `medewid` (`daemon/`, `watch/`, `brew/`, `store/`:
+exporter, brew DB, power control, ops panel), the client `cmd/medewictl`
+and the NixOS module `nix/module.nix`; recipe execution is still to come.
+Start with
 [docs/architecture.md](docs/architecture.md); decisions live in
 [docs/decisions/](docs/decisions/), plans in `docs/superpowers/plans/`,
 operator procedures in [docs/runbooks/](docs/runbooks/) and

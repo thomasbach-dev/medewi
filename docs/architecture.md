@@ -81,9 +81,11 @@ flowchart LR
 
 ## Phase 2 packages (implemented)
 
-- `watch/` — brew detector over the decoded report stream.
-- `brew/` — brew recorder (episodes, classification, curves).
-- `store/` — SQLite persistence of brews and settings backups.
+- `watch/` — machine-state detector over the decoded report stream
+  (READY, steam, eco events).
+- `brew/` — brew recorder: pump runs as episodes, classification, curves.
+- `store/` — SQLite persistence of brews and their curves. Settings
+  backups are files that `medewictl backup` writes, not database rows.
 - `daemon/` — connection supervision, HTTP API, metrics, ops panel
   (`panel.html`, embedded) and power control.
 - `cmd/medewid` — the daemon binary (mTLS API, plaintext health listener).
