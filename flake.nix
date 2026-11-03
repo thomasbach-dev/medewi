@@ -19,6 +19,7 @@
           ./go.sum
           ./.golangci.yml
           ./testdata
+          ./daemon/panel.html # //go:embed
           (lib.fileset.fileFilter (f: f.hasExt "go") ./.)
         ];
       };

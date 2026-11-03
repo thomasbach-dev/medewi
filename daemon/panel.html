@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>medewi</title>
+<style>
+  body { font-family: sans-serif; margin: 1rem auto; max-width: 24rem; padding: 0 1rem; }
+  .big { font-size: 2rem; margin: .5rem 0; }
+  #ready { display: inline-block; padding: .2rem .6rem; border-radius: .3rem; background: #ccc; }
+  #ready.on { background: #2a2; color: #fff; }
+  button { font-size: 1.1rem; padding: .7rem 1rem; margin: .2rem .2rem .2rem 0; }
+  #msg { min-height: 1.5rem; color: #a00; }
+</style>
+</head>
+<body>
+<h1>medewi</h1>
+<div>Mode: <strong id="mode">?</strong> <span id="ready">READY</span></div>
+<div class="big"><span id="temp">?</span> / <span id="setpoint">?</span> &deg;C</div>
+<div id="conn"></div>
+<p>
+  <button data-state="active">Wake</button>
+  <button data-state="eco">Eco</button>
+  <button data-state="standby">Standby</button>
+</p>
+<div id="msg"></div>
+<script>
+const $ = id => document.getElementById(id);
+const num = v => v === null || v === undefined ? "?" : v.toFixed(1);
+async function refresh() {
+  try {
+    const s = await (await fetch("/api/status")).json();
+    $("mode").textContent = s.power;
+    $("temp").textContent = num(s.temp);
+    $("setpoint").textContent = num(s.setpoint);
+    $("ready").className = s.ready ? "on" : "";
+    $("conn").textContent = (s.connected ? "connected" : "disconnected") +
+      (s.brew_open ? ", brewing" : "");
+  } catch (e) {
+    $("conn").textContent = "daemon unreachable";
+  }
+}
+async function setPower(state) {
+  $("msg").textContent = "";
+  try {
+    const r = await fetch("/api/power", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({state: state}),
+    });
+    const j = await r.json();
+    if (!r.ok) $("msg").textContent = j.error || ("failed (" + r.status + ")");
+  } catch (e) {
+    $("msg").textContent = "request failed";
+  }
+  refresh();
+}
+document.querySelectorAll("button").forEach(b =>
+  b.addEventListener("click", () => setPower(b.dataset.state)));
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
