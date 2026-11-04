@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -28,9 +29,11 @@ import (
 const (
 	envAddr = "MEDEWI_MACHINE_ADDR"
 	envXML  = "MEDEWI_XML_PATH"
-
-	bannerTimeout = 5 * time.Second
 )
+
+// bannerTimeout is how long waitBanner waits for the first banner (shrunk
+// in tests).
+var bannerTimeout = 5 * time.Second
 
 // bannerSettle is how long waitBanner waits after a lone first banner for a
 // second one (shrunk in tests).
@@ -60,6 +63,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runConform(args[1:], stdin, stdout, stderr)
 	case "capture":
 		return runCapture(args[1:], stdin, stdout, stderr)
+	case "session-reset":
+		return runSessionReset(args[1:], stdout, stderr)
 	case "-h", "-help", "--help", "help":
 		usage(stdout)
 		return 0
@@ -74,6 +79,7 @@ func usage(w io.Writer) {
 
   conform [-addr host:port] [-max readonly|stream] [-yes]
   capture -scenario commands|stream|shot|display [-addr host:port] [-out captures/]
+  session-reset [-addr host:port]   stop a stream another client left on
 
 Target defaults to $MEDEWI_MACHINE_ADDR; decode spec from $MEDEWI_XML_PATH.`)
 }
@@ -256,7 +262,9 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	})
 	defer remove()
 
-	if err := waitBanner(ctx, c); err != nil {
+	received, removeRX := watchRX(c)
+	defer removeRX()
+	if err := waitBanner(ctx, c, received); err != nil {
 		_, _ = fmt.Fprintf(stderr, "levacap: %v\n", err)
 		return 1
 	}
@@ -312,10 +320,28 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// errStreamOn means the machine sent data but no banner: the banner is the
+// idle heartbeat, silent while a report or display stream is on, and stream
+// toggles are global machine state.
+var errStreamOn = errors.New("data received but no $id banner: a stream is on. " +
+	"Another device may hold a connection (a phone app, medewid), or a previous client left its stream on. " +
+	"Ensure that all other devices are disconnected and/or run 'levacap session-reset'")
+
+// watchRX reports whether c has received any bytes so far.
+func watchRX(c *leva.Conn) (received func() bool, remove func()) {
+	var got atomic.Bool
+	remove = c.Tap(func(dir string, p []byte) {
+		if dir == "rx" && len(p) > 0 {
+			got.Store(true)
+		}
+	})
+	return got.Load, remove
+}
+
 // waitBanner waits until the machine is ready (second banner, or first
 // banner plus settle); the real machine swallows commands sent right after
-// connect.
-func waitBanner(ctx context.Context, c *leva.Conn) error {
+// connect. Without a banner it returns errStreamOn if received reports data.
+func waitBanner(ctx context.Context, c *leva.Conn, received func() bool) error {
 	wctx, cancel := context.WithTimeout(ctx, bannerTimeout+bannerSettle)
 	defer cancel()
 	if err := leva.WaitReady(wctx, c, bannerSettle); err != nil {
@@ -323,7 +349,10 @@ func waitBanner(ctx context.Context, c *leva.Conn) error {
 			return ctx.Err()
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			return errors.New("no $id banner within 5s; refusing to send commands")
+			if received() {
+				return fmt.Errorf("refusing to send commands: %w", errStreamOn)
+			}
+			return fmt.Errorf("no $id banner within %v; refusing to send commands", bannerTimeout)
 		}
 		return err
 	}

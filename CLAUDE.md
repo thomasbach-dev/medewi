@@ -86,7 +86,9 @@ the firmware-flash gate. `cmd/levacap` records fixtures atomically;
 ## Empirical machine facts (from real captures; keep code consistent)
 
 - Report lines: 289 bytes, ~4/s, offsets count from the leading `{`.
-- Banner `$id: leva! (3.2)` ~1/s when idle, SILENT while reporting.
+- Banner `$id: leva! (3.2)` ~1/s when idle, SILENT while reporting — also
+  for a new connection: a stream left on by another client means no banner
+  at all (`levacap session-reset` clears it).
 - `MC@` mirrors the LCD: one 69-char `<BKL…>` frame every 100 ms
   (backlight, pressed key, layout, four 16-char lines). Banners are silent
   meanwhile; `MC ` stops the display stream too. READY is shown on the

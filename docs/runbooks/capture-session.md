@@ -41,6 +41,12 @@ Below, `levacap ...` means `go run ./cmd/levacap ...`.
   client may talk to the machine, and stream toggles are global: a capture's
   `MC ` stops medewid's stream too (it then reconnects after its stall
   timeout and restarts the stream with `MCr` mid-capture).
+- The machine is idle on the wire: `go run ./cmd/levacap session-reset`
+  prints "the machine is idle". If a phone app or a crashed client left a
+  stream on, it sends `MC ` once and checks that the banner comes back; if
+  the banner stays away, another device is still connected and restarts its
+  stream, so disconnect it and run `session-reset` again. It cannot detect
+  devices that hold a connection without streaming.
 - `direnv allow` done in the repo, so `MEDEWI_MACHINE_ADDR`
   (the machine's `host:port`) and `MEDEWI_XML_PATH` (local copy of the
   firmware's release XML, e.g. `leva!-65FCB201.xml`) are set — see the
@@ -56,6 +62,11 @@ Below, `levacap ...` means `go run ./cmd/levacap ...`.
   connecting is silently swallowed. `levacap` waits up to 5 s for a banner,
   then until a second banner arrives or 1.5 s have passed since the first, and
   refuses to send otherwise.
+- **No banner while a stream is on, not even on connect.** The banner is the
+  idle heartbeat. If another client left `MCr` or `MC@` on (stream toggles
+  are global), a new connection sees only reports or display frames.
+  `levacap` then exits with "data received but no $id banner" and points to
+  `levacap session-reset` (Prerequisites).
 - `MC?` answers `XML=leva!-65FCB201`. The name must match the file behind
   `MEDEWI_XML_PATH`; Status Monitor and medewi cannot decode reports with a
   mismatched XML.
@@ -131,6 +142,9 @@ Behavior of the tool you need to know:
   banner wait aborts without writing any files (exit 1). Ctrl-C during the
   `MC?` query, or at any point in `commands`, aborts the run and writes
   partial files (next bullet).
+- **A lost connection ends the recording at once** with exit 1 and partial
+  files; `levacap` does not wait for Enter. Marks typed after that point
+  would be meaningless.
 - **Any other failure** (a disconnect, a timeout, a failed `MC `, or an abort
   as above) writes `log.partial.jsonl` / `manifest.partial.json` with the
   reason in the manifest notes, and exits 1. Partial files never overwrite a

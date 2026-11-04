@@ -344,7 +344,10 @@ func TestConformXMLMismatchFails(t *testing.T) {
 	}
 }
 
-func init() { bannerSettle = 50 * time.Millisecond }
+func init() {
+	bannerSettle = 50 * time.Millisecond
+	bannerTimeout = time.Second
+}
 
 func TestCaptureDisplayRecordsFramesAndMarks(t *testing.T) {
 	old := cmdWait
