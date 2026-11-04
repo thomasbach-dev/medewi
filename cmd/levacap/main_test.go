@@ -409,6 +409,46 @@ func TestCaptureDisplayRecordsFramesAndMarks(t *testing.T) {
 	}
 }
 
+// A connection lost mid-recording must end the capture at once, not wait for
+// the operator's Enter: on 2026-11-04 a display capture kept "recording" for
+// minutes after the machine had hung up.
+func TestCaptureStreamLostConnectionStopsAtOnce(t *testing.T) {
+	for _, scenario := range []string{"stream", "display"} {
+		t.Run(scenario, func(t *testing.T) {
+			s := startSim(t, sim.Config{Responses: map[string][]string{"MC?": {"XML=synthetic"}}})
+			go func() {
+				time.Sleep(1500 * time.Millisecond)
+				_ = s.Stop()
+			}()
+			stdin, w := io.Pipe() // the operator never types anything
+			t.Cleanup(func() { _ = w.Close() })
+			dir := t.TempDir()
+			var out, errb bytes.Buffer
+			done := make(chan int, 1)
+			go func() {
+				done <- run([]string{
+					"capture", "-scenario", scenario, "-addr", s.Addr().String(), "-out", dir,
+					"-display-every", "100ms", "-display-for", "30ms",
+				}, stdin, &out, &errb)
+			}()
+			select {
+			case code := <-done:
+				if code != 1 {
+					t.Errorf("exit %d, want 1", code)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("capture still waiting for stdin after the connection was lost")
+			}
+			if !strings.Contains(errb.String(), "connection lost") {
+				t.Errorf("stderr %q does not report the lost connection", errb.String())
+			}
+			if _, err := os.Stat(filepath.Join(dir, scenario, "log.partial.jsonl")); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+}
+
 // slowReader hands out one line per Read, gap apart, then EOF.
 type slowReader struct {
 	lines []string

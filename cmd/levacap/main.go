@@ -422,11 +422,15 @@ func captureStream(ctx context.Context, c *leva.Conn, scenario string, sample di
 	if err != nil {
 		return nil, fmt.Errorf("start reports: %w", err)
 	}
-	// Raw traffic is recorded by the tap; just drain the channel.
+	// Raw traffic is recorded by the tap; just drain the channel. The read
+	// loop closes it when the connection dies.
+	lost := make(chan struct{})
 	go func() {
+		defer close(lost)
 		for range reports {
 		}
 	}()
+	var sampled chan struct{} // closed when the display sampler gives up; nil: no sampler
 	stop := func() error {
 		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cmdTimeout)
 		defer cancel()
@@ -440,13 +444,18 @@ func captureStream(ctx context.Context, c *leva.Conn, scenario string, sample di
 		_, _ = fmt.Fprintln(stdout, "recording: pull the shot now, press Enter when done")
 	case "display":
 		sctx, cancel := context.WithCancel(ctx)
-		sampled := make(chan error, 1)
-		go func() { sampled <- sampleDisplay(sctx, c, sample) }()
+		sampled = make(chan struct{})
+		var sampleErr error
+		go func() {
+			defer close(sampled)
+			sampleErr = sampleDisplay(sctx, c, sample)
+		}()
 		// Wrap stop so no sample command can follow "MC ".
 		stopReports := stop
 		stop = func() error {
 			cancel()
-			return errors.Join(<-sampled, stopReports())
+			<-sampled
+			return errors.Join(sampleErr, stopReports())
 		}
 		_, _ = fmt.Fprintf(stdout, "recording reports, display every %v: type m + Enter to mark a moment, Enter to stop\n", sample.every)
 	default:
@@ -477,9 +486,13 @@ func captureStream(ctx context.Context, c *leva.Conn, scenario string, sample di
 			_, _ = fmt.Fprintf(stdout, "mark %d at %s\n", n, (time.Duration(ms) * time.Millisecond).Round(time.Second))
 		}
 	}()
+	// Without the last two cases a dead connection keeps "recording" until
+	// the operator presses Enter.
 	select {
 	case <-enter:
 	case <-ctx.Done():
+	case <-lost:
+	case <-sampled:
 	}
 	mu.Lock()
 	defer mu.Unlock()
