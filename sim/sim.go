@@ -4,7 +4,9 @@
 //
 // Like the real module, all output is shared "UART" traffic: canned responses
 // to any client's command are fanned out to every connected client. The
-// banner is a connect greeting and goes only to the new client.
+// banner is a connect greeting and goes only to the new client, unless
+// reporting is on: then, like the real machine, the new client gets only
+// the stream.
 package sim
 
 import (
@@ -245,7 +247,9 @@ func (s *Server) acceptLoop(ln net.Listener) {
 			continue
 		}
 		c := &client{conn: conn, out: make(chan []byte, outQueueLen), done: make(chan struct{})}
-		c.out <- []byte(s.cfg.Banner + "\r\n") // empty queue: cannot block
+		if !s.reporting { // the real machine is silent while reporting
+			c.out <- []byte(s.cfg.Banner + "\r\n") // empty queue: cannot block
+		}
 		s.clients[c] = struct{}{}
 		s.wg.Add(2)
 		s.mu.Unlock()
