@@ -48,7 +48,7 @@ bytes, and roughly replayed through `levasim`.
    contain it, and the machine sends replies to every connected client,
    also for commands another client sent. Received lines are therefore
    dropped unless they are
-   - a report line (starts `{`, ends `}`, CR/LF ignored),
+   - a report line (starts `{`; truncated reports are kept too),
    - a banner (starts `$id:`), or
    - inside a reply window: up to `ReplyWindow` (5 s) after medewid sent
      a command other than `MCu`/`MCm`, and other than the stream toggles

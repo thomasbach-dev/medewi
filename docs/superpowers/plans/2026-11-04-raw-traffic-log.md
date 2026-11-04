@@ -120,7 +120,7 @@ In this task the allowlist is not yet active: every rx line is kept (Task 3 adds
 
 - [ ] **Step 2: Run** → FAIL.
 
-- [ ] **Step 3: Implement** in `Session` under its mutex: `lastDump` time (zero at start). On tx, parse the command (bytes before `\r`): `MCu`/`MCm` set `lastDump = Now()` and close the window; `MCr`/`MC ` do nothing; any other opens `windowUntil = Now()+ReplyWindow` unless `Now().Sub(lastDump) < DumpQuiet`. On rx, record `inWindow` at a line's first byte; judge when the line completes (or at its first 4096-byte piece): a dump line (`|`-prefixed or Intel HEX) is dropped, sets `lastDump = Now()` and closes the window; otherwise keep iff report shape (`{…}` after trimming CR/LF; a piece: starts with `{`), starts `$id:`, or `inWindow`. Count dropped lines; enqueue a `fixture.Note` `"dropped N lines"` before the next kept rx event or at Close.
+- [ ] **Step 3: Implement** in `Session` under its mutex: `lastDump` time (zero at start). On tx, parse the command (bytes before `\r`): `MCu`/`MCm` set `lastDump = Now()` and close the window; `MCr`/`MC ` do nothing; any other opens `windowUntil = Now()+ReplyWindow` unless `Now().Sub(lastDump) < DumpQuiet`. On rx, record `inWindow` at a line's first byte; judge when the line completes (or at its first 4096-byte piece): a dump line (`|`-prefixed or Intel HEX) is dropped, sets `lastDump = Now()` and closes the window; otherwise keep iff it starts with `{` (report), starts `$id:`, or `inWindow`. Count dropped lines; enqueue a `fixture.Note` `"dropped N lines"` before the next kept rx event or at Close.
 
 - [ ] **Step 4: Run** `go test -race ./rawlog/` → PASS.
 
