@@ -566,3 +566,54 @@ func TestCommandOptsLongGap(t *testing.T) {
 		}
 	})
 }
+
+func TestStartDisplaySendsMCAt(t *testing.T) {
+	c, s := newPair(t)
+	got := make(chan string, 1)
+	go func() { got <- s.readLine(t) }()
+	if err := c.StartDisplay(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if g := <-got; g != "MC@\r\n" {
+		t.Errorf("tx = %q", g)
+	}
+}
+
+// Display frames arrive every 100 ms on the real machine, faster than the
+// idle gap: they must neither end up in a reply nor keep Command's
+// pre-send drain from ever seeing a quiet line.
+func TestDisplayFramesNotCommandReplies(t *testing.T) {
+	c, s := newPair(t)
+	go func() { s.readLine(t) }() // MC@
+	if err := c.StartDisplay(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(testGap / 3):
+				_, _ = s.nc.Write([]byte("<002SOAK 1.0b       1: 91.0\xdf     PID|             4% 0.0b\x05  0s   0ml>\r\n"))
+			}
+		}
+	}()
+	go func() {
+		s.readLine(t) // MC?
+		s.write(t, "XML=x\r\n")
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	got, err := c.Command(ctx, "MC?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"XML=x"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("command lines = %q, want %q", got, want)
+	}
+	if c.Frames() == 0 {
+		t.Error("Frames() = 0, want frames counted")
+	}
+}

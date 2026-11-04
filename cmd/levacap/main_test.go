@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -344,3 +345,74 @@ func TestConformXMLMismatchFails(t *testing.T) {
 }
 
 func init() { bannerSettle = 50 * time.Millisecond }
+
+func TestCaptureDisplayRecordsFramesAndMarks(t *testing.T) {
+	old := cmdWait
+	cmdWait = 50 * time.Millisecond
+	t.Cleanup(func() { cmdWait = old })
+	frame := "<002SOAK 1.0b       1: 91.0\xdf     PID|             4% 0.0b\x05  0s   0ml>"
+	s := startSim(t, sim.Config{Responses: map[string][]string{
+		"MC?": {"XML=synthetic"},
+		"MC@": {frame},
+	}})
+	dir := t.TempDir()
+	var out, errb bytes.Buffer
+	// One mark; a mistyped line must not stop; an empty line does.
+	in := &slowReader{lines: []string{"m\n", "M\n", "\n"}, gap: 100 * time.Millisecond}
+	code := run([]string{"capture", "-scenario", "display", "-addr", s.Addr().String(), "-out", dir}, in, &out, &errb)
+	if code != 0 {
+		t.Fatalf("exit %d stderr %s", code, errb.String())
+	}
+	f, err := os.Open(filepath.Join(dir, "display", "log.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	evs, err := fixture.ReadLog(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tx, rx strings.Builder
+	for _, e := range evs {
+		if e.Dir == fixture.TX {
+			tx.Write(e.Data)
+		} else {
+			rx.Write(e.Data)
+		}
+	}
+	if got := tx.String(); got != "MC?\r\nMCr\r\nMC@\r\nMC \r\n" {
+		t.Errorf("TX = %q, want MC?, MCr, MC@, \"MC \"", got)
+	}
+	if !strings.Contains(rx.String(), frame) {
+		t.Error("display frame not recorded")
+	}
+	m, err := fixture.LoadManifest(filepath.Join(dir, "display", "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`marks \(ms\): \d+`).MatchString(m.Notes) {
+		t.Errorf("manifest notes %q lack the mark", m.Notes)
+	}
+	if !strings.Contains(out.String(), "an empty line to stop") {
+		t.Errorf("stdout %q lacks the hint for a mistyped line", out.String())
+	}
+	if !strings.Contains(out.String(), "mark 1") {
+		t.Errorf("stdout %q does not acknowledge the mark", out.String())
+	}
+}
+
+// slowReader hands out one line per Read, gap apart, then EOF.
+type slowReader struct {
+	lines []string
+	gap   time.Duration
+}
+
+func (r *slowReader) Read(p []byte) (int, error) {
+	if len(r.lines) == 0 {
+		return 0, io.EOF
+	}
+	time.Sleep(r.gap)
+	n := copy(p, r.lines[0])
+	r.lines = r.lines[1:]
+	return n, nil
+}

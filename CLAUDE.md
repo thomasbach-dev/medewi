@@ -54,7 +54,8 @@ local, gitignored `.envrc` — see the README's Configuration section.
   `MEDEWI_MACHINE_CONFIRM=1`). At most one process talks to the machine;
   stream toggles (`MCr`/`MC `) are GLOBAL machine state.
 - **Read-only command whitelist:** `MCh MC? MCu MCm MCb MCf` plus
-  `MCr`/`MC ` stream control. Anything that writes (setpoints, `MCc`
+  `MCr`/`MC ` stream control and `MC@` (display mirror). Never send the
+  display protocol's button codes (`MC` + a raw byte): they press keys. Anything that writes (setpoints, `MCc`
   functions, `MCa`, PID constants) only lands via an explicitly planned
   write feature with a setpoint clamp, watchdog and verify-after-write.
   For the pure power toggles `MCa`/`MCe`/`MCE` (phase-2 daemon design) the
@@ -86,6 +87,10 @@ the firmware-flash gate. `cmd/levacap` records fixtures atomically;
 
 - Report lines: 289 bytes, ~4/s, offsets count from the leading `{`.
 - Banner `$id: leva! (3.2)` ~1/s when idle, SILENT while reporting.
+- `MC@` mirrors the LCD: one 69-char `<BKL…>` frame every 100 ms
+  (backlight, pressed key, layout, four 16-char lines). Banners are silent
+  meanwhile; `MC ` stops the display stream too. READY is shown on the
+  display, not carried in the report stream.
 - A command sent shortly after connect is silently swallowed — even just
   after the first banner. Always go through `leva.WaitReady`.
 - A reply's first byte can take >300 ms (hence the two-phase `Command`).
@@ -93,7 +98,9 @@ the firmware-flash gate. `cmd/levacap` records fixtures atomically;
   (e.g. 91 → 79), temperatures stay live. STANDBY is the deeper state:
   nearly all report fields are `?`-masked while the stream keeps flowing.
   Report lines can include user-defined profile/dose label strings.
-- No `~HH` checksums in the default machine config.
+- Every report ends in `~ HH}` (bytes 284–287): HH = two's complement of
+  the sum of bytes 0–283. `leva.VerifyChecksum` only recognises `~HH` at
+  the very end of the line, so it never checks this one.
 - Report byte 2 (not in the XML) is the pump marker: `*` while leva!
   drives the pump, `-` otherwise, `?` in standby. Wand draws (hot-water
   switch, wired past leva!) show flow with marker `-`. Pressure rises to

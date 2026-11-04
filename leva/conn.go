@@ -89,6 +89,7 @@ type Conn struct {
 	dropped   atomic.Uint64
 	oversized atomic.Uint64
 	banners   atomic.Uint64
+	frames    atomic.Uint64
 }
 
 // Dial connects to a leva! controller's command port. The port is resolved
@@ -162,6 +163,9 @@ func (c *Conn) Oversized() uint64 { return c.oversized.Load() }
 
 // Banners returns the number of "$id:" banner lines seen so far.
 func (c *Conn) Banners() uint64 { return c.banners.Load() }
+
+// Frames returns the number of "<…>" display frames seen so far.
+func (c *Conn) Frames() uint64 { return c.frames.Load() }
 
 // WaitReady blocks until the machine is ready to take commands: it has sent
 // two banners, or it has sent one and settle has elapsed since WaitReady
@@ -408,8 +412,17 @@ func (c *Conn) StartReports(ctx context.Context) (<-chan []byte, error) {
 	return c.reports, nil
 }
 
+// StartDisplay sends "MC@": the machine then mirrors its LCD as one
+// "<BKL…>" frame line every 100 ms until "MC " (StopReports, which stops
+// both streams). Frames are only visible to taps; they never count as
+// command replies, so Command keeps working while the display streams.
+// Never send the display protocol's button codes ("MC" + raw byte).
+func (c *Conn) StartDisplay(ctx context.Context) error {
+	return c.send(ctx, "MC@")
+}
+
 // StopReports sends "MC " (MC + space), which resets the machine's state and
-// stops the report stream. Reports still in flight afterwards are discarded.
+// stops the report stream (and the display stream, see StartDisplay). Reports still in flight afterwards are discarded.
 func (c *Conn) StopReports(ctx context.Context) error {
 	c.mu.Lock()
 	c.reporting = false
@@ -494,6 +507,8 @@ func (c *Conn) dispatch(raw []byte) {
 		c.id = string(line)
 		c.mu.Unlock()
 		c.banners.Add(1)
+	case bytes.HasPrefix(line, []byte("<")):
+		c.frames.Add(1)
 	default:
 		c.mu.Lock()
 		if c.collect {

@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -71,7 +72,7 @@ func usage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, `usage: levacap <subcommand> [flags]
 
   conform [-addr host:port] [-max readonly|stream] [-yes]
-  capture -scenario commands|stream|shot [-addr host:port] [-out captures/]
+  capture -scenario commands|stream|shot|display [-addr host:port] [-out captures/]
 
 Target defaults to $MEDEWI_MACHINE_ADDR; decode spec from $MEDEWI_XML_PATH.`)
 }
@@ -178,16 +179,16 @@ func formatResult(r conformance.Result) string {
 
 func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs, addr := newFlagSet("capture", stderr)
-	scenario := fs.String("scenario", "", "scenario: commands|stream|shot (required)")
+	scenario := fs.String("scenario", "", "scenario: commands|stream|shot|display (required)")
 	out := fs.String("out", "captures", "output directory")
 	force := fs.Bool("force", false, "overwrite an existing complete capture")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	switch *scenario {
-	case "commands", "stream", "shot":
+	case "commands", "stream", "shot", "display":
 	default:
-		_, _ = fmt.Fprintf(stderr, "levacap: -scenario must be one of commands, stream, shot (got %q)\n", *scenario)
+		_, _ = fmt.Fprintf(stderr, "levacap: -scenario must be one of commands, stream, shot, display (got %q)\n", *scenario)
 		return 2
 	}
 	if *addr == "" {
@@ -252,6 +253,7 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	xmlName := ""
+	var marks []int64
 	capErr := func() error {
 		if *scenario == "commands" {
 			return captureCommands(ctx, c, &xmlName)
@@ -261,10 +263,18 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return err
 		}
 		xmlName = name
-		return captureStream(ctx, c, *scenario, stdin, stdout)
+		marks, err = captureStream(ctx, c, *scenario, start, stdin, stdout)
+		return err
 	}()
 
 	var notes []string
+	if len(marks) > 0 {
+		ms := make([]string, len(marks))
+		for i, m := range marks {
+			ms[i] = strconv.FormatInt(m, 10)
+		}
+		notes = append(notes, "marks (ms): "+strings.Join(ms, ", "))
+	}
 	if xmlName == "" {
 		_, _ = fmt.Fprintln(stderr, "levacap: warning: MC? returned no XML= line")
 		notes = append(notes, "MC? returned no XML= line")
@@ -354,36 +364,70 @@ func captureCommands(ctx context.Context, c *leva.Conn, xmlName *string) error {
 	return nil
 }
 
-func captureStream(ctx context.Context, c *leva.Conn, scenario string, stdin io.Reader, stdout io.Writer) error {
+// captureStream records the report stream (plus, for "display", the LCD
+// mirror) until an empty line or EOF on stdin. A line "m" records a mark:
+// milliseconds since start, e.g. when the READY beeps sound.
+func captureStream(ctx context.Context, c *leva.Conn, scenario string, start time.Time, stdin io.Reader, stdout io.Writer) ([]int64, error) {
 	reports, err := c.StartReports(ctx)
 	if err != nil {
-		return fmt.Errorf("start reports: %w", err)
+		return nil, fmt.Errorf("start reports: %w", err)
 	}
 	// Raw traffic is recorded by the tap; just drain the channel.
 	go func() {
 		for range reports {
 		}
 	}()
-	if scenario == "shot" {
+	stop := func() error {
+		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cmdTimeout)
+		defer cancel()
+		if err := c.StopReports(sctx); err != nil {
+			return fmt.Errorf("stop reports: %w", err)
+		}
+		return nil
+	}
+	switch scenario {
+	case "shot":
 		_, _ = fmt.Fprintln(stdout, "recording: pull the shot now, press Enter when done")
-	} else {
+	case "display":
+		if err := c.StartDisplay(ctx); err != nil {
+			return nil, errors.Join(fmt.Errorf("start display: %w", err), stop())
+		}
+		_, _ = fmt.Fprintln(stdout, "recording reports and display: type m + Enter to mark a moment, Enter to stop")
+	default:
 		_, _ = fmt.Fprintln(stdout, "recording report stream: press Enter to stop")
 	}
+	var (
+		mu    sync.Mutex
+		marks []int64
+	)
 	enter := make(chan struct{})
 	go func() {
-		_, _ = bufio.NewReader(stdin).ReadString('\n')
-		close(enter)
+		defer close(enter)
+		sc := bufio.NewScanner(stdin)
+		for sc.Scan() {
+			switch strings.TrimSpace(sc.Text()) {
+			case "":
+				return
+			case "m":
+			default:
+				_, _ = fmt.Fprintln(stdout, "type m + Enter to mark, an empty line to stop")
+				continue
+			}
+			ms := time.Since(start).Milliseconds()
+			mu.Lock()
+			marks = append(marks, ms)
+			n := len(marks)
+			mu.Unlock()
+			_, _ = fmt.Fprintf(stdout, "mark %d at %s\n", n, (time.Duration(ms) * time.Millisecond).Round(time.Second))
+		}
 	}()
 	select {
 	case <-enter:
 	case <-ctx.Done():
 	}
-	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cmdTimeout)
-	defer cancel()
-	if err := c.StopReports(sctx); err != nil {
-		return fmt.Errorf("stop reports: %w", err)
-	}
-	return nil
+	mu.Lock()
+	defer mu.Unlock()
+	return marks, stop()
 }
 
 // writeOutput writes both files under temp names and renames them into place

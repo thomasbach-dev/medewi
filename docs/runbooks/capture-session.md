@@ -12,7 +12,9 @@ Below, `levacap ...` means `go run ./cmd/levacap ...`.
 
 1. **Whitelist.** The only commands ever sent are `MCh MC? MCu MCm MCb MCf`
    plus stream control `MCr` (start reports) and `MC ` (MC + space, stop
-   reports and reset state). Nothing else. Do not type extra commands by
+   reports and reset state), and `MC@` (display mirror, scenario `display`).
+   Nothing else; in particular never the display protocol's button codes
+   (`MC` + a raw byte), which press keys on the machine. Do not type extra commands by
    hand on port 23 during a capture.
 2. **Never touch port 2323.** It is the bootloader; the first byte sent there
    resets the controller into flashing mode. `levacap` and the library refuse
@@ -87,6 +89,7 @@ go run ./cmd/levacap capture -scenario stream          # 2. idle report stream
 go run ./cmd/levacap capture -scenario stream -out captures/warmup   # 3. warmup
 go run ./cmd/levacap capture -scenario shot            # 4. a real shot
 go run ./cmd/levacap capture -scenario shot -out captures/shot2      # 5. second shot
+go run ./cmd/levacap capture -scenario display -out captures/warmup-display  # 6. warm-up to READY
 ```
 
 1. **commands** — sends `MCh MC? MCu MCm MCb MCf` with a 1 s pause between
@@ -100,7 +103,16 @@ go run ./cmd/levacap capture -scenario shot -out captures/shot2      # 5. second
    because the scenario name decides the subdirectory.)
 4. **shots, 1 or 2** — scenario `shot` prints "pull the shot now, press Enter
    when done". Start recording, pull a real shot, press Enter afterwards.
-5. **optional: second-client fan-out** — while a `stream` capture runs, open
+6. **warm-up to READY, with the display (20–30 min)** — scenario `display`
+   records the report stream (`MCr`) and the LCD mirror (`MC@`, 10 frames/s)
+   together, about 2 KB/s. Start it while the machine is in standby or eco
+   (cold is best), then wake the machine. Type `m` + Enter when you hear the
+   three READY beeps (and at anything else worth finding again); the marks
+   land in the manifest notes as milliseconds since start. An empty line
+   stops: `MC ` ends both streams. Purpose: the exact READY moment from the
+   display next to the full report data, to build the daemon's readiness
+   heuristic.
+7. **optional: second-client fan-out** — while a `stream` capture runs, open
    `nc rancilio 23` in another terminal, only read, then disconnect. Note in
    `manifest.json` whether both clients saw the same lines. This also covers
    the 4/5-client question below if you are willing to try.
@@ -111,7 +123,7 @@ Behavior of the tool you need to know:
   in the target directory, `levacap` exits 1 with "refusing to overwrite";
   use a different `-out` or `-force` (only when you meant to replace a
   *complete* capture).
-- **Ctrl-C is a clean stop for `stream` and `shot`.** Once recording has
+- **Ctrl-C is a clean stop for `stream`, `shot` and `display`.** Once recording has
   started, Ctrl-C does exactly what Enter does: `levacap` sends `MC `, writes a
   complete `log.jsonl` and `manifest.json`, and exits 0. Ctrl-C during the
   banner wait aborts without writing any files (exit 1). Ctrl-C during the
