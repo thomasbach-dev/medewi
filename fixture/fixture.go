@@ -19,6 +19,9 @@ const (
 	TX Dir = "tx"
 	// RX marks bytes received from the machine.
 	RX Dir = "rx"
+	// Note marks a plain-text annotation by the recorder (for example
+	// "dropped 3 lines"). It is not traffic: replay ignores it.
+	Note Dir = "note"
 )
 
 // Event is a single recorded chunk of raw traffic.
