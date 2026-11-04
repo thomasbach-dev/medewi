@@ -101,11 +101,11 @@ Terminal 1, the daemon (the `.envrc` above provides `MEDEWI_MACHINE_ADDR` and
 `MEDEWI_XML_PATH`):
 
 ```sh
-BIN=$HOME/tmp/medewi-bin
-DATA=$HOME/tmp/medewi-data
-nix develop --command go build -o "$BIN/" ./cmd/medewid ./cmd/medewictl
-mkdir -p "$DATA"
-"$BIN/medewid" -insecure-http -listen 127.0.0.1:8080 -db "$DATA/medewi.db"
+MEDEWI_BIN=$HOME/tmp/medewi-bin
+MEDEWI_DATA=$HOME/tmp/medewi-data
+nix develop --command go build -o "$MEDEWI_BIN/" ./cmd/medewid ./cmd/medewictl
+mkdir -p "$MEDEWI_DATA"
+"$MEDEWI_BIN/medewid" -insecure-http -listen 127.0.0.1:8080 -db "$MEDEWI_DATA/medewi.db"
 ```
 
 Expect `medewid serving … tls=false`, then `connected … firmware=…` and
@@ -122,12 +122,12 @@ machine is already in that state.
 Terminal 2, the client:
 
 ```sh
-BIN=$HOME/tmp/medewi-bin
+MEDEWI_BIN=$HOME/tmp/medewi-bin
 export MEDEWID_URL=http://127.0.0.1:8080
-"$BIN/medewictl" -insecure status
-"$BIN/medewictl" -insecure power eco        # active | eco | standby
+"$MEDEWI_BIN/medewictl" -insecure status
+"$MEDEWI_BIN/medewictl" -insecure power eco        # active | eco | standby
 mkdir -p private/backups
-"$BIN/medewictl" -insecure backup -out private/backups
+"$MEDEWI_BIN/medewictl" -insecure backup -out private/backups
 ```
 
 Pull a flush and a shot: they appear in `medewictl status` (`last_brew`)
