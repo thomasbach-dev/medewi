@@ -720,3 +720,46 @@ func TestRedactedNilSafe(t *testing.T) {
 		t.Error("nil log redacted")
 	}
 }
+
+func TestDumpQuietSurvivesReconnect(t *testing.T) {
+	clk := newClock()
+	l, dir := openLog(t, Config{Now: clk.Now})
+	a := l.Session()
+	tapSeq(clk, a, "rx:|secret\r\n", "+1s")
+	a.Close()
+	b := l.Session()
+	tapSeq(clk, b, "tx:MC?\r\n", "rx:Key\r\n")
+	b.Close()
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, evs := range readDir(t, dir) {
+		if got := kept(evs); len(got) != 0 {
+			t.Errorf("kept = %q", got)
+		}
+	}
+	if l.Redacted() != 2 {
+		t.Errorf("redacted = %d", l.Redacted())
+	}
+}
+
+func TestColonLedLineDropped(t *testing.T) {
+	evs, _ := runSteps(t, "tx:MC?\r\n", "rx::not hex at all\r\n", "rx:{r}\r\n")
+	if got := kept(evs); !eq(got, []string{"{r}\r\n"}) {
+		t.Errorf("kept = %q", got)
+	}
+}
+
+func TestMultiCommandTxParsedInOrder(t *testing.T) {
+	evs, _ := runSteps(t, "tx:MC?\r\nMCu\r\n", "rx:Key\r\n", "+1s", "tx:MC?\r\n", "rx:Key2\r\n")
+	if got := kept(evs); len(got) != 0 {
+		t.Errorf("kept = %q", got)
+	}
+}
+
+func TestBannerKeptDuringDumpQuiet(t *testing.T) {
+	evs, _ := runSteps(t, "tx:MCu\r\n", "rx:$id: leva! (3.2)\r\n")
+	if got := kept(evs); !eq(got, []string{"$id: leva! (3.2)\r\n"}) {
+		t.Errorf("kept = %q", got)
+	}
+}

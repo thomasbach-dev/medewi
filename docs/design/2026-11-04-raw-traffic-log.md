@@ -54,8 +54,8 @@ bytes, and roughly replayed through `levasim`.
      a command other than `MCu`/`MCm`, and other than the stream toggles
      `MCr`/`MC ` (no reply).
 
-   Dump lines — starting with `|` (MCu) or matching Intel HEX
-   `^:[0-9A-Fa-f]+$` (MCm) — are always dropped. A dump in sight also
+   Dump lines — starting with `|` (MCu) or `:` (Intel HEX, MCm;
+   no legitimate `:`-led reply is known) — are always dropped. A dump in sight also
    shuts the windows: a dump line or an `MCu`/`MCm` tx closes the open
    window and no window opens for `DumpQuiet` (60 s) after the latest of
    them. Reason: a real `MCu` reply interleaves letter-led lines (one of
@@ -63,7 +63,12 @@ bytes, and roughly replayed through `levasim`.
    far from any dump. Remaining risk, accepted: the first line of ANOTHER
    client's `MCu` reply (a letter-led header, before its first `|` line)
    arriving inside one of medewid's windows is kept; on the real capture
-   that header carries no key.
+   that header carries no key. The `DumpQuiet` clock is shared by all
+   sessions, so it survives reconnects once a dump line was seen. Also
+   accepted: a reconnect of medewid in the middle of another client's dump,
+   of which medewid never saw any line before, can keep letter-led lines of
+   that reply inside the new session's `MC?` window; only one client may
+   talk to the machine (CLAUDE.md), so this is not expected in practice.
 
    The window state is taken at a line's first byte; the shape is judged
    when the line completes. A line split into 4096-byte pieces is judged

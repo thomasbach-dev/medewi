@@ -98,6 +98,12 @@ type Log struct {
 	dropped     atomic.Uint64
 	redacted    atomic.Uint64
 
+	// Dump state is shared by all sessions: a dump seen in one keeps the
+	// windows of the next shut (a reconnect must not reopen them).
+	dumpMu   sync.Mutex
+	lastDump time.Time // latest MCu/MCm tx or dump line; zero at start
+	dumpSeq  uint64    // counts dump events
+
 	w writer // owned by the writer goroutine
 }
 
@@ -234,11 +240,9 @@ type Session struct {
 	decided bool
 	keep    bool
 	lineWin bool   // inside a reply window at the first byte
-	lineSeq uint64 // dumpSeq at the first byte
+	lineSeq uint64 // Log dumpSeq at the first byte
 
 	windowUntil time.Time // reply window open until then
-	lastDump    time.Time // latest MCu/MCm tx or dump line; zero at start
-	dumpSeq     uint64    // counts dump events
 	pending     int       // dropped lines not yet announced by a note
 }
 
@@ -276,7 +280,8 @@ func (s *Session) tx(now time.Time, p []byte) {
 		case bytes.HasPrefix(cmd, []byte("MCu")), bytes.HasPrefix(cmd, []byte("MCm")):
 			s.dump(now)
 		case bytes.Equal(cmd, []byte("MCr")), bytes.Equal(cmd, []byte("MC ")):
-		case now.Sub(s.lastDump) < cfg.DumpQuiet:
+		case now.Sub(s.l.lastDumpAt()) < cfg.DumpQuiet:
+			// quiet: a dump is recent, no window
 		default:
 			s.windowUntil = now.Add(cfg.ReplyWindow)
 		}
@@ -286,8 +291,14 @@ func (s *Session) tx(now time.Time, p []byte) {
 // dump records a dump in sight: the window closes and the quiet period
 // restarts; the caller holds s.mu.
 func (s *Session) dump(now time.Time) {
-	s.lastDump, s.windowUntil = now, time.Time{}
-	s.dumpSeq++
+	s.windowUntil = time.Time{}
+	s.l.dumpMu.Lock()
+	defer s.l.dumpMu.Unlock()
+	// Never move back: another session's Tap may carry an older now.
+	if now.After(s.l.lastDump) {
+		s.l.lastDump = now
+	}
+	s.l.dumpSeq++
 }
 
 // rx splits p into lines; the caller holds s.mu.
@@ -296,7 +307,7 @@ func (s *Session) rx(now time.Time, p []byte) {
 		if len(s.buf) == 0 {
 			s.bufAt = now
 			if !s.decided {
-				s.lineWin, s.lineSeq = now.Before(s.windowUntil), s.dumpSeq
+				s.lineWin, s.lineSeq = now.Before(s.windowUntil), s.l.dumpSeqNow()
 			}
 		}
 		n := len(p)
@@ -337,28 +348,32 @@ func (s *Session) piece(now time.Time, data []byte, complete bool) {
 }
 
 // judge decides from the start of a line whether it is kept. A dump line
-// (| or Intel HEX so far) is never kept and records a dump. Otherwise
+// (| or :, the Intel HEX of MCm) is never kept and records a dump. Otherwise
 // reports and banners are kept, and anything else only inside the window
 // the line started in, provided no dump happened since its first byte.
 func (s *Session) judge(now time.Time, data []byte) bool {
 	line := bytes.TrimRight(data, "\r\n")
-	if len(line) > 0 && (line[0] == '|' || line[0] == ':' && isHex(line[1:])) {
+	if len(line) > 0 && (line[0] == '|' || line[0] == ':') {
 		s.dump(now)
 		return false
 	}
 	if len(line) > 0 && line[0] == '{' || bytes.HasPrefix(line, []byte("$id:")) {
 		return true
 	}
-	return s.lineWin && s.lineSeq == s.dumpSeq
+	return s.lineWin && s.lineSeq == s.l.dumpSeqNow()
 }
 
-func isHex(b []byte) bool {
-	for _, c := range b {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
-			return false
-		}
-	}
-	return true
+// lastDumpAt is the time of the latest dump of any session.
+func (l *Log) lastDumpAt() time.Time {
+	l.dumpMu.Lock()
+	defer l.dumpMu.Unlock()
+	return l.lastDump
+}
+
+func (l *Log) dumpSeqNow() uint64 {
+	l.dumpMu.Lock()
+	defer l.dumpMu.Unlock()
+	return l.dumpSeq
 }
 
 // flushNote queues the note for the lines dropped since the last kept
