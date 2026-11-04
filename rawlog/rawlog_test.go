@@ -500,3 +500,223 @@ func TestAccessorsNilSafe(t *testing.T) {
 		t.Error("nil log counts")
 	}
 }
+
+// tapSeq feeds a session; steps are "tx:...", "rx:..." or "+5s" (clock step).
+func tapSeq(clk *fakeClock, s *Session, steps ...string) {
+	for _, st := range steps {
+		switch {
+		case strings.HasPrefix(st, "tx:"):
+			s.Tap("tx", []byte(st[3:]))
+		case strings.HasPrefix(st, "rx:"):
+			s.Tap("rx", []byte(st[3:]))
+		case strings.HasPrefix(st, "+"):
+			d, err := time.ParseDuration(st[1:])
+			if err != nil {
+				panic(err)
+			}
+			clk.Advance(d)
+		}
+	}
+}
+
+// runSteps runs steps in one session and returns the events and the log.
+func runSteps(t *testing.T, steps ...string) ([]fixture.Event, *Log) {
+	t.Helper()
+	clk := newClock()
+	l, dir := openLog(t, Config{Now: clk.Now})
+	s := l.Session()
+	tapSeq(clk, s, steps...)
+	s.Close()
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	files := readDir(t, dir)
+	if len(files) == 0 {
+		return nil, l
+	}
+	if len(files) != 1 {
+		t.Fatalf("files = %d", len(files))
+	}
+	return files[0], l
+}
+
+func kept(evs []fixture.Event) []string {
+	var out []string
+	for _, ev := range evs {
+		if ev.Dir == fixture.RX {
+			out = append(out, string(ev.Data))
+		}
+	}
+	return out
+}
+
+func notes(evs []fixture.Event) []string {
+	var out []string
+	for _, ev := range evs {
+		if ev.Dir == fixture.Note {
+			out = append(out, string(ev.Data))
+		}
+	}
+	return out
+}
+
+func eq(a, b []string) bool { return strings.Join(a, "\x00") == strings.Join(b, "\x00") }
+
+func TestKeepsReportsBannersAndReplies(t *testing.T) {
+	evs, l := runSteps(t, "tx:MC?\r\n", "rx:XML=x\r\n{r}\r\n$id: leva! (3.2)\r\n")
+	if got := kept(evs); !eq(got, []string{"XML=x\r\n", "{r}\r\n", "$id: leva! (3.2)\r\n"}) {
+		t.Errorf("kept = %q", got)
+	}
+	if l.Redacted() != 0 || len(notes(evs)) != 0 {
+		t.Errorf("redacted %d notes %q", l.Redacted(), notes(evs))
+	}
+}
+
+func TestDropsUnsolicitedLines(t *testing.T) {
+	evs, l := runSteps(t, "rx:XML=x\r\nhello\r\n{r}\r\n")
+	if got := kept(evs); !eq(got, []string{"{r}\r\n"}) {
+		t.Errorf("kept = %q", got)
+	}
+	if got := notes(evs); !eq(got, []string{"dropped 2 lines"}) {
+		t.Errorf("notes = %q", got)
+	}
+	if len(evs) != 2 || evs[0].Dir != fixture.Note {
+		t.Errorf("note must precede the kept line: %+v", evs)
+	}
+	if l.Redacted() != 2 {
+		t.Errorf("redacted = %d", l.Redacted())
+	}
+}
+
+func TestNoteSingularAndAtClose(t *testing.T) {
+	evs, _ := runSteps(t, "tx:MC?\r\n", "rx:ok\r\n", "+10s", "rx:late\r\n")
+	if got := notes(evs); !eq(got, []string{"dropped 1 line"}) {
+		t.Errorf("notes = %q", got)
+	}
+	if last := evs[len(evs)-1]; last.Dir != fixture.Note {
+		t.Errorf("note not at the end: %+v", evs)
+	}
+}
+
+func TestNoteBeforeNextTx(t *testing.T) {
+	evs, _ := runSteps(t, "rx:junk\r\n", "tx:MC?\r\n", "rx:ok\r\n")
+	if len(evs) != 3 || evs[0].Dir != fixture.Note || evs[1].Dir != fixture.TX {
+		t.Errorf("events = %+v", evs)
+	}
+}
+
+func TestDumpReplyDropped(t *testing.T) {
+	evs, l := runSteps(t,
+		"tx:MCu\r\n", "rx:|secret 1\r\n{r1}\r\nKEY=x\r\n",
+		"tx:MCm\r\n", "rx::10000000AA\r\n:00000001FF\r\n{r2}\r\n")
+	if got := kept(evs); !eq(got, []string{"{r1}\r\n", "{r2}\r\n"}) {
+		t.Errorf("kept = %q", got)
+	}
+	for _, ev := range evs {
+		for _, bad := range []string{"secret", "KEY=", ":1000"} {
+			if strings.Contains(string(ev.Data), bad) {
+				t.Errorf("leak %q in %+v", bad, ev)
+			}
+		}
+	}
+	if l.Redacted() != 4 {
+		t.Errorf("redacted = %d", l.Redacted())
+	}
+}
+
+func TestDumpLineClosesWindow(t *testing.T) {
+	evs, _ := runSteps(t, "tx:MC?\r\n", "rx:XML=x\r\n|secret\r\nKey line\r\n")
+	if got := kept(evs); !eq(got, []string{"XML=x\r\n"}) {
+		t.Errorf("kept = %q", got)
+	}
+}
+
+func TestDumpQuietBlocksWindows(t *testing.T) {
+	evs, _ := runSteps(t,
+		"tx:MCu\r\n", "+10s", "tx:MCa\r\n", "rx:Key tail\r\n",
+		"+51s", "tx:MC?\r\n", "rx:XML=x\r\n")
+	if got := kept(evs); !eq(got, []string{"XML=x\r\n"}) {
+		t.Errorf("kept = %q", got)
+	}
+}
+
+func TestDumpLineStartsQuiet(t *testing.T) {
+	evs, _ := runSteps(t, "rx::10000000AA\r\n", "+10s", "tx:MC?\r\n", "rx:Key\r\n")
+	if got := kept(evs); len(got) != 0 {
+		t.Errorf("kept = %q", got)
+	}
+}
+
+func TestWindowExpires(t *testing.T) {
+	evs, _ := runSteps(t, "tx:MCa\r\n", "+6s", "rx:late\r\n")
+	if got := kept(evs); len(got) != 0 {
+		t.Errorf("kept = %q", got)
+	}
+}
+
+func TestStreamTogglesOpenNoWindow(t *testing.T) {
+	evs, _ := runSteps(t, "tx:MCr\r\n", "rx:x\r\n", "tx:MC \r\n", "rx:y\r\n")
+	if got := kept(evs); len(got) != 0 {
+		t.Errorf("kept = %q", got)
+	}
+}
+
+func TestLongLineJudgedOnce(t *testing.T) {
+	evs, l := runSteps(t, "rx:|"+strings.Repeat("a", 5000)+"\r\n", "rx:{r}\r\n")
+	if got := kept(evs); !eq(got, []string{"{r}\r\n"}) {
+		t.Errorf("kept = %q", got)
+	}
+	if l.Redacted() != 1 {
+		t.Errorf("redacted = %d, want 1 (one line)", l.Redacted())
+	}
+}
+
+func TestLongLineSplitAcrossTapsAndPieces(t *testing.T) {
+	// A dump line longer than a piece arriving in chunks, then a report.
+	steps := []string{"tx:MC?\r\n", "rx:|"}
+	for range 5 {
+		steps = append(steps, "rx:"+strings.Repeat("a", 1000))
+	}
+	steps = append(steps, "rx:\r\n", "rx:{r}\r\n")
+	evs, _ := runSteps(t, steps...)
+	if got := kept(evs); !eq(got, []string{"{r}\r\n"}) {
+		t.Errorf("kept %d events", len(got))
+	}
+}
+
+func TestLongKeptLineAllPiecesKept(t *testing.T) {
+	evs, _ := runSteps(t, "rx:{"+strings.Repeat("x", 5000)+"\r\n")
+	if got := strings.Join(kept(evs), ""); len(got) != 5003 {
+		t.Errorf("kept %d bytes", len(got))
+	}
+}
+
+func TestPartialDumpAtCloseDropped(t *testing.T) {
+	evs, l := runSteps(t, "tx:MC?\r\n", "rx:|sec")
+	if got := kept(evs); len(got) != 0 {
+		t.Errorf("kept = %q", got)
+	}
+	if l.Redacted() != 1 {
+		t.Errorf("redacted = %d", l.Redacted())
+	}
+	evs, _ = runSteps(t, "tx:MC?\r\n", "rx::10AB")
+	if got := kept(evs); len(got) != 0 {
+		t.Errorf("hex partial kept = %q", got)
+	}
+}
+
+func TestDumpTxMidLineDropsLetterLine(t *testing.T) {
+	// A letter line begun inside a window, but an MCu goes out before it
+	// completes: it is not kept.
+	evs, _ := runSteps(t, "tx:MC?\r\n", "rx:Ke", "tx:MCu\r\n", "rx:y\r\n")
+	if got := kept(evs); len(got) != 0 {
+		t.Errorf("kept = %q", got)
+	}
+}
+
+func TestRedactedNilSafe(t *testing.T) {
+	var l *Log
+	if l.Redacted() != 0 {
+		t.Error("nil log redacted")
+	}
+}

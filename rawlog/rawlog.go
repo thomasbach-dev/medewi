@@ -96,6 +96,7 @@ type Log struct {
 
 	writeErrors atomic.Uint64
 	dropped     atomic.Uint64
+	redacted    atomic.Uint64
 
 	w writer // owned by the writer goroutine
 }
@@ -168,6 +169,15 @@ func (l *Log) Dropped() uint64 {
 	return l.dropped.Load()
 }
 
+// Redacted is the number of received lines the allowlist dropped (a line
+// split into pieces counts once).
+func (l *Log) Redacted() uint64 {
+	if l == nil {
+		return 0
+	}
+	return l.redacted.Load()
+}
+
 // WriteErrors is the number of open, write, flush and close errors.
 func (l *Log) WriteErrors() uint64 {
 	if l == nil {
@@ -205,6 +215,11 @@ func (l *Log) run() {
 
 // Session is the traffic of one connection. All methods are no-ops on a
 // nil receiver.
+//
+// Received lines are an allowlist (spec requirement 5): the machine's
+// MCu/MCm replies carry the license key and must never reach a file. A line
+// is kept only if it is a report ({), a banner ($id:) or inside a reply
+// window; dump lines are never kept and shut the windows.
 type Session struct {
 	l   *Log
 	seq uint64
@@ -213,6 +228,18 @@ type Session struct {
 	closed bool
 	buf    []byte    // partial rx line
 	bufAt  time.Time // arrival of its first byte
+
+	// Current rx line: decided once, when the line completes or its first
+	// piece is emitted; later pieces follow keep.
+	decided bool
+	keep    bool
+	lineWin bool   // inside a reply window at the first byte
+	lineSeq uint64 // dumpSeq at the first byte
+
+	windowUntil time.Time // reply window open until then
+	lastDump    time.Time // latest MCu/MCm tx or dump line; zero at start
+	dumpSeq     uint64    // counts dump events
+	pending     int       // dropped lines not yet announced by a note
 }
 
 // Tap records p; its signature fits leva.Conn.Tap. It copies p, never
@@ -229,10 +256,38 @@ func (s *Session) Tap(dir string, p []byte) {
 	}
 	switch fixture.Dir(dir) {
 	case fixture.TX:
+		s.tx(now, p)
+		s.flushNote(now)
 		s.l.enqueue(item{sess: s, at: now, dir: fixture.TX, data: bytes.Clone(p)})
 	case fixture.RX:
 		s.rx(now, p)
 	}
+}
+
+// tx updates the reply window from the commands in p (all of them: a
+// write may carry several); the caller holds s.mu. MCu/MCm (any suffix)
+// are dump commands: they close the window and start the quiet period. The
+// stream toggles MCr and "MC " get no reply. Any other command opens a
+// window unless a dump is recent.
+func (s *Session) tx(now time.Time, p []byte) {
+	cfg := &s.l.cfg
+	for _, cmd := range bytes.FieldsFunc(p, func(r rune) bool { return r == '\r' || r == '\n' }) {
+		switch {
+		case bytes.HasPrefix(cmd, []byte("MCu")), bytes.HasPrefix(cmd, []byte("MCm")):
+			s.dump(now)
+		case bytes.Equal(cmd, []byte("MCr")), bytes.Equal(cmd, []byte("MC ")):
+		case now.Sub(s.lastDump) < cfg.DumpQuiet:
+		default:
+			s.windowUntil = now.Add(cfg.ReplyWindow)
+		}
+	}
+}
+
+// dump records a dump in sight: the window closes and the quiet period
+// restarts; the caller holds s.mu.
+func (s *Session) dump(now time.Time) {
+	s.lastDump, s.windowUntil = now, time.Time{}
+	s.dumpSeq++
 }
 
 // rx splits p into lines; the caller holds s.mu.
@@ -240,6 +295,9 @@ func (s *Session) rx(now time.Time, p []byte) {
 	for len(p) > 0 {
 		if len(s.buf) == 0 {
 			s.bufAt = now
+			if !s.decided {
+				s.lineWin, s.lineSeq = now.Before(s.windowUntil), s.dumpSeq
+			}
 		}
 		n := len(p)
 		nl := bytes.IndexByte(p, '\n')
@@ -250,20 +308,75 @@ func (s *Session) rx(now time.Time, p []byte) {
 		p = p[n:]
 		for len(s.buf) >= maxPiece || (nl >= 0 && len(s.buf) > 0 && s.buf[len(s.buf)-1] == '\n') {
 			k := min(len(s.buf), maxPiece)
-			s.emit(s.buf[:k])
+			s.piece(now, s.buf[:k], k == len(s.buf) && s.buf[k-1] == '\n')
 			s.buf = bytes.Clone(s.buf[k:])
 			s.bufAt = now
 		}
 	}
 }
 
-// emit queues data as one rx event stamped s.bufAt; the caller holds s.mu.
-func (s *Session) emit(data []byte) {
-	s.l.enqueue(item{sess: s, at: s.bufAt, dir: fixture.RX, data: bytes.Clone(data)})
+// piece handles one chunk of the current rx line: the first piece decides
+// for the whole line; complete says the line ends with this piece. The
+// caller holds s.mu.
+func (s *Session) piece(now time.Time, data []byte, complete bool) {
+	if !s.decided {
+		s.decided = true
+		s.keep = s.judge(now, data)
+		if !s.keep {
+			s.pending++
+			s.l.redacted.Add(1)
+		}
+	}
+	if s.keep {
+		s.flushNote(s.bufAt)
+		s.l.enqueue(item{sess: s, at: s.bufAt, dir: fixture.RX, data: bytes.Clone(data)})
+	}
+	if complete {
+		s.decided = false
+	}
 }
 
-// Close emits the partial rx line and ends the session's file. It is
-// idempotent.
+// judge decides from the start of a line whether it is kept. A dump line
+// (| or Intel HEX so far) is never kept and records a dump. Otherwise
+// reports and banners are kept, and anything else only inside the window
+// the line started in, provided no dump happened since its first byte.
+func (s *Session) judge(now time.Time, data []byte) bool {
+	line := bytes.TrimRight(data, "\r\n")
+	if len(line) > 0 && (line[0] == '|' || line[0] == ':' && isHex(line[1:])) {
+		s.dump(now)
+		return false
+	}
+	if len(line) > 0 && line[0] == '{' || bytes.HasPrefix(line, []byte("$id:")) {
+		return true
+	}
+	return s.lineWin && s.lineSeq == s.dumpSeq
+}
+
+func isHex(b []byte) bool {
+	for _, c := range b {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+// flushNote queues the note for the lines dropped since the last kept
+// event, stamped at; the caller holds s.mu.
+func (s *Session) flushNote(at time.Time) {
+	if s.pending == 0 {
+		return
+	}
+	text := fmt.Sprintf("dropped %d lines", s.pending)
+	if s.pending == 1 {
+		text = "dropped 1 line"
+	}
+	s.pending = 0
+	s.l.enqueue(item{sess: s, at: at, dir: fixture.Note, data: []byte(text)})
+}
+
+// Close judges and emits the partial rx line, announces dropped lines and
+// ends the session's file. It is idempotent.
 func (s *Session) Close() {
 	if s == nil {
 		return
@@ -277,13 +390,15 @@ func (s *Session) Close() {
 	if s.l.closed.Load() {
 		return // the queue is dead: nothing to emit into
 	}
+	now := s.l.cfg.Now()
 	if len(s.buf) > 0 {
-		s.emit(s.buf)
+		s.piece(now, s.buf, true)
 		s.buf = nil
 	}
+	s.flushNote(now)
 	// Accepted: with a full buffer the end marker is dropped; the file is then
 	// closed at the next session, rotation or Log.Close.
-	s.l.enqueue(item{sess: s, at: s.l.cfg.Now(), end: true})
+	s.l.enqueue(item{sess: s, at: now, end: true})
 }
 
 // writer owns the open file; only the writer goroutine touches it.
