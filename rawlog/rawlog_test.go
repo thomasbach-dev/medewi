@@ -124,11 +124,19 @@ func TestSessionWritesLinesAndTX(t *testing.T) {
 	if !regexp.MustCompile(`^\d{8}T\d{6}\.\d{3}Z\.jsonl\.gz$`).MatchString(filepath.Base(name)) {
 		t.Errorf("name %q", name)
 	}
-	if fi, _ := os.Stat(name); fi.Mode().Perm() != 0o600 {
+	fi, err := os.Stat(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
 		t.Errorf("file mode %v", fi.Mode().Perm())
 	}
-	if fi, _ := os.Stat(dir); fi.Mode().Perm() != 0o700 {
-		t.Errorf("dir mode %v", fi.Mode().Perm())
+	di, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if di.Mode().Perm() != 0o700 {
+		t.Errorf("dir mode %v", di.Mode().Perm())
 	}
 }
 
@@ -219,6 +227,9 @@ func TestTapAfterClose(t *testing.T) {
 	s2.Tap("rx", []byte("{later}\r\n"))
 	s2.Close()
 	_ = l.Close() // idempotent
+	if n := len(l.items); n != 0 {
+		t.Errorf("queue holds %d items after late taps", n)
+	}
 
 	files := readDir(t, dir)
 	if len(files) != 1 || len(files[0]) != 1 {
@@ -262,4 +273,97 @@ func TestNilSafe(t *testing.T) {
 	if err := l.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestOpenChmodsExistingDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "raw")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := openLog(t, Config{Dir: dir})
+	_ = l.Close()
+	fi, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o700 {
+		t.Errorf("dir mode %v", fi.Mode().Perm())
+	}
+}
+
+func TestCloseReleasesBlockedWriteHook(t *testing.T) {
+	entered := make(chan struct{}, 1)
+	l, _ := openLog(t, Config{writeHook: func(stop <-chan struct{}) {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-stop
+	}})
+	s := l.Session()
+	s.Tap("rx", []byte("{a}\r\n"))
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("hook never called")
+	}
+	done := make(chan struct{})
+	go func() { _ = l.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Close blocked on the write hook")
+	}
+}
+
+func TestNoNegativeTAfterRotation(t *testing.T) {
+	clk := newClock()
+	l, dir := openLog(t, Config{Now: clk.Now, RotateEvery: time.Minute})
+	s := l.Session()
+	s.Tap("rx", []byte("{a}\r\n")) // opens the first file
+	clk.Advance(30 * time.Second)
+	s.Tap("rx", []byte("{b")) // partial, stamped +30 s
+	clk.Advance(31 * time.Second)
+	s.Tap("tx", []byte("MC?\r\n")) // rotates
+	s.Tap("rx", []byte("}\r\n"))   // completes the line stamped before the rotation
+	s.Close()
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	files := readDir(t, dir)
+	if len(files) != 2 {
+		t.Fatalf("files = %d", len(files))
+	}
+	for _, evs := range files {
+		for _, ev := range evs {
+			if ev.T < 0 {
+				t.Errorf("negative t: %+v", ev)
+			}
+		}
+	}
+}
+
+func TestConcurrentTapsRacingClose(t *testing.T) {
+	l, _ := openLog(t, Config{Buffer: 16})
+	s := l.Session()
+	var wg sync.WaitGroup
+	for i := range 6 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dir := "rx"
+			if i%2 == 0 {
+				dir = "tx"
+			}
+			for range 500 {
+				s.Tap(dir, []byte("{x}\r\n"))
+			}
+		}()
+	}
+	_ = l.Close()
+	s.Close()
+	wg.Wait()
 }

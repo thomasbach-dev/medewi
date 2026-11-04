@@ -43,7 +43,7 @@ type Config struct {
 	Buffer      int              // queued events, default 4096
 	Now         func() time.Time // default time.Now; must be goroutine-safe
 
-	writeHook func() // tests only: called before each write
+	writeHook func(stop <-chan struct{}) // tests only: called before each write; stop is closed by Log.Close
 }
 
 func (c *Config) defaults() {
@@ -102,6 +102,11 @@ func Open(cfg Config) (*Log, error) {
 	cfg.defaults()
 	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
 		return nil, fmt.Errorf("rawlog: create dir: %w", err)
+	}
+	// MkdirAll leaves an existing directory alone (systemd may have made it
+	// 0755); the raw traffic must not be world-readable.
+	if err := os.Chmod(cfg.Dir, 0o700); err != nil {
+		return nil, fmt.Errorf("rawlog: chmod dir: %w", err)
 	}
 	l := &Log{
 		cfg:   cfg,
@@ -165,7 +170,7 @@ func (l *Log) run() {
 				case it := <-l.items:
 					l.w.handle(it)
 				default:
-					err := l.w.closeFile()
+					err := l.w.finish()
 					l.mu.Lock()
 					l.closeErr = err
 					l.mu.Unlock()
@@ -247,10 +252,15 @@ func (s *Session) Close() {
 		return
 	}
 	s.closed = true
+	if s.l.closed.Load() {
+		return // the queue is dead: nothing to emit into
+	}
 	if len(s.buf) > 0 {
 		s.emit(s.buf)
 		s.buf = nil
 	}
+	// Accepted: with a full buffer the end marker is dropped; the file is then
+	// closed at the next session, rotation or Log.Close.
 	s.l.enqueue(item{sess: s, at: s.l.cfg.Now(), end: true})
 }
 
@@ -275,11 +285,11 @@ func (w *writer) handle(it item) {
 	case it.sess.seq < w.seq, it.sess.seq == w.seq && w.ended:
 		return // no longer the current session
 	case it.sess.seq > w.seq:
-		_ = w.closeFile()
+		_ = w.finish()
 		w.seq, w.ended, w.broken = it.sess.seq, false, false
 	}
 	if it.end {
-		_ = w.closeFile()
+		_ = w.finish()
 		w.ended = true
 		return
 	}
@@ -289,7 +299,7 @@ func (w *writer) handle(it item) {
 func (w *writer) write(it item) {
 	cfg := &w.l.cfg
 	if w.f != nil && it.at.Sub(w.start) >= cfg.RotateEvery {
-		_ = w.closeFile()
+		_ = w.finish()
 	}
 	if w.f == nil {
 		if w.broken && it.at.Sub(w.brokenA) < cfg.RotateEvery {
@@ -302,9 +312,11 @@ func (w *writer) write(it item) {
 		}
 	}
 	if cfg.writeHook != nil {
-		cfg.writeHook()
+		cfg.writeHook(w.l.quit)
 	}
-	ev := fixture.Event{T: it.at.Sub(w.start).Milliseconds(), Dir: it.dir, Data: it.data}
+	// Clamp: a partial line stamped before a rotation that a later item
+	// triggered would otherwise get a negative t (spec req 3).
+	ev := fixture.Event{T: max(0, it.at.Sub(w.start).Milliseconds()), Dir: it.dir, Data: it.data}
 	if err := w.enc.Encode(ev); err != nil {
 		w.fail(err, it.at)
 		return
@@ -340,6 +352,7 @@ func (w *writer) open(at time.Time) error {
 func (w *writer) fail(err error, at time.Time) {
 	w.l.writeErrors.Add(1)
 	slog.Error("rawlog: write failed, abandoning file", "err", err)
+	// The file is abandoned: its close error adds nothing.
 	_ = w.closeFile()
 	w.broken, w.brokenA = true, at
 }
@@ -353,6 +366,16 @@ func (w *writer) flush() {
 		return
 	}
 	w.dirty = false
+}
+
+// finish closes the file and counts and logs a failure (spec req 6).
+func (w *writer) finish() error {
+	err := w.closeFile()
+	if err != nil {
+		w.l.writeErrors.Add(1)
+		slog.Error("rawlog: closing file failed", "err", err)
+	}
+	return err
 }
 
 // closeFile finishes the gzip stream and closes the file, if any.
