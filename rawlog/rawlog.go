@@ -14,6 +14,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -93,6 +95,7 @@ type Log struct {
 	closeErr  error
 
 	writeErrors atomic.Uint64
+	dropped     atomic.Uint64
 
 	w writer // owned by the writer goroutine
 }
@@ -115,6 +118,7 @@ func Open(cfg Config) (*Log, error) {
 		done:  make(chan struct{}),
 	}
 	l.w.l = l
+	l.w.prune("")
 	go l.run()
 	return l, nil
 }
@@ -151,7 +155,25 @@ func (l *Log) enqueue(it item) {
 	select {
 	case l.items <- it:
 	default:
+		l.dropped.Add(1)
 	}
+}
+
+// Dropped is the number of events (or end markers) dropped because the
+// buffer was full.
+func (l *Log) Dropped() uint64 {
+	if l == nil {
+		return 0
+	}
+	return l.dropped.Load()
+}
+
+// WriteErrors is the number of open, write, flush and close errors.
+func (l *Log) WriteErrors() uint64 {
+	if l == nil {
+		return 0
+	}
+	return l.writeErrors.Load()
 }
 
 func (l *Log) run() {
@@ -272,6 +294,7 @@ type writer struct {
 	ended bool   // its end marker was seen
 
 	f       *os.File
+	path    string // name of f
 	gz      *gzip.Writer
 	enc     *json.Encoder
 	start   time.Time // open time of f
@@ -338,13 +361,79 @@ func (w *writer) open(at time.Time) error {
 		if err != nil {
 			return err
 		}
-		w.f, w.start = f, at
+		w.f, w.path, w.start = f, path, at
 		w.gz = gzip.NewWriter(f)
 		w.enc = json.NewEncoder(w.gz)
 		w.dirty = false
+		w.prune(path)
 		return nil
 	}
 	return fmt.Errorf("no free file name near %s", at.UTC().Format(nameLayout))
+}
+
+// prune deletes log files older than Retention (by name time), then the
+// oldest ones while the total size exceeds MaxBytes. It never touches open
+// or files whose names do not parse. Errors are logged, not counted.
+func (w *writer) prune(open string) {
+	cfg := &w.l.cfg
+	if cfg.Retention <= 0 && cfg.MaxBytes <= 0 {
+		return
+	}
+	entries, err := os.ReadDir(cfg.Dir)
+	if err != nil {
+		slog.Warn("rawlog: prune: reading dir failed", "err", err)
+		return
+	}
+	type logFile struct {
+		path string
+		at   time.Time
+		size int64
+	}
+	var files []logFile // sorted by name, hence by time
+	var total int64
+	now := cfg.Now()
+	for _, e := range entries {
+		name, ok := strings.CutSuffix(e.Name(), nameSuffix)
+		if !ok || e.IsDir() {
+			continue
+		}
+		at, err := time.Parse(nameLayout, name)
+		if err != nil {
+			continue
+		}
+		path := filepath.Join(cfg.Dir, e.Name())
+		if path == open {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			slog.Warn("rawlog: prune: stat failed", "file", path, "err", err)
+			continue
+		}
+		if cfg.Retention > 0 && now.Sub(at) > cfg.Retention {
+			w.remove(path)
+			continue
+		}
+		files = append(files, logFile{path, at, info.Size()})
+		total += info.Size()
+	}
+	if cfg.MaxBytes <= 0 {
+		return
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].at.Before(files[j].at) })
+	for _, f := range files {
+		if total <= cfg.MaxBytes {
+			return
+		}
+		w.remove(f.path)
+		total -= f.size
+	}
+}
+
+func (w *writer) remove(path string) {
+	if err := os.Remove(path); err != nil {
+		slog.Warn("rawlog: prune: remove failed", "file", path, "err", err)
+	}
 }
 
 // fail counts a write error and abandons the current file until the next

@@ -367,3 +367,136 @@ func TestConcurrentTapsRacingClose(t *testing.T) {
 	s.Close()
 	wg.Wait()
 }
+
+func writeFile(t *testing.T, dir, name string, size int) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), make([]byte, size), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func exists(dir, name string) bool {
+	_, err := os.Stat(filepath.Join(dir, name))
+	return err == nil
+}
+
+func TestPruneByAge(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "raw")
+	writeFile(t, dir, "20261020T000000.000Z.jsonl.gz", 10)
+	writeFile(t, dir, "20261103T000000.000Z.jsonl.gz", 10)
+	writeFile(t, dir, "notes.txt", 10)
+	clk := newClock()
+	openLog(t, Config{Dir: dir, Now: clk.Now, Retention: 7 * 24 * time.Hour})
+	if exists(dir, "20261020T000000.000Z.jsonl.gz") {
+		t.Error("old file survived")
+	}
+	for _, n := range []string{"20261103T000000.000Z.jsonl.gz", "notes.txt"} {
+		if !exists(dir, n) {
+			t.Errorf("%s was deleted", n)
+		}
+	}
+}
+
+func TestPruneBySize(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "raw")
+	writeFile(t, dir, "20261101T000000.000Z.jsonl.gz", 1000)
+	writeFile(t, dir, "20261102T000000.000Z.jsonl.gz", 1000)
+	writeFile(t, dir, "20261103T000000.000Z.jsonl.gz", 1000)
+	writeFile(t, dir, "other.bin", 5000) // not a log: not counted
+	openLog(t, Config{Dir: dir, Now: newClock().Now, MaxBytes: 2500})
+	if exists(dir, "20261101T000000.000Z.jsonl.gz") {
+		t.Error("oldest file survived")
+	}
+	for _, n := range []string{"20261102T000000.000Z.jsonl.gz", "20261103T000000.000Z.jsonl.gz", "other.bin"} {
+		if !exists(dir, n) {
+			t.Errorf("%s was deleted", n)
+		}
+	}
+}
+
+func TestPruneSkipsOpenFile(t *testing.T) {
+	clk := newClock()
+	l, dir := openLog(t, Config{Now: clk.Now, MaxBytes: 1, FlushEvery: 10 * time.Millisecond})
+	s := l.Session()
+	s.Tap("rx", []byte("{a}\r\n"))
+	s.Close()
+	clk.Advance(time.Second)
+	s = l.Session()
+	s.Tap("rx", []byte("{b}\r\n"))
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		names := fileNames(t, dir)
+		if len(names) == 1 {
+			evs, err := ReadFile(names[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(evs) == 1 && string(evs[0].Data) == "{b}\r\n" {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("want only the open file with its event, got %v", names)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestDropsWhenFull(t *testing.T) {
+	l, _ := openLog(t, Config{Buffer: 1, writeHook: func(stop <-chan struct{}) { <-stop }})
+	s := l.Session()
+	start := time.Now()
+	for range 100 {
+		s.Tap("tx", []byte("MCh\r\n"))
+	}
+	if d := time.Since(start); d > 100*time.Millisecond {
+		t.Errorf("100 taps took %v", d)
+	}
+	if l.Dropped() == 0 {
+		t.Error("nothing dropped")
+	}
+	done := make(chan struct{})
+	go func() { _ = l.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Close blocked")
+	}
+}
+
+func TestWriteErrorKeepsRunning(t *testing.T) {
+	l, dir := openLog(t, Config{})
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := l.Session()
+	s.Tap("rx", []byte("{a}\r\n"))
+	deadline := time.Now().Add(time.Second)
+	for l.WriteErrors() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("no write error counted")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	s.Tap("rx", []byte("{b}\r\n")) // still accepted
+	done := make(chan struct{})
+	go func() { _ = l.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Close hung")
+	}
+}
+
+func TestAccessorsNilSafe(t *testing.T) {
+	var l *Log
+	if l.Dropped() != 0 || l.WriteErrors() != 0 {
+		t.Error("nil log counts")
+	}
+}
