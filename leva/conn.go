@@ -413,10 +413,12 @@ func (c *Conn) StartReports(ctx context.Context) (<-chan []byte, error) {
 }
 
 // StartDisplay sends "MC@": the machine then mirrors its LCD as one
-// "<BKL…>" frame line every 100 ms until "MC " (StopReports, which stops
-// both streams). Frames are only visible to taps; they never count as
-// command replies, so Command keeps working while the display streams.
-// Never send the display protocol's button codes ("MC" + raw byte).
+// "<BKL…>" frame line every 100 ms until "MC " (StopReports) or "MCr"
+// (StartReports). The two streams are mutually exclusive: MC@ replaces the
+// report stream and MCr replaces the display. Frames are only visible to
+// taps; they never count as command replies, so Command keeps working while
+// the display streams. Never send the display protocol's button codes ("MC"
+// + raw byte).
 func (c *Conn) StartDisplay(ctx context.Context) error {
 	return c.send(ctx, "MC@")
 }

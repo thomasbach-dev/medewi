@@ -104,9 +104,11 @@ go run ./cmd/levacap capture -scenario display -out captures/warmup-display  # 6
 4. **shots, 1 or 2** — scenario `shot` prints "pull the shot now, press Enter
    when done". Start recording, pull a real shot, press Enter afterwards.
 6. **warm-up to READY, with the display (20–30 min)** — scenario `display`
-   records the report stream (`MCr`) and the LCD mirror (`MC@`, 10 frames/s)
-   together, about 2 KB/s. Start it while the machine is in standby or eco
-   (cold is best), then wake the machine. Type `m` + Enter when you hear the
+   records the report stream (`MCr`) and samples the LCD mirror (`MC@`, 10
+   frames/s): the machine sends only one of the two at a time, so `levacap`
+   switches to `MC@` for 500 ms every 10 s and back to `MCr` (tune with
+   `-display-every`, `-display-for`). About 1.2 KB/s. Start it while the
+   machine is in standby or eco (cold is best), then wake the machine. Type `m` + Enter when you hear the
    three READY beeps (and at anything else worth finding again); the marks
    land in the manifest notes as milliseconds since start. An empty line
    stops: `MC ` ends both streams. Purpose: the exact READY moment from the
@@ -171,7 +173,7 @@ Record the answer in the manifest notes and fix code/simulator if wrong.
 | 4 | Safe keepalive: periodic CRLF versus periodic `MC?`; and the real idle-timeout length (simulator assumes 5 min, the design's guess). | Hold an idle connection with no traffic and time the disconnect; then try each keepalive candidate over a longer period. Until verified: reconnect on timeout. |
 | 5 | 5th client behavior (simulator caps at 4 clients; the real behavior is unknown). | Only if cheap: open five `nc` sessions, note what the fifth sees. Close them afterwards. |
 | 6 | Real `MCr` after `MC ` resumes versus restarts the stream. | Start, stop, start again; compare sequence/timestamps in the log. |
-| 7 | `MC@` alone emits display frames passively. | Not sent by default. Input injection is out of scope; skip unless `MC@` alone is shown to be safe. |
+| 7 | `MC@` alone emits display frames passively. | Verified 2026-11-04: frames every 100 ms, no key presses; `MC@` replaces the report stream and `MCr` replaces it back. Button codes stay out of scope. |
 
 ## 5. Firmware-flash gate
 

@@ -90,7 +90,8 @@ the firmware-flash gate. `cmd/levacap` records fixtures atomically;
 - `MC@` mirrors the LCD: one 69-char `<BKL…>` frame every 100 ms
   (backlight, pressed key, layout, four 16-char lines). Banners are silent
   meanwhile; `MC ` stops the display stream too. READY is shown on the
-  display, not carried in the report stream.
+  display, not carried in the report stream. `MCr` and `MC@` are mutually
+  exclusive: the last one sent wins, so the daemon cannot watch both.
 - A command sent shortly after connect is silently swallowed — even just
   after the first banner. Always go through `leva.WaitReady`.
 - A reply's first byte can take >300 ms (hence the two-phase `Command`).

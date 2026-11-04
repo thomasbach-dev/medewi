@@ -358,8 +358,11 @@ func TestCaptureDisplayRecordsFramesAndMarks(t *testing.T) {
 	dir := t.TempDir()
 	var out, errb bytes.Buffer
 	// One mark; a mistyped line must not stop; an empty line does.
-	in := &slowReader{lines: []string{"m\n", "M\n", "\n"}, gap: 100 * time.Millisecond}
-	code := run([]string{"capture", "-scenario", "display", "-addr", s.Addr().String(), "-out", dir}, in, &out, &errb)
+	in := &slowReader{lines: []string{"m\n", "M\n", "\n"}, gap: 250 * time.Millisecond}
+	code := run([]string{
+		"capture", "-scenario", "display", "-addr", s.Addr().String(), "-out", dir,
+		"-display-every", "200ms", "-display-for", "50ms",
+	}, in, &out, &errb)
 	if code != 0 {
 		t.Fatalf("exit %d stderr %s", code, errb.String())
 	}
@@ -380,8 +383,10 @@ func TestCaptureDisplayRecordsFramesAndMarks(t *testing.T) {
 			rx.Write(e.Data)
 		}
 	}
-	if got := tx.String(); got != "MC?\r\nMCr\r\nMC@\r\nMC \r\n" {
-		t.Errorf("TX = %q, want MC?, MCr, MC@, \"MC \"", got)
+	// MCr and MC@ are mutually exclusive on the machine: every display
+	// sample must switch back to reports, and "MC " comes last.
+	if got := tx.String(); !regexp.MustCompile(`^MC\?\r\nMCr\r\n(MC@\r\nMCr\r\n)+(MC@\r\n)?MC \r\n$`).MatchString(got) {
+		t.Errorf("TX = %q, want MC?, MCr, (MC@, MCr)+, \"MC \"", got)
 	}
 	if !strings.Contains(rx.String(), frame) {
 		t.Error("display frame not recorded")
@@ -389,6 +394,9 @@ func TestCaptureDisplayRecordsFramesAndMarks(t *testing.T) {
 	m, err := fixture.LoadManifest(filepath.Join(dir, "display", "manifest.json"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(m.Notes, "display sampled 50ms every 200ms") {
+		t.Errorf("manifest notes %q lack the sampling", m.Notes)
 	}
 	if !regexp.MustCompile(`marks \(ms\): \d+`).MatchString(m.Notes) {
 		t.Errorf("manifest notes %q lack the mark", m.Notes)

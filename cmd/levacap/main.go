@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/thomasbach-dev/medewi/conformance"
@@ -182,6 +183,9 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	scenario := fs.String("scenario", "", "scenario: commands|stream|shot|display (required)")
 	out := fs.String("out", "captures", "output directory")
 	force := fs.Bool("force", false, "overwrite an existing complete capture")
+	sample := displaySample{}
+	fs.DurationVar(&sample.every, "display-every", 10*time.Second, "display scenario: switch to the LCD mirror this often")
+	fs.DurationVar(&sample.dur, "display-for", 500*time.Millisecond, "display scenario: stay on the LCD mirror this long per sample")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -189,6 +193,10 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "commands", "stream", "shot", "display":
 	default:
 		_, _ = fmt.Fprintf(stderr, "levacap: -scenario must be one of commands, stream, shot, display (got %q)\n", *scenario)
+		return 2
+	}
+	if sample.every <= 0 || sample.dur <= 0 || sample.dur >= sample.every {
+		_, _ = fmt.Fprintln(stderr, "levacap: need 0 < -display-for < -display-every")
 		return 2
 	}
 	if *addr == "" {
@@ -219,7 +227,8 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		xmlSHA = hex.EncodeToString(sum[:])
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	// SIGHUP too: a closed terminal must still stop the stream with "MC ".
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 
 	// leva.Dial refuses the bootloader port 2323 before connecting.
@@ -263,11 +272,14 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return err
 		}
 		xmlName = name
-		marks, err = captureStream(ctx, c, *scenario, start, stdin, stdout)
+		marks, err = captureStream(ctx, c, *scenario, sample, start, stdin, stdout)
 		return err
 	}()
 
 	var notes []string
+	if *scenario == "display" {
+		notes = append(notes, fmt.Sprintf("display sampled %v every %v", sample.dur, sample.every))
+	}
 	if len(marks) > 0 {
 		ms := make([]string, len(marks))
 		for i, m := range marks {
@@ -364,10 +376,48 @@ func captureCommands(ctx context.Context, c *leva.Conn, xmlName *string) error {
 	return nil
 }
 
-// captureStream records the report stream (plus, for "display", the LCD
-// mirror) until an empty line or EOF on stdin. A line "m" records a mark:
-// milliseconds since start, e.g. when the READY beeps sound.
-func captureStream(ctx context.Context, c *leva.Conn, scenario string, start time.Time, stdin io.Reader, stdout io.Writer) ([]int64, error) {
+// displaySample is how the "display" scenario interleaves the LCD mirror
+// with the report stream: the machine sends only one of the two at a time.
+type displaySample struct {
+	every, dur time.Duration
+}
+
+// sampleDisplay switches to the LCD mirror for s.dur every s.every and back
+// to reports, until ctx ends. It returns once nothing more will be sent.
+func sampleDisplay(ctx context.Context, c *leva.Conn, s displaySample) error {
+	t := time.NewTicker(s.every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-t.C:
+		}
+		if err := c.StartDisplay(ctx); err != nil {
+			return ignoreCanceled(ctx, fmt.Errorf("start display: %w", err))
+		}
+		// A stop mid-sample skips the switch back: the caller's "MC "
+		// ends both streams.
+		if sleepCtx(ctx, s.dur) != nil {
+			return nil
+		}
+		if _, err := c.StartReports(ctx); err != nil {
+			return ignoreCanceled(ctx, fmt.Errorf("resume reports: %w", err))
+		}
+	}
+}
+
+func ignoreCanceled(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return nil
+	}
+	return err
+}
+
+// captureStream records the report stream (for "display" interleaved with
+// LCD mirror samples) until an empty line or EOF on stdin. A line "m"
+// records a mark: milliseconds since start, e.g. when the READY beeps sound.
+func captureStream(ctx context.Context, c *leva.Conn, scenario string, sample displaySample, start time.Time, stdin io.Reader, stdout io.Writer) ([]int64, error) {
 	reports, err := c.StartReports(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("start reports: %w", err)
@@ -389,10 +439,16 @@ func captureStream(ctx context.Context, c *leva.Conn, scenario string, start tim
 	case "shot":
 		_, _ = fmt.Fprintln(stdout, "recording: pull the shot now, press Enter when done")
 	case "display":
-		if err := c.StartDisplay(ctx); err != nil {
-			return nil, errors.Join(fmt.Errorf("start display: %w", err), stop())
+		sctx, cancel := context.WithCancel(ctx)
+		sampled := make(chan error, 1)
+		go func() { sampled <- sampleDisplay(sctx, c, sample) }()
+		// Wrap stop so no sample command can follow "MC ".
+		stopReports := stop
+		stop = func() error {
+			cancel()
+			return errors.Join(<-sampled, stopReports())
 		}
-		_, _ = fmt.Fprintln(stdout, "recording reports and display: type m + Enter to mark a moment, Enter to stop")
+		_, _ = fmt.Fprintf(stdout, "recording reports, display every %v: type m + Enter to mark a moment, Enter to stop\n", sample.every)
 	default:
 		_, _ = fmt.Fprintln(stdout, "recording report stream: press Enter to stop")
 	}

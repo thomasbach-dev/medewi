@@ -41,7 +41,8 @@ const (
 )
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// SIGHUP too: a closed terminal must still stop the stream with "MC ".
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	code := run(os.Args[1:], os.Stderr, nil, ctx.Done())
 	stop()
 	os.Exit(code)
