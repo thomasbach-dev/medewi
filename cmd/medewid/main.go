@@ -47,6 +47,9 @@ const (
 	// docs/design/2026-11-05-display-sampling.md.
 	defaultDisplayEvery = 5 * time.Second
 	defaultDisplayFor   = 500 * time.Millisecond
+	// maxDisplayFor keeps a sample below the brew recorder's 2 s
+	// thresholds; reports pause meanwhile.
+	maxDisplayFor = 2 * time.Second
 
 	shutdownTimeout = 5 * time.Second
 )
@@ -154,8 +157,8 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 	if *rawMaxMB <= 0 || *rawMaxMB > maxRawMaxMB {
 		return exit(2, "-raw-max-mb must be between 1 and 1048576 (1 TiB)")
 	}
-	if *displayEvery < 0 || (*displayEvery > 0 && (*displayFor <= 0 || *displayFor >= *displayEvery)) {
-		return exit(2, "need -display-every 0 (off), or 0 < -display-for < -display-every")
+	if *displayEvery < 0 || (*displayEvery > 0 && (*displayFor <= 0 || *displayFor >= *displayEvery || *displayFor > maxDisplayFor)) {
+		return exit(2, "need -display-every 0 (off), or 0 < -display-for < -display-every and -display-for at most %v", maxDisplayFor)
 	}
 	nTLS := 0
 	for _, s := range []string{*certFile, *keyFile, *caFile} {

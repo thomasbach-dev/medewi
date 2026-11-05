@@ -86,7 +86,8 @@ func TestMetricsAfterShot(t *testing.T) {
 		t.Errorf("boiler = %v, want 77.7", got)
 	}
 	if val(t, reg, "medewi_machine_connected") != 1 || val(t, reg, "medewi_spec_mismatch") != 0 ||
-		val(t, reg, "medewi_reconnects_total") != 0 {
+		val(t, reg, "medewi_reconnects_total") != 0 || val(t, reg, "medewi_fragments_total") != 0 ||
+		val(t, reg, "medewi_machine_ready") != 0 {
 		t.Error("connected/mismatch/reconnects wrong")
 	}
 }

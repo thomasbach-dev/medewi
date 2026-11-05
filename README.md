@@ -58,7 +58,7 @@ environment variables (flags win):
 | `MEDEWID_RAW_RETENTION` | `-raw-retention` | `168h`; `0` disables the raw log |
 | `MEDEWID_RAW_MAX_MB` | `-raw-max-mb` | `256` |
 | `MEDEWID_DISPLAY_EVERY` | `-display-every` | `5s`; `0` disables display sampling |
-| `MEDEWID_DISPLAY_FOR` | `-display-for` | `500ms` |
+| `MEDEWID_DISPLAY_FOR` | `-display-for` | `500ms`; at most `2s` |
 
 The API requires mutual TLS: set the server certificate, key and client CA.
 `-insecure-http` exists for local testing only and exits with an error when
@@ -72,8 +72,9 @@ format. Every chunk sent is kept; of the received lines only report lines
 (`{`), display frames (`<`), banners (`$id:`), short machine notices such as
 `[READY]`, and replies to commands medewid itself sent shortly before.
 `MCu`/`MCm` replies (which contain the license key) are never logged. Marks
-(below) land in the log as `note` events. If an explicitly configured directory cannot be opened, medewid
-exits 1; with the default directory it only warns and runs without the log.
+(below) land in the log as `note` events. If an explicitly configured
+directory cannot be opened, medewid exits 1; with the default directory it
+only warns and runs without the log.
 Counters: `medewi_rawlog_dropped_total`, `medewi_rawlog_write_errors_total`,
 `medewi_rawlog_redacted_lines_total`. Approximate replay through `levasim`
 (it replays every received line, banners and replies included, as the

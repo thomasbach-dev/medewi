@@ -19,9 +19,16 @@ type Frame struct {
 // ErrNotFrame means a line is not an intact 69-byte "<BKL…>" frame.
 var ErrNotFrame = errors.New("leva: not a display frame")
 
+// frameLen is the length of an intact "<BKL…>" display frame.
+const frameLen = 69
+
+func isFrame(line []byte) bool {
+	return len(line) == frameLen && line[0] == '<' && line[frameLen-1] == '>'
+}
+
 // ParseFrame decodes an intact display frame (CR+LF stripped).
 func ParseFrame(line []byte) (Frame, error) {
-	if len(line) != frameLen || line[0] != '<' || line[frameLen-1] != '>' {
+	if !isFrame(line) {
 		return Frame{}, ErrNotFrame
 	}
 	f := Frame{Backlight: line[1] == '1', Key: line[2], Layout: line[3]}
@@ -40,14 +47,4 @@ func ParseFrame(line []byte) (Frame, error) {
 		f.Rows[i] = b.String()
 	}
 	return f, nil
-}
-
-// Contains reports whether any row contains s.
-func (f Frame) Contains(s string) bool {
-	for _, r := range f.Rows {
-		if strings.Contains(r, s) {
-			return true
-		}
-	}
-	return false
 }

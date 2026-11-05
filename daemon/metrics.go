@@ -19,6 +19,7 @@ type metrics struct {
 	shots, flushes, pumpSeconds       prometheus.Counter
 	volumeLiters, waterDraws, waterL  prometheus.Counter
 	lines, decodeErrors, reconnects   prometheus.Counter
+	fragments                         prometheus.Counter
 }
 
 var powerStates = []PowerState{PowerActive, PowerEco, PowerStandby, PowerUnknown}
@@ -50,6 +51,7 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 		lines:        c("medewi_report_lines_total", "Report lines received."),
 		decodeErrors: c("medewi_decode_errors_total", "Report lines skipped (checksum or decode error)."),
 		reconnects:   c("medewi_reconnects_total", "Connection attempts after the first, failed ones included."),
+		fragments:    c("medewi_fragments_total", "Report or frame pieces cut off at a stream switch (counted per ended session)."),
 	}
 	for _, s := range powerStates {
 		m.power.WithLabelValues(string(s)).Set(0)
@@ -58,7 +60,7 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 		for _, col := range []prometheus.Collector{
 			m.connected, m.specMismatch, m.ready, m.machineReady, m.boilerC, m.setpointC, m.heaterPercent, m.power,
 			m.shots, m.flushes, m.pumpSeconds, m.volumeLiters, m.waterDraws, m.waterL,
-			m.lines, m.decodeErrors, m.reconnects,
+			m.lines, m.decodeErrors, m.reconnects, m.fragments,
 		} {
 			if err := reg.Register(col); err != nil {
 				slog.Error("registering metric", "err", err)

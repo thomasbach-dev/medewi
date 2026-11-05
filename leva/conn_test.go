@@ -602,6 +602,7 @@ func TestGluedRecordsSplit(t *testing.T) {
 		{"report cut, frame", "{ -1PID090.95091.00060000." + frame, nil, 1, 1, 0},
 		{"frame cut, banner", "<102SOAK 1.0b   $id: leva! (3.2)", nil, 0, 1, 1},
 		{"whole frame, report", frame + report, []string{report}, 1, 0, 0},
+		{"intact frame with <100 in its text", "<102MENU   <100ms  " + frame[19:], nil, 1, 0, 0},
 		{"report with label digits", "{ -1PID<1x9 label~ 00}", []string{"{ -1PID<1x9 label~ 00}"}, 0, 0, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

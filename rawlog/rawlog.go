@@ -231,8 +231,9 @@ func (l *Log) run() {
 //
 // Received lines are an allowlist (spec requirement 5): the machine's
 // MCu/MCm replies carry the license key and must never reach a file. A line
-// is kept only if it is a report ({), a banner ($id:) or inside a reply
-// window; dump lines are never kept and shut the windows.
+// is kept only if it is a report ({), a display frame (<), a banner ($id:),
+// a short notice ([READY]) or inside a reply window; dump lines are never
+// kept and shut the windows.
 type Session struct {
 	l   *Log
 	seq uint64
@@ -295,8 +296,8 @@ func (s *Session) Note(text string) {
 // tx updates the reply window from the commands in p (all of them: a
 // write may carry several); the caller holds s.mu. MCu/MCm (any suffix)
 // are dump commands: they close the window and start the quiet period. The
-// stream toggles MCr and "MC " get no reply. Any other command opens a
-// window unless a dump is recent.
+// stream toggles MCr, "MC " and MC@ get no reply. Any other command opens
+// a window unless a dump is recent.
 func (s *Session) tx(now time.Time, p []byte) {
 	cfg := &s.l.cfg
 	for _, cmd := range bytes.FieldsFunc(p, func(r rune) bool { return r == '\r' || r == '\n' }) {

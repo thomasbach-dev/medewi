@@ -71,6 +71,45 @@ func TestDisplaySampling(t *testing.T) {
 	assertOnlyAllowed(t, s, "MC@")
 }
 
+// The final "MC " must be the last thing sent, also when a sample is in
+// flight at shutdown; otherwise the machine keeps streaming after medewid
+// exits. Samples are made long and frequent to hit that window.
+func TestShutdownStopsAfterSample(t *testing.T) {
+	for range 5 {
+		cfg := simConfig(idleLines(40))
+		cfg.Responses["MC@"] = []string{readyFrame}
+		s := startSim(t, cfg)
+		dcfg := daemonConfig(s.Addr().String(), openStore(t))
+		dcfg.DisplayEvery, dcfg.DisplayFor = 20*time.Millisecond, 15*time.Millisecond
+		d, stop := runDaemon(t, dcfg)
+		waitActive(t, d)
+		waitFor(t, "a sample", func() bool { return count(s.Received(), "MC@") >= 1 })
+		stop()
+		time.Sleep(50 * time.Millisecond) // let the sim read what was sent
+		if cmds := s.Received(); cmds[len(cmds)-1] != "MC " {
+			t.Fatalf("last command %q, want \"MC \": %q", cmds[len(cmds)-1], cmds[max(0, len(cmds)-4):])
+		}
+	}
+}
+
+// Sampled frames reach the raw traffic log through the daemon.
+func TestSampledFramesInRawLog(t *testing.T) {
+	cfg := simConfig(idleLines(40))
+	cfg.Responses["MC@"] = []string{readyFrame}
+	s := startSim(t, cfg)
+	dcfg, rl, dir := rawDaemonConfig(t, s.Addr().String())
+	dcfg.DisplayEvery, dcfg.DisplayFor = 100*time.Millisecond, 30*time.Millisecond
+	d, stop := runDaemon(t, dcfg)
+	waitFor(t, "a sampled frame", func() bool { return d.Status().Display != nil })
+	stop()
+	for _, e := range readRaw(t, rl, dir) {
+		if e.Dir == fixture.RX && strings.HasPrefix(string(e.Data), "<1") {
+			return
+		}
+	}
+	t.Error("no display frame in the raw log")
+}
+
 func TestNoSamplingByDefault(t *testing.T) {
 	cfg := simConfig(idleLines(20))
 	cfg.Responses["MC@"] = []string{readyFrame}

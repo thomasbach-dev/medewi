@@ -303,7 +303,11 @@ func TestDisplayFlagsValidated(t *testing.T) {
 	clearEnv(t)
 	machine, xml := startSim(t)
 	for _, extra := range [][]string{
-		{"-display-every", "-1s"}, {"-display-for", "0s"}, {"-display-every", "1s", "-display-for", "1s"}, {"-display-every", "x"},
+		{"-display-every", "-1s"},
+		{"-display-for", "0s"},
+		{"-display-every", "1s", "-display-for", "1s"},
+		{"-display-every", "x"},
+		{"-display-every", "30s", "-display-for", "3s"}, // a long sample stalls the report stream
 	} {
 		args := append(append(baseArgs(t, machine, xml), "-insecure-http"), extra...)
 		if code, se := runExit(t, args...); code != 2 {

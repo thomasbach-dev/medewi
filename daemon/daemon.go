@@ -2,20 +2,20 @@
 // machine, reconnects with backoff, gates the report stream on a spec-name
 // handshake, feeds report lines to the watch detector and the brew recorder,
 // stores brews, and publishes a Status snapshot. A single command worker
-// runs power changes and settings dumps on the same connection. With
+// runs power changes, settings dumps and display samples on the same
+// connection. The machine's "[READY]" notice sets MachineReady. With
 // Config.Raw set, each connection's raw traffic goes to a rawlog session
-// (dump replies are never logged).
+// (dump replies are never logged), where marks are noted too.
 //
 // The only strings it sends are the handshake and stream commands "MC?",
-// "MCr" and "MC ", the dumps "MCu" and "MCm", and the power toggles "MCa",
-// "MCe" and "MCE".
+// "MCr" and "MC ", the display mirror "MC@", the dumps "MCu" and "MCm", and
+// the power toggles "MCa", "MCe" and "MCE".
 package daemon
 
 import (
 	"context"
 	"errors"
 	"log/slog"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -269,10 +269,16 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 		return false
 	}
 	slog.Info("reports started")
+	samplerDone := make(chan struct{})
 	if d.cfg.DisplayEvery > 0 {
 		sctx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		go d.sampleDisplay(sctx, conn)
+		go func() {
+			defer close(samplerDone)
+			d.sampleDisplay(sctx, conn)
+		}()
+	} else {
+		close(samplerDone)
 	}
 	stall := time.NewTimer(reportStallTimeout)
 	defer stall.Stop()
@@ -281,6 +287,9 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	for {
 		select {
 		case <-ctx.Done():
+			// A sample still in flight could send MC@ or MCr after "MC "
+			// and leave the machine streaming; the sampler ends with ctx.
+			<-samplerDone
 			d.stopReports(ctx, conn)
 			return true
 		case <-stall.C:
@@ -313,26 +322,18 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 // machine's "XML=" name. The machine swallows commands sent shortly after
 // connect, so one unanswered MC? is normal.
 func (d *Daemon) xmlName(ctx context.Context, conn *leva.Conn) (string, bool) {
-	for i := range mcqTries {
-		start := time.Now()
-		lines, err := conn.CommandOpts(ctx, "MC?", mcqSpacing, mcqIdleGap)
-		if err != nil {
-			if ctx.Err() == nil {
-				slog.Warn("MC? failed", "err", err)
-			}
-			return "", false
+	name, err := leva.QueryXMLName(ctx, conn, mcqTries, mcqSpacing, mcqIdleGap)
+	switch {
+	case err != nil:
+		if ctx.Err() == nil {
+			slog.Warn("MC? failed", "err", err)
 		}
-		for _, l := range lines {
-			if name, ok := strings.CutPrefix(l, "XML="); ok {
-				return strings.TrimSpace(name), true
-			}
-		}
-		if i < mcqTries-1 && !sleepCtx(ctx, mcqSpacing-time.Since(start)) {
-			return "", false
-		}
+		return "", false
+	case name == "":
+		slog.Warn("no XML= reply to MC?; reconnecting", "tries", mcqTries)
+		return "", false
 	}
-	slog.Warn("no XML= reply to MC?; reconnecting", "tries", mcqTries)
-	return "", false
+	return name, true
 }
 
 // holdUntilEnd keeps a spec-mismatched connection open, sending nothing,
@@ -368,6 +369,7 @@ func (d *Daemon) disconnected(ctx context.Context, conn *leva.Conn) {
 	d.met.status(d.st)
 	d.mu.Unlock()
 	_ = conn.Close() // aborts a request still running on conn
+	d.met.fragments.Add(float64(conn.Fragments()))
 	if sum := d.rec.Abort(); sum != nil {
 		d.finish(ctx, *sum)
 	}

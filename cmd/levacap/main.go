@@ -359,38 +359,22 @@ func waitBanner(ctx context.Context, c *leva.Conn, received func() bool) error {
 	return nil
 }
 
-func xmlFromLines(lines []string) string {
-	for _, l := range lines {
-		if v, ok := strings.CutPrefix(l, "XML="); ok {
-			return strings.TrimSpace(v)
-		}
-	}
-	return ""
-}
+// MC? is tried mcqTries times, mcqSpacing apart, like the daemon's
+// handshake: the machine can swallow the first command even after the
+// banner wait (seen 2026-11-05). mcqSpacing is shrunk in tests.
+var mcqSpacing = 2 * time.Second
 
-// MC? is tried mcqTries times, mcqSpacing apart (also the first-line
-// timeout): the machine can swallow the first command even after the banner
-// wait (seen 2026-11-05). Same values as the daemon's handshake.
-var (
+const (
 	mcqTries   = 3
-	mcqSpacing = 2 * time.Second
+	mcqIdleGap = 300 * time.Millisecond
 )
 
-const mcqIdleGap = 300 * time.Millisecond
-
 func queryXMLName(ctx context.Context, c *leva.Conn) (string, error) {
-	for range mcqTries {
-		cctx, cancel := context.WithTimeout(ctx, cmdTimeout)
-		lines, err := c.CommandOpts(cctx, "MC?", mcqSpacing, mcqIdleGap)
-		cancel()
-		if err != nil {
-			return "", fmt.Errorf("MC?: %w", err)
-		}
-		if name := xmlFromLines(lines); name != "" {
-			return name, nil
-		}
+	name, err := leva.QueryXMLName(ctx, c, mcqTries, mcqSpacing, mcqIdleGap)
+	if err != nil {
+		return "", fmt.Errorf("MC?: %w", err)
 	}
-	return "", nil
+	return name, nil
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
@@ -411,7 +395,7 @@ func captureCommands(ctx context.Context, c *leva.Conn, xmlName *string) error {
 			return fmt.Errorf("%s: %w", cmd, err)
 		}
 		if cmd == "MC?" {
-			*xmlName = xmlFromLines(lines)
+			*xmlName, _ = leva.XMLName(lines)
 		}
 		if err := sleepCtx(ctx, cmdWait); err != nil {
 			return err
@@ -474,6 +458,13 @@ func captureStream(ctx context.Context, c *leva.Conn, scenario string, sample di
 		for range reports {
 		}
 	}()
+	// Frames and notices too, so Conn.Dropped stays meaningful.
+	for _, ch := range []<-chan []byte{c.DisplayFrames(), c.Notices()} {
+		go func() {
+			for range ch {
+			}
+		}()
+	}
 	var sampled chan struct{} // closed when the display sampler gives up; nil: no sampler
 	stop := func() error {
 		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cmdTimeout)

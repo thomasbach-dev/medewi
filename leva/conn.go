@@ -62,7 +62,8 @@ func WithReportBuffer(n int) Option { return func(c *config) { c.reportBuf = n }
 // Conn owns one connection to a leva! controller. A single reader goroutine
 // strips the trailing CR+LF from every line (project ruling R2) and
 // classifies the stripped line: "{" prefix is a report, "<" a display frame,
-// "$id:" prefix is a banner, anything else is command output. Report and
+// "[" a machine notice such as "[READY]", "$id:" prefix is a banner,
+// anything else is command output. Report and
 // frame lines glued together at a stream switch are split first (split).
 // Lines are delivered byte-identically otherwise (NUL and Latin-1 bytes
 // included).
@@ -165,8 +166,8 @@ func (c *Conn) Err() error {
 	return c.err
 }
 
-// Dropped returns the number of reports discarded because the reports
-// channel was full.
+// Dropped returns the number of reports, display frames and notices
+// discarded because their channel was full.
 func (c *Conn) Dropped() uint64 { return c.dropped.Load() }
 
 // Oversized returns the number of lines discarded for exceeding the
@@ -441,7 +442,13 @@ func (c *Conn) StartDisplay(ctx context.Context) error {
 	c.mu.Lock()
 	c.display = true
 	c.mu.Unlock()
-	return c.send(ctx, "MC@")
+	if err := c.send(ctx, "MC@"); err != nil {
+		c.mu.Lock()
+		c.display = false
+		c.mu.Unlock()
+		return err
+	}
+	return nil
 }
 
 // DisplayFrames returns the channel of raw display frames ("<…>", CR+LF
@@ -530,9 +537,6 @@ func (c *Conn) dispatch(raw []byte) {
 	c.split(line)
 }
 
-// frameLen is the length of an intact "<BKL…>" display frame.
-const frameLen = 69
-
 // split undoes what a stream switch (MCr/MC@) does on the real machine: it
 // can cut a report or display frame off without its CRLF and glue the next
 // record onto it. A report or frame line is split at the next record start;
@@ -540,21 +544,24 @@ const frameLen = 69
 // dropped as a fragment otherwise. Other lines (command replies) are never
 // split: help text may contain "<100" and the like.
 func (c *Conn) split(line []byte) {
+	if isFrame(line) {
+		c.route(line) // intact; its text may contain "<100" and the like
+		return
+	}
 	for len(line) > 0 && (line[0] == '{' || line[0] == '<') {
 		i := nextRecord(line)
 		if i < 0 {
 			break
 		}
 		head := line[:i]
-		if (head[0] == '<' && len(head) == frameLen && head[i-1] == '>') ||
-			(head[0] == '{' && head[i-1] == '}') {
+		if isFrame(head) || (head[0] == '{' && head[i-1] == '}') {
 			c.route(head)
 		} else {
 			c.fragments.Add(1)
 		}
 		line = line[i:]
 	}
-	if len(line) > 0 && line[0] == '<' && (len(line) != frameLen || line[len(line)-1] != '>') {
+	if len(line) > 0 && line[0] == '<' && !isFrame(line) {
 		c.fragments.Add(1) // a frame cut off by "MC " or MCr, nothing glued on
 		return
 	}

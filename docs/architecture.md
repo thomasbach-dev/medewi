@@ -88,10 +88,13 @@ flowchart LR
 - `brew/` — brew recorder: pump runs as episodes, classification, curves.
 - `store/` — SQLite persistence of brews and their curves. Settings
   backups are files that `medewictl backup` writes, not database rows.
+- `rawlog/` — raw traffic log: gzip'd per-session JSON lines, allowlist
+  that keeps license-key replies out, retention, marks as notes.
 - `daemon/` — connection supervision, HTTP API, metrics, ops panel
-  (`panel.html`, embedded) and power control.
+  (`panel.html`, embedded), power control, machine READY (`[READY]`),
+  display sampling and marks.
 - `cmd/medewid` — the daemon binary (mTLS API, plaintext health listener).
-- `cmd/medewictl` — client for status, power and backups.
+- `cmd/medewictl` — client for status, power, marks and backups.
 - `nix/module.nix` — the `nixosModules.medewid` service.
 
 ## Build order

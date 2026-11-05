@@ -28,7 +28,7 @@ const (
 // Data marshals as base64, so arbitrary binary content round-trips exactly.
 type Event struct {
 	T    int64  `json:"t"`    // milliseconds since session start
-	Dir  Dir    `json:"dir"`  // TX or RX
+	Dir  Dir    `json:"dir"`  // TX, RX or Note
 	Data []byte `json:"data"` // raw bytes
 }
 

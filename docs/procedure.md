@@ -8,7 +8,7 @@ pauses between steps.
 
 | # | Step | Observable signature |
 |---|------|----------------------|
-| 1 | Power on, let the machine heat up. The firmware signals READY on the display and with a beep-beep-beep. | Warmup ramp; temperature reaches and holds the setpoint. The ready transition itself is NOT yet in a capture (the boiler was already warm) — record on a future cold start. Candidate signals: temp-within-band-for-N-seconds, or a status field in the report record (field map incomplete). |
+| 1 | Power on, let the machine heat up. The firmware signals READY on the display and with a beep-beep-beep. | Warmup ramp; temperature reaches and holds the setpoint. Minutes later the machine sends an unsolicited `[READY]` line (captured 2026-11-05); see [machine-behaviour.md](machine-behaviour.md#ready). |
 | 2 | Flush into the cups. | Short pump burst: flow > 0 at low pressure (open group). |
 | 3 | Coffee from the freezer, a few water drops on the beans, grind, tamp. | Silence (machine idle at setpoint). |
 | 4 | Pull the shot, with manual adjustments (encoder) as needed. | The full profile curve: preinfusion soak ~1 bar, ramp to ~8–9 bar, programmed decline to the 4-bar hold; intra-shot temperature droop ~4 °C; ends with flow→0 and the stop transient. |

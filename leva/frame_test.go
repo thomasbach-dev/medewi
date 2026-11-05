@@ -19,9 +19,6 @@ func TestParseFrame(t *testing.T) {
 	if f.Rows[0] != "SOAK 1.0b       " || f.Rows[1] != "1: 91.0°   READY" || f.Rows[2] != "              7%" {
 		t.Errorf("rows = %q", f.Rows)
 	}
-	if !f.Contains("READY") || f.Contains("ECO") {
-		t.Error("Contains")
-	}
 }
 
 func TestParseFrameGlyphs(t *testing.T) {

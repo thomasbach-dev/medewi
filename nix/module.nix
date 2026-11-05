@@ -39,8 +39,10 @@ in
       description = ''
         systemd EnvironmentFile with the remaining instance settings:
         `MEDEWID_MACHINE_ADDR` (required) and optionally
-        `MEDEWID_EVENT_EXEC`. A `MEDEWID_DB` override must stay under
-        `/var/lib/medewid` (the only writable path), as must `MEDEWID_RAW_DIR`. The XML and TLS files
+        `MEDEWID_EVENT_EXEC`, `MEDEWID_RAW_*` and `MEDEWID_DISPLAY_*` (see
+        the README). A `MEDEWID_DB` override must stay under
+        `/var/lib/medewid` (the only writable path), as must
+        `MEDEWID_RAW_DIR`. The XML and TLS files
         are not read from here; see `xmlFile` and the `tls*` options. The
         service never passes `-insecure-http`.
       '';

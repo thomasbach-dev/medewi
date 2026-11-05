@@ -47,7 +47,7 @@ func runSessionReset(args []string, stdout, stderr io.Writer) int {
 		return 0
 	case !errors.Is(err, errStreamOn):
 		if !received() {
-			_, _ = fmt.Fprintln(stderr, "levacap: nothing received from the machine; nothing sent")
+			_, _ = fmt.Fprintf(stderr, "levacap: %v (nothing received from the machine; nothing sent)\n", err)
 		} else {
 			_, _ = fmt.Fprintf(stderr, "levacap: %v\n", err)
 		}

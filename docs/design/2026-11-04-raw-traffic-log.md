@@ -85,7 +85,8 @@ bytes, and roughly replayed through `levasim`.
    `dropped N lines`, written before the next kept event or at session
    end. The `Session` sees `tx` itself, so the daemon needs no redaction
    calls. Verified on a real `MCu`/`MCm` capture: reply lines start with
-   `|`, `:` or letters, never `{`.
+   `|`, `:` or letters, never `{`; rechecked 2026-11-05 for all whitelist
+   replies (`MCh MC? MCu MCm MCb MCf`): never `<` or `[` either.
 6. **Never slows the connection:** the tap only enqueues into a bounded
    buffer (4096 events). When it is full, events are dropped and counted.
    A writer goroutine does all disk work. Write errors are counted and
@@ -131,6 +132,7 @@ New package `rawlog` (no dependency on `leva` or `daemon`):
 - `Open(Config) (*Log, error)`, `(*Log).Close() error`;
   `(*Log).Session() *Session` per connection;
   `(*Session).Tap(dir string, p []byte)` (fits `leva.Conn.Tap`),
+  `(*Session).Note(text)` (added 2026-11-05, for marks),
   `(*Session).Close()`; `ReadFile(path) ([]fixture.Event, error)`.
   `leva.Conn.send` changes to fire the `tx` tap before writing. All
   methods are no-ops on a nil receiver.
