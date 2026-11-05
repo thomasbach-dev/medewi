@@ -46,7 +46,9 @@ func usage(w io.Writer) {
   backup -out DIR|-
 
 Defaults come from $MEDEWID_URL (e.g. https://brewhost:8443),
-$MEDEWID_CTL_CERT, $MEDEWID_CTL_KEY and $MEDEWID_CTL_CA.
+$MEDEWID_CTL_CERT, $MEDEWID_CTL_KEY and $MEDEWID_CTL_CA; unset cert,
+key and ca fall back to client.crt, client.key and ca.crt in
+$XDG_CONFIG_HOME/medewi (~/.config/medewi).
 -insecure talks plain HTTP to a medewid started with -insecure-http
 (e.g. -url http://127.0.0.1:8080); it never skips certificate checks.`)
 }
@@ -147,8 +149,11 @@ func (c *config) client() (*http.Client, error) {
 	case plain:
 		return nil, errors.New("an http:// URL needs -insecure (medewid serves mTLS unless run with -insecure-http)")
 	}
-	if c.url == "" || c.cert == "" || c.key == "" || c.ca == "" {
-		return nil, errors.New("url, cert, key and ca are required (flags or MEDEWID_URL, MEDEWID_CTL_CERT, MEDEWID_CTL_KEY, MEDEWID_CTL_CA)")
+	if c.url == "" {
+		return nil, errors.New("url is required (-url or MEDEWID_URL)")
+	}
+	if err := c.defaultFiles(); err != nil {
+		return nil, err
 	}
 	pair, err := tls.LoadX509KeyPair(c.cert, c.key)
 	if err != nil {
@@ -170,6 +175,29 @@ func (c *config) client() (*http.Client, error) {
 			RootCAs:      pool,
 		}},
 	}, nil
+}
+
+// defaultFiles fills an unset cert, key or ca from the user's config
+// directory: client.crt, client.key and ca.crt in $XDG_CONFIG_HOME/medewi
+// (~/.config/medewi).
+func (c *config) defaultFiles() error {
+	if c.cert != "" && c.key != "" && c.ca != "" {
+		return nil
+	}
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return fmt.Errorf("cert, key and ca unset and no default directory: %w", err)
+	}
+	dir := filepath.Join(base, "medewi")
+	for _, f := range []struct {
+		v    *string
+		name string
+	}{{&c.cert, "client.crt"}, {&c.key, "client.key"}, {&c.ca, "ca.crt"}} {
+		if *f.v == "" {
+			*f.v = filepath.Join(dir, f.name)
+		}
+	}
+	return nil
 }
 
 // do performs a request and returns the status and fully read body.

@@ -311,3 +311,63 @@ func TestEnvAndMissingConfig(t *testing.T) {
 		t.Fatalf("exit %d, want 2", code)
 	}
 }
+
+// clearEnv unsets the connection variables so only flags and defaults count.
+func clearEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{"MEDEWID_URL", "MEDEWID_CTL_CERT", "MEDEWID_CTL_KEY", "MEDEWID_CTL_CA"} {
+		t.Setenv(k, "")
+	}
+}
+
+func TestDefaultCredentialFiles(t *testing.T) {
+	clearEnv(t)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"connected":true}`))
+	}))
+	defer srv.Close()
+	args := tlsArgs(t, srv)
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	dir := filepath.Join(cfgHome, "medewi")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for flag, name := range map[string]string{"-cert": "client.crt", "-key": "client.key", "-ca": "ca.crt"} {
+		if err := os.Rename(argVal(t, args, flag), filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out, errb bytes.Buffer
+	if code := run([]string{"-url", srv.URL, "status"}, &out, &errb); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "connected: true") {
+		t.Fatalf("stdout %q", out.String())
+	}
+}
+
+func TestMissingDefaultCredentialNamesPath(t *testing.T) {
+	clearEnv(t)
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	var out, errb bytes.Buffer
+	if code := run([]string{"-url", "https://127.0.0.1:1", "status"}, &out, &errb); code != 2 {
+		t.Fatalf("exit %d, want 2; stderr %q", code, errb.String())
+	}
+	if want := filepath.Join(cfgHome, "medewi", "client.crt"); !strings.Contains(errb.String(), want) {
+		t.Fatalf("stderr %q does not name %s", errb.String(), want)
+	}
+}
+
+// argVal returns the value following flag in args.
+func argVal(t *testing.T, args []string, flag string) string {
+	t.Helper()
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag {
+			return args[i+1]
+		}
+	}
+	t.Fatalf("flag %s not in args", flag)
+	return ""
+}

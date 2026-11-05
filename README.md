@@ -117,7 +117,8 @@ module does not enable it). The module never passes `-insecure-http`.
 
 `medewictl` is the client: `MEDEWID_URL` plus `MEDEWID_CTL_CERT`,
 `MEDEWID_CTL_KEY` and `MEDEWID_CTL_CA` for the client certificate and the
-server CA. Against a local `medewid -insecure-http`, pass `-insecure` with an
+server CA. Unset, the three files default to `client.crt`, `client.key` and
+`ca.crt` in `$XDG_CONFIG_HOME/medewi` (`~/.config/medewi`). Against a local `medewid -insecure-http`, pass `-insecure` with an
 `http://` URL instead; `-insecure` never skips certificate checks over
 `https://`, and an `http://` URL without it is refused.
 
