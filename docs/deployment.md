@@ -90,9 +90,12 @@ listener. Rules the code imposes:
 ### A private CA (recommended)
 
 Run this on an admin machine; only `server.crt`, `server.key` and
-`ca.crt` go to the brewhost. The CA's name constraint limits it to the
-brewhost's name, so a phone that trusts it cannot be fooled for any other
-site.
+`ca.crt` go to the brewhost. The CA's name constraints permit the
+brewhost's name and exclude every IP address (a constraint only covers
+the name types it lists), so a phone that trusts it cannot be fooled for
+any other site, by name or by IP. If clients must reach the brewhost by
+IP, put that IP in the server certificate's SAN and replace the two
+exclusions with `permitted;IP:192.0.2.10/255.255.255.255`.
 
 ```sh
 HOST=brewhost.lan
@@ -103,7 +106,7 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
   -keyout ca.key -out ca.crt -days 3650 -subj "/CN=medewid CA" \
   -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
   -addext "keyUsage=critical,keyCertSign,cRLSign" \
-  -addext "nameConstraints=critical,permitted;DNS:$HOST"
+  -addext "nameConstraints=critical,permitted;DNS:$HOST,excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::"
 
 issue() { # name, extensions
   openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
@@ -260,8 +263,30 @@ scrape_configs:
       server_name: brewhost.lan
 ```
 
-On NixOS the same goes into `services.prometheus.scrapeConfigs`; the
-three files must be readable by the `prometheus` user.
+On NixOS, keep the client key root-owned `0600` and hand it to
+Prometheus the way the module hands medewid its files, via systemd
+credentials:
+
+```nix
+systemd.services.prometheus.serviceConfig.LoadCredential = [
+  "medewid.crt:/etc/prometheus/medewid/prometheus.crt"
+  "medewid.key:/etc/prometheus/medewid/prometheus.key"
+];
+services.prometheus.scrapeConfigs = [{
+  job_name = "medewid";
+  scheme = "https";
+  static_configs = [{ targets = [ "brewhost.lan:8443" ]; }];
+  tls_config = {
+    ca_file = "/etc/prometheus/medewid/ca.crt"; # public, any mode
+    cert_file = "/run/credentials/prometheus.service/medewid.crt";
+    key_file = "/run/credentials/prometheus.service/medewid.key";
+    server_name = "brewhost.lan";
+  };
+}];
+# The build-time `promtool check config` stats cert_file/key_file, which
+# exist only inside the running unit.
+services.prometheus.checkConfig = "syntax-only";
+```
 
 | Metric | Type | Meaning | Machine off / standby |
 | --- | --- | --- | --- |
