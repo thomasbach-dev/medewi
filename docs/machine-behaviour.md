@@ -91,3 +91,7 @@ Detection is issue #13; the data model for programs is issue #12.
   leftover stream).
 - The first command can be swallowed even after the banner wait; `MC?` is
   retried.
+- The machine's mains switch powers the whole unit, the leva! controller
+  included: switched off, the machine is gone from the network (operator,
+  2026-11-05). A disconnect is therefore the normal "off" state, not a
+  fault.

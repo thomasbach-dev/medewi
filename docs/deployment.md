@@ -1,0 +1,345 @@
+# Deploying medewid on NixOS
+
+From a checkout to a running, monitored, backed-up `medewid` on the
+brewhost, in order: flake input → files and certificates → module
+configuration → switch → verify → metrics and backups. The module's
+option reference is in [nix/module.nix](../nix/module.nix); the daemon's
+flags and environment variables are in the [README](../README.md#daemon).
+
+## Before you start
+
+- **One client only.** Close or uninstall the vendor Status-Monitor apps
+  on phones and desktops, and stop any `levacap` session. Starting or
+  stopping the report stream is global machine state; a second client
+  fights the daemon over it.
+- **The machine's power switch cuts the controller too.** Switched off,
+  leva! drops off the network, so `medewi_machine_connected` is 0 and
+  medewid retries every 30 s. That is normal, not a fault (see
+  [Metrics](#metrics)).
+- **Never point anything at port 2323** (the bootloader). medewid
+  refuses it; `MEDEWID_MACHINE_ADDR` is the text interface, normally
+  port 23.
+
+## 1. Flake input
+
+```nix
+# flake.nix of the host configuration
+inputs.medewi = {
+  url = "github:thomasbach-dev/medewi";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+
+# in the host's modules list
+inputs.medewi.nixosModules.medewid
+```
+
+The flake and CI track `nixos-unstable`. `follows` onto a release branch
+works as long as its Go is at least the `go` version in `go.mod`
+(currently 1.26; `nixos-26.05` builds it with the same `vendorHash`), but
+only `nixos-unstable` is tested.
+
+## 2. Files
+
+All of these may be root-owned `0600` anywhere outside the Nix store
+(`/etc/medewid/`, `/run/secrets/`, …): systemd reads them as root and
+hands the daemon copies (`LoadCredential`). Never use a path literal
+(`./medewid.key`): it would copy the file into the world-readable store,
+and the module refuses it.
+
+- **Status-Monitor XML** (`xmlFile`). It ships with the firmware release
+  (`leva-<version>/…/xml file for status monitor/`). Its base name without
+  `.xml` must equal the machine's `MC?` reply (`XML=leva!-65FCB201` →
+  `leva!-65FCB201.xml`); otherwise medewid connects, logs `machine XML
+  does not match the loaded spec`, sets `medewi_spec_mismatch` and starts
+  no reports. After a firmware flash, swap the XML too. The capture
+  runbook shows how to read `MC?` without the daemon:
+  [docs/runbooks/capture-session.md](runbooks/capture-session.md).
+- **Environment file** (`environmentFile`):
+
+  ```sh
+  MEDEWID_MACHINE_ADDR=machine.lan:23
+  # optional, see "Event hook" below
+  MEDEWID_EVENT_EXEC=/etc/medewid/hook.sh
+  ```
+
+- **Certificates** (`tlsCert`, `tlsKey`, `tlsClientCA`): next section.
+
+## 3. Certificates
+
+The API, the ops panel and `/metrics` all sit behind one mutual-TLS
+listener. Rules the code imposes:
+
+- **Every certificate the client CA signs is an admin.** There is no
+  per-client authorization: any certificate that chains to `tlsClientCA`
+  may switch the machine (`POST /api/power`) and download the controller
+  settings with the license key (`/api/backup/*`). Use a CA dedicated to
+  medewid and sign only certificates for medewid's own clients. Never
+  reuse a household CA whose certificates serve other services: the
+  handshake is the barrier that keeps everyone else away from medewid's
+  code.
+- **TLS 1.3 only**, on both the daemon and `medewictl`.
+- **The server certificate's SAN must match the name clients use** (the
+  host in `MEDEWID_URL`, Prometheus' `server_name`, the panel's URL).
+- **`medewictl` trusts only `MEDEWID_CTL_CA`**, no system roots: that file
+  must hold the CA that signed the *server* certificate.
+- **Certificates are read once, at start.** systemd copies the credential
+  files when the unit starts, so a renewed certificate takes effect only
+  after `systemctl restart medewid`. Reading the files per handshake would
+  not help: the daemon only sees the copies.
+
+### A private CA (recommended)
+
+Run this on an admin machine; only `server.crt`, `server.key` and
+`ca.crt` go to the brewhost. The CA's name constraint limits it to the
+brewhost's name, so a phone that trusts it cannot be fooled for any other
+site.
+
+```sh
+HOST=brewhost.lan
+PKI=$HOME/medewid-pki
+
+mkdir -p "$PKI" && cd "$PKI" && umask 077
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+  -keyout ca.key -out ca.crt -days 3650 -subj "/CN=medewid CA" \
+  -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+  -addext "keyUsage=critical,keyCertSign,cRLSign" \
+  -addext "nameConstraints=critical,permitted;DNS:$HOST"
+
+issue() { # name, extensions
+  openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+    -keyout "$1.key" -out "$1.csr" -subj "/CN=$1"
+  openssl x509 -req -in "$1.csr" -CA ca.crt -CAkey ca.key -CAcreateserial \
+    -days 825 -out "$1.crt" -extfile <(printf '%s\n' "$2")
+  rm "$1.csr"
+}
+issue server "subjectAltName=DNS:$HOST
+extendedKeyUsage=serverAuth"
+for c in prometheus medewictl phone; do
+  issue "$c" "extendedKeyUsage=clientAuth"
+done
+# for the phone or browser: certificate, key and CA in one file
+openssl pkcs12 -export -inkey phone.key -in phone.crt -certfile ca.crt \
+  -name "medewid phone" -out phone.p12
+```
+
+The same `ca.crt` is the server's client CA (`tlsClientCA`), `medewictl`'s
+`MEDEWID_CTL_CA` and Prometheus' `ca_file`. Renew the server certificate
+before its 825 days run out, then restart the unit.
+
+**Phones and browsers.** The ops panel needs a client certificate in the
+device's own store: import `phone.p12`. medewid checks no revocation
+list, so retiring a lost device's certificate means a new CA and
+re-issuing every certificate; keep the device count small. To avoid a certificate warning, also
+install `ca.crt` as a trusted CA; the name constraint keeps that harmless.
+If an older phone refuses the `.p12`, re-export it with `-legacy`.
+
+### An ACME (Let's Encrypt) server certificate
+
+Possible, with two consequences: the SAN is the public name, and every
+client's CA file must hold the ACME root (for Let's Encrypt, ISRG Root X1
+and X2 in one PEM) instead of your private CA. Client certificates still
+come from a private CA (`tlsClientCA`). Restart on renewal:
+
+```nix
+security.acme.certs."brewhost.example.org".reloadServices = [ "medewid" ];
+```
+
+The unit has no reload action, so this restarts it, which also re-reads
+the credentials.
+
+## 4. Module configuration
+
+```nix
+services.medewid = {
+  enable = true;
+  environmentFile = "/etc/medewid/medewid.env";
+  xmlFile = "/etc/medewid/leva!-65FCB201.xml";
+  tlsCert = "/etc/medewid/server.crt";
+  tlsKey = "/etc/medewid/server.key";
+  tlsClientCA = "/etc/medewid/ca.crt";
+  # listen = ":8443";              # all interfaces
+  # healthAddr = "127.0.0.1:9114"; # plaintext /healthz
+  openFirewall = true;             # opens the listen port; off by default
+  ipAddressAllow = [
+    "192.168.178.0/24"             # machine, phones, DNS server
+    "10.100.0.5/32"                # Prometheus
+  ];
+};
+```
+
+### The sandbox
+
+The unit runs as a `DynamicUser` with no capabilities, a read-only
+system, no home directories, no devices, a system-call filter and only
+IPv4/IPv6/Unix sockets; the VM test keeps `systemd-analyze security
+medewid` at or below 1.5. Consequences:
+
+- The only writable path is `/var/lib/medewid` (a symlink to
+  `/var/lib/private/medewid`), so `MEDEWID_DB` and `MEDEWID_RAW_DIR` must
+  stay below it.
+- `listen` must use a port above 1023.
+- With `ipAddressAllow` set, the daemon can exchange packets only with
+  loopback and the listed networks; everything else is dropped, so a
+  compromised daemon cannot explore the rest of the network. The list
+  must cover the machine, every API client, the DNS server if
+  `MEDEWID_MACHINE_ADDR` is a name (unless the host resolves through
+  `systemd-resolved` on loopback) and whatever the event hook talks to.
+  Without the option no IP filter applies.
+
+### Event hook
+
+`MEDEWID_EVENT_EXEC` runs through `/bin/sh -c` per detector event, inside
+the same sandbox, with:
+
+| Variable | Value |
+| --- | --- |
+| `MEDEWI_EVENT` | `READY`, `STEAM_WINDOW`, `ECO` or `MACHINE_READY` |
+| `MEDEWI_TEMP` | boiler temperature, e.g. `93.0` |
+| `MEDEWI_SETPOINT` | setpoint, e.g. `93.0` |
+
+The unit's `PATH` holds only coreutils, findutils, grep, sed and systemd;
+add tools with `systemd.services.medewid.path = [ pkgs.curl ];`. The hook
+cannot reach a desktop session's notification daemon (no home, no session
+bus). Push notifications through a server the allowlist covers, e.g. an
+ntfy instance on the brewhost:
+
+```sh
+#!/bin/sh
+# /etc/medewid/hook.sh
+curl -fsS -d "$MEDEWI_EVENT at $MEDEWI_TEMP °C" http://127.0.0.1:2586/espresso
+```
+
+The hook is killed when medewid stops; its output is logged only when
+it fails.
+
+## 5. Switch and verify
+
+```sh
+nixos-rebuild switch
+journalctl -u medewid -f
+```
+
+Expected journal lines, in order:
+
+1. `medewid serving addr=[::]:8443 … tls=true spec=leva!-65FCB201`
+2. `connected addr=… firmware=3.2` (only while the machine is on)
+3. `reports started`
+
+Then:
+
+```sh
+MEDEWID_URL=https://brewhost.lan:8443
+PKI=$HOME/medewid-pki
+
+curl -fsS http://127.0.0.1:9114/healthz     # on the brewhost
+MEDEWID_URL=$MEDEWID_URL MEDEWID_CTL_CA=$PKI/ca.crt \
+  MEDEWID_CTL_CERT=$PKI/medewictl.crt MEDEWID_CTL_KEY=$PKI/medewictl.key \
+  medewictl status
+```
+
+`connected: true` and `spec_ok: true` mean the daemon talks to the
+machine with the right spec. `spec_ok: false` while connected means the
+XML's name does not match the firmware (see [Files](#2-files)); the
+daemon holds the connection without starting reports until you fix it.
+
+## Metrics
+
+`/metrics` is served on the mTLS listener only, so Prometheus needs a
+client certificate:
+
+```yaml
+scrape_configs:
+  - job_name: medewid
+    scheme: https
+    static_configs:
+      - targets: ["brewhost.lan:8443"]
+    tls_config:
+      ca_file: /etc/prometheus/medewid/ca.crt
+      cert_file: /etc/prometheus/medewid/prometheus.crt
+      key_file: /etc/prometheus/medewid/prometheus.key
+      server_name: brewhost.lan
+```
+
+On NixOS the same goes into `services.prometheus.scrapeConfigs`; the
+three files must be readable by the `prometheus` user.
+
+| Metric | Type | Meaning | Machine off / standby |
+| --- | --- | --- | --- |
+| `medewi_machine_connected` | gauge | 1 while a machine connection is up | 0 when off |
+| `medewi_spec_mismatch` | gauge | 1 while the machine's XML name differs from the loaded spec | 0 |
+| `medewi_power_state{state}` | gauge | 1 for the current state: `active`, `eco`, `standby`, `unknown` | `unknown` when off, `standby` in standby |
+| `medewi_ready` | gauge | boiler settled on the setpoint, machine active | 0 |
+| `medewi_machine_ready` | gauge | the machine's own `[READY]`, until eco, standby or a disconnect | 0 |
+| `medewi_boiler_celsius` | gauge | boiler temperature | **keeps its last value** |
+| `medewi_setpoint_celsius` | gauge | boiler setpoint (drops in eco) | **keeps its last value** |
+| `medewi_heater_percent` | gauge | heater output | **keeps its last value** |
+| `medewi_shots_total` | counter | completed shots | — |
+| `medewi_flushes_total` | counter | completed flushes | — |
+| `medewi_pump_seconds_total` | counter | seconds of finished brews, interrupted ones included | — |
+| `medewi_volume_liters_total` | counter | liters of finished brews and wand draws | — |
+| `medewi_water_draws_total` | counter | wand water draws | — |
+| `medewi_water_liters_total` | counter | liters drawn at the wand | — |
+| `medewi_report_lines_total` | counter | report lines received (~4/s while connected) | flat |
+| `medewi_decode_errors_total` | counter | report lines skipped (checksum or decode error) | flat |
+| `medewi_reconnects_total` | counter | connection attempts after the first, failed ones included | +2/min while off |
+| `medewi_fragments_total` | counter | report/frame pieces cut off at a stream switch | — |
+| `medewi_rawlog_dropped_total` | counter | raw-log events dropped, queue full | — |
+| `medewi_rawlog_write_errors_total` | counter | raw-log write, flush or close errors | — |
+| `medewi_rawlog_redacted_lines_total` | counter | received lines the raw log dropped by its allowlist | — |
+
+Gate temperature panels on `medewi_machine_connected == 1` and
+`medewi_power_state{state="standby"} == 0`; the stale values otherwise
+draw flat lines. `medewi_fragments_total` grows with display sampling and
+is not an error signal. Because switching the machine off disconnects
+it, a disconnect alone is not alertable.
+
+### Suggested alerts
+
+```yaml
+groups:
+  - name: medewid
+    rules:
+      - alert: MedewidDown            # the daemon itself, not the machine
+        expr: up{job="medewid"} == 0
+        for: 5m
+      - alert: MedewidSpecMismatch    # firmware flashed, XML stale
+        expr: medewi_spec_mismatch == 1
+        for: 5m
+      - alert: MedewidDecodeErrors
+        expr: increase(medewi_decode_errors_total[15m]) > 10
+      - alert: MedewidConnectionFlapping  # Wi-Fi trouble while the machine is on
+        expr: changes(medewi_machine_connected[1h]) > 6
+      - alert: MedewidRawLogFailing
+        expr: increase(medewi_rawlog_write_errors_total[1h]) > 0 or increase(medewi_rawlog_dropped_total[1h]) > 0
+```
+
+## Backups
+
+**Brew database.** `medewi.db` runs in WAL mode: committed data can sit in
+`medewi.db-wal` for a while, so copying `medewi.db` alone can lose it.
+Use SQLite's online backup instead, which writes one consistent file:
+
+```nix
+systemd.services.medewid-db-backup = {
+  startAt = "daily";
+  serviceConfig.Type = "oneshot";
+  script = ''
+    install -d -m 0700 /var/backup/medewid
+    ${pkgs.sqlite}/bin/sqlite3 /var/lib/private/medewid/medewi.db \
+      ".backup '/var/backup/medewid/medewi.db'"
+  '';
+};
+```
+
+Point the host's backup tool at `/var/backup/medewid`. If it backs up the
+state directory directly instead, include `/var/lib/private/medewid` (the
+real directory; `/var/lib/medewid` is only a symlink) and snapshot
+`medewi.db` and `medewi.db-wal` together. The raw traffic log under
+`raw/` is a seven-day troubleshooting buffer and needs no backup.
+
+**Controller settings.** `medewictl backup -out DIR` dumps the machine's
+settings (license key inside; files `0600`). They change only when
+someone edits them on the machine, so run it after such changes and
+before every firmware flash. A schedule is optional; the daemon refuses
+the dump while the machine is off or a brew is running, so a scheduled
+run fails harmlessly then.

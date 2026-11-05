@@ -101,7 +101,9 @@ to find a moment again later. Design:
 [docs/design/2026-11-05-display-sampling.md](docs/design/2026-11-05-display-sampling.md).
 
 NixOS module (`nixosModules.medewid`): options
-`services.medewid.{enable,package,environmentFile,xmlFile,tlsCert,tlsKey,tlsClientCA,listen,healthAddr}`.
+`services.medewid.{enable,package,environmentFile,xmlFile,tlsCert,tlsKey,tlsClientCA,listen,healthAddr,openFirewall,ipAddressAllow}`.
+Step-by-step deployment (certificates, sandbox, event hook, metrics,
+alerts, backups): [docs/deployment.md](docs/deployment.md).
 The service runs with `DynamicUser`, so it cannot open root-owned files
 itself. `xmlFile`, `tlsCert`, `tlsKey` and `tlsClientCA` are therefore
 delivered via systemd credentials (`LoadCredential`, read as root before
