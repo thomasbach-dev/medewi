@@ -368,14 +368,29 @@ func xmlFromLines(lines []string) string {
 	return ""
 }
 
+// MC? is tried mcqTries times, mcqSpacing apart (also the first-line
+// timeout): the machine can swallow the first command even after the banner
+// wait (seen 2026-11-05). Same values as the daemon's handshake.
+var (
+	mcqTries   = 3
+	mcqSpacing = 2 * time.Second
+)
+
+const mcqIdleGap = 300 * time.Millisecond
+
 func queryXMLName(ctx context.Context, c *leva.Conn) (string, error) {
-	cctx, cancel := context.WithTimeout(ctx, cmdTimeout)
-	defer cancel()
-	lines, err := c.Command(cctx, "MC?")
-	if err != nil {
-		return "", fmt.Errorf("MC?: %w", err)
+	for range mcqTries {
+		cctx, cancel := context.WithTimeout(ctx, cmdTimeout)
+		lines, err := c.CommandOpts(cctx, "MC?", mcqSpacing, mcqIdleGap)
+		cancel()
+		if err != nil {
+			return "", fmt.Errorf("MC?: %w", err)
+		}
+		if name := xmlFromLines(lines); name != "" {
+			return name, nil
+		}
 	}
-	return xmlFromLines(lines), nil
+	return "", nil
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
