@@ -617,3 +617,47 @@ func TestDisplayFramesNotCommandReplies(t *testing.T) {
 		t.Error("Frames() = 0, want frames counted")
 	}
 }
+
+// A tap must see a command's tx before the first byte of its reply: the
+// raw traffic log keys reply handling on the tx it saw last.
+func TestTapTXBeforeReply(t *testing.T) {
+	c, s := newPair(t)
+	var mu sync.Mutex
+	var seq []string
+	c.Tap(func(dir string, _ []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		seq = append(seq, dir)
+	})
+	const rounds = 50
+	go func() {
+		for range rounds {
+			s.readLine(t)
+			s.write(t, "XML=test\r\n")
+		}
+	}()
+	for i := range rounds {
+		mu.Lock()
+		seq = append(seq, "round")
+		mu.Unlock()
+		if _, err := c.Command(context.Background(), "MC?"); err != nil {
+			t.Fatalf("round %d: %v", i, err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	state := ""
+	for _, d := range seq {
+		switch d {
+		case "round":
+			state = "round"
+		case "tx":
+			state = "tx"
+		case "rx":
+			if state == "round" {
+				t.Fatalf("rx before this round's tx (state %q)", state)
+			}
+			state = "rx"
+		}
+	}
+}

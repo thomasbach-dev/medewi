@@ -268,6 +268,9 @@ func (c *Conn) send(ctx context.Context, line string) error {
 		_ = c.nc.SetWriteDeadline(time.Now())
 	})
 	buf := []byte(line + "\r\n")
+	// Tap before writing so a tap sees the tx before the reply's first
+	// byte; a failed write is still tapped.
+	c.fireTaps("tx", buf)
 	_, werr := c.nc.Write(buf)
 	if !stop() {
 		// The cancel hook has started; stop() does not wait for it. Wait
@@ -280,7 +283,6 @@ func (c *Conn) send(ctx context.Context, line string) error {
 			werr = ctx.Err()
 		}
 	}
-	c.fireTaps("tx", buf)
 	if werr != nil {
 		return fmt.Errorf("leva: write: %w", werr)
 	}
