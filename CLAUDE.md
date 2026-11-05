@@ -99,9 +99,10 @@ Details and evidence: [docs/machine-behaviour.md](docs/machine-behaviour.md).
   mutually exclusive: the last one sent wins, so the daemon cannot watch
   both. A switch can glue a cut-off report or frame to the next record
   (`leva` splits them).
-- READY is shown on the display only: it replaces the setpoint
-  (`1: 91.0ß   READY`) for about 10 s. `Heat PID (average)` updates once a
-  minute, and READY came right after such an update both times.
+- READY arrives as an unsolicited `[READY]` line (also in report mode);
+  the LCD shows it in place of the setpoint for about 10 s. `Heat PID
+  (average)` updates once a minute, and READY came right after such an
+  update both times.
 - `Pressure SP` is set during profiled shots, `?????` during flushes and
   program pump pulses. Programs (warm-up: setpoint 110 °C ramping down,
   pump pulses) override the setpoint; the LCD names them.

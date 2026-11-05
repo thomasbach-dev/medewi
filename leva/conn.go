@@ -26,6 +26,8 @@ const (
 	defaultIdleGap   = 300 * time.Millisecond
 	// defaultFirstLine is how long Command waits for the first output line.
 	defaultFirstLine = 2 * time.Second
+	// noticeBuf is the capacity of the notices channel; notices are rare.
+	noticeBuf = 16
 )
 
 // maxLine bounds a single wire line. A longer line is discarded in full (up
@@ -77,6 +79,7 @@ type Conn struct {
 	err       error
 	closed    bool
 	reporting bool
+	display   bool // between StartDisplay and StartReports/StopReports
 	collect   bool
 	lines     []string
 	notify    chan struct{}
@@ -86,7 +89,11 @@ type Conn struct {
 	// reports is created in NewConn and closed (by the reader only) when
 	// the reader exits. It is fed only between StartReports and StopReports.
 	reports chan []byte
-	done    chan struct{} // closed when the reader goroutine has exited
+	// displayFrames is fed only between StartDisplay and the next
+	// StartReports/StopReports, notices always; the reader closes both.
+	displayFrames chan []byte
+	notices       chan []byte
+	done          chan struct{} // closed when the reader goroutine has exited
 
 	dropped   atomic.Uint64
 	oversized atomic.Uint64
@@ -130,11 +137,13 @@ func NewConn(nc net.Conn, opts ...Option) *Conn {
 		cfg.reportBuf = 1
 	}
 	c := &Conn{
-		nc:      nc,
-		cfg:     cfg,
-		taps:    map[int]func(string, []byte){},
-		reports: make(chan []byte, cfg.reportBuf),
-		done:    make(chan struct{}),
+		nc:            nc,
+		cfg:           cfg,
+		taps:          map[int]func(string, []byte){},
+		reports:       make(chan []byte, cfg.reportBuf),
+		displayFrames: make(chan []byte, cfg.reportBuf),
+		notices:       make(chan []byte, noticeBuf),
+		done:          make(chan struct{}),
 	}
 	go c.readLoop()
 	return c
@@ -410,7 +419,7 @@ func (c *Conn) waitIdle(ctx context.Context, notify <-chan struct{}, first, gap 
 // channel.
 func (c *Conn) StartReports(ctx context.Context) (<-chan []byte, error) {
 	c.mu.Lock()
-	c.reporting = true
+	c.reporting, c.display = true, false
 	c.mu.Unlock()
 	if err := c.send(ctx, "MCr"); err != nil {
 		c.mu.Lock()
@@ -424,19 +433,34 @@ func (c *Conn) StartReports(ctx context.Context) (<-chan []byte, error) {
 // StartDisplay sends "MC@": the machine then mirrors its LCD as one
 // "<BKL…>" frame line every 100 ms until "MC " (StopReports) or "MCr"
 // (StartReports). The two streams are mutually exclusive: MC@ replaces the
-// report stream and MCr replaces the display. Frames are only visible to
-// taps; they never count as command replies, so Command keeps working while
-// the display streams. Never send the display protocol's button codes ("MC"
-// + raw byte).
+// report stream and MCr replaces the display. Frames go to DisplayFrames
+// until then; they never count as command replies, so Command keeps working
+// while the display streams. Never send the display protocol's button codes
+// ("MC" + raw byte).
 func (c *Conn) StartDisplay(ctx context.Context) error {
+	c.mu.Lock()
+	c.display = true
+	c.mu.Unlock()
 	return c.send(ctx, "MC@")
 }
 
+// DisplayFrames returns the channel of raw display frames ("<…>", CR+LF
+// stripped; see ParseFrame). It is fed between StartDisplay and the next
+// StartReports or StopReports, buffered like the reports channel (a full
+// buffer drops and counts in Dropped), and closed when the connection ends.
+func (c *Conn) DisplayFrames() <-chan []byte { return c.displayFrames }
+
+// Notices returns the channel of unsolicited bracketed lines such as
+// "[READY]" (CR+LF stripped). It is fed in every mode, never counts as a
+// command reply, and is closed when the connection ends.
+func (c *Conn) Notices() <-chan []byte { return c.notices }
+
 // StopReports sends "MC " (MC + space), which resets the machine's state and
-// stops the report stream (and the display stream, see StartDisplay). Reports still in flight afterwards are discarded.
+// stops the report stream (and the display stream, see StartDisplay).
+// Reports and frames still in flight afterwards are discarded.
 func (c *Conn) StopReports(ctx context.Context) error {
 	c.mu.Lock()
-	c.reporting = false
+	c.reporting, c.display = false, false
 	c.mu.Unlock()
 	return c.send(ctx, "MC ")
 }
@@ -456,10 +480,13 @@ func (c *Conn) Close() error {
 	return err
 }
 
-// readLoop is the only reader of nc and the only closer of c.reports.
+// readLoop is the only reader of nc and the only closer of c.reports,
+// c.displayFrames and c.notices.
 func (c *Conn) readLoop() {
 	defer close(c.done)
 	defer close(c.reports)
+	defer close(c.displayFrames)
+	defer close(c.notices)
 
 	br := bufio.NewReaderSize(tapReader{c}, 4096)
 	var acc []byte
@@ -576,6 +603,23 @@ func (c *Conn) route(line []byte) {
 		c.banners.Add(1)
 	case bytes.HasPrefix(line, []byte("<")):
 		c.frames.Add(1)
+		c.mu.Lock()
+		deliver := c.display
+		c.mu.Unlock()
+		if !deliver {
+			return
+		}
+		select {
+		case c.displayFrames <- bytes.Clone(line):
+		default:
+			c.dropped.Add(1)
+		}
+	case bytes.HasPrefix(line, []byte("[")):
+		select {
+		case c.notices <- bytes.Clone(line):
+		default:
+			c.dropped.Add(1)
+		}
 	default:
 		c.mu.Lock()
 		if c.collect {

@@ -809,6 +809,46 @@ func TestDisplayFramesKept(t *testing.T) {
 	}
 }
 
+// The machine announces READY with an unsolicited "[READY]" line: short
+// bracketed notices are kept outside reply windows, long ones are not.
+func TestNoticesKept(t *testing.T) {
+	long := "[" + strings.Repeat("a", 100) + "]\r\n"
+	evs, l := runSteps(t, "rx:[READY]\r\n", "rx:"+long)
+	if got := kept(evs); !eq(got, []string{"[READY]\r\n"}) {
+		t.Errorf("kept = %q", got)
+	}
+	if l.Redacted() != 1 {
+		t.Errorf("redacted = %d, want 1", l.Redacted())
+	}
+}
+
+// Note writes an annotation (a mark from the barista) between the traffic,
+// after the drop note of lines dropped before it. Nil and closed sessions
+// ignore it.
+func TestSessionNote(t *testing.T) {
+	clk := newClock()
+	l, dir := openLog(t, Config{Now: clk.Now})
+	s := l.Session()
+	tapSeq(clk, s, "rx:{r1}\r\n", "rx:hello\r\n")
+	s.Note("mark: pre-infusion over")
+	tapSeq(clk, s, "rx:{r2}\r\n")
+	s.Close()
+	s.Note("after close")
+	(*Session)(nil).Note("nil")
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	evs := readDir(t, dir)[0]
+	var got []string
+	for _, ev := range evs {
+		got = append(got, string(ev.Dir)+" "+strings.TrimSpace(string(ev.Data)))
+	}
+	want := []string{"rx {r1}", "note dropped 1 line", "note mark: pre-infusion over", "rx {r2}"}
+	if !eq(got, want) {
+		t.Errorf("events = %q, want %q", got, want)
+	}
+}
+
 func TestOpenRecreatesDeletedDir(t *testing.T) {
 	clk := newClock()
 	l, dir := openLog(t, Config{Now: clk.Now})

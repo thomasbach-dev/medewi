@@ -33,6 +33,9 @@ const (
 	// a longer one is a report or display frame with a lost CRLF that glued
 	// the next line (maybe a dump line) onto it.
 	maxReportLine = 1024
+	// maxNoticeLine bounds a kept "[…]" notice line (e.g. "[READY]") without
+	// its terminator.
+	maxNoticeLine = 32
 	nameLayout    = "20060102T150405.000Z"
 	nameSuffix    = ".jsonl.gz"
 )
@@ -272,6 +275,23 @@ func (s *Session) Tap(dir string, p []byte) {
 	}
 }
 
+// Note writes text as a note event, e.g. a mark set by the barista. It
+// never blocks and does no I/O. After Session.Close or Log.Close it does
+// nothing.
+func (s *Session) Note(text string) {
+	if s == nil || s.l.closed.Load() {
+		return
+	}
+	now := s.l.cfg.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	s.flushNote(now)
+	s.l.enqueue(item{sess: s, at: now, dir: fixture.Note, data: []byte(text)})
+}
+
 // tx updates the reply window from the commands in p (all of them: a
 // write may carry several); the caller holds s.mu. MCu/MCm (any suffix)
 // are dump commands: they close the window and start the quiet period. The
@@ -356,9 +376,9 @@ func (s *Session) piece(now time.Time, data []byte, complete bool) {
 
 // judge decides from the start of a line whether it is kept. A dump line
 // (| or :, the Intel HEX of MCm) is never kept and records a dump. Otherwise
-// reports, display frames (MC@) and banners are kept, and anything else
-// only inside the window the line started in, provided no dump happened
-// since its first byte.
+// reports, display frames (MC@), banners and short "[…]" notices are kept,
+// and anything else only inside the window the line started in, provided
+// no dump happened since its first byte.
 func (s *Session) judge(now time.Time, data []byte) bool {
 	line := bytes.TrimRight(data, "\r\n")
 	if len(line) > 0 && (line[0] == '|' || line[0] == ':') {
@@ -367,6 +387,9 @@ func (s *Session) judge(now time.Time, data []byte) bool {
 	}
 	if len(line) > 0 && (line[0] == '{' || line[0] == '<') || bytes.HasPrefix(line, []byte("$id:")) {
 		return true
+	}
+	if len(line) > 0 && line[0] == '[' && len(line) <= maxNoticeLine {
+		return true // a machine notice such as "[READY]"
 	}
 	return s.lineWin && s.lineSeq == s.l.dumpSeqNow()
 }

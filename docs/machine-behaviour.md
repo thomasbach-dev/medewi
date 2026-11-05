@@ -21,10 +21,13 @@ capture that teaches something new, and mark hypotheses as such.
 
 ## READY
 
-- READY replaces the setpoint on the main screen (`1: 91.0ß   READY`) for
-  about 10 s, together with the beeps; the backlight comes on. It is not in
-  the report stream. Seen 2026-11-05 at 582 s into a warm-up from 80 °C
-  and about 7 minutes after the warm-up program ended.
+- The machine sends an unsolicited line **`[READY]`** in the stream, in
+  report mode too (not a report, not a reply). Seen 2026-11-05 at 582.7 s
+  into a warm-up from 80 °C and about 7 minutes after the warm-up program
+  ended.
+- At the same moment READY replaces the setpoint on the main screen
+  (`1: 91.0ß   READY`) for about 10 s, with the beeps; the backlight comes
+  on.
 - The manual: READY means the whole machine (not just the boiler) is warm,
   decided by steady-state detection over the last three minutes.
 - `Heat PID (average)` in the reports updates once a minute. Both READY
@@ -40,7 +43,8 @@ capture that teaches something new, and mark hypotheses as such.
   | after warm-up program, 967 s | 4.6, 3.5, 3.9 | 0.70 °C | no |
   | after warm-up program, 1027 s | 3.5, 3.9, 3.5 | 0.15 °C | yes |
 
-  Until the thresholds are known, the daemon reads READY from the display.
+  The daemon does not need the rule: it takes READY from `[READY]`. The
+  hypothesis matters for predicting READY (e.g. "ready in about 3 min").
 
 ## Shots and flushes
 
