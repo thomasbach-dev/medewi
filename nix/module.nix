@@ -40,7 +40,7 @@ in
         systemd EnvironmentFile with the remaining instance settings:
         `MEDEWID_MACHINE_ADDR` (required) and optionally
         `MEDEWID_EVENT_EXEC`. A `MEDEWID_DB` override must stay under
-        `/var/lib/medewid` (the only writable path). The XML and TLS files
+        `/var/lib/medewid` (the only writable path), as must `MEDEWID_RAW_DIR`. The XML and TLS files
         are not read from here; see `xmlFile` and the `tls*` options. The
         service never passes `-insecure-http`.
       '';
@@ -93,8 +93,8 @@ in
     systemd.services.medewid = {
       description = "medewid leva! espresso-machine daemon";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network-online.target" ];
-      wants = [ "network-online.target" ];
+      after = [ "network-online.target" "time-sync.target" ];
+      wants = [ "network-online.target" "time-sync.target" ];
       serviceConfig = {
         ExecStart = lib.concatStringsSep " " [
           "${cfg.package}/bin/medewid"

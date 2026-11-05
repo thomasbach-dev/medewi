@@ -54,10 +54,31 @@ environment variables (flags win):
 | `MEDEWID_TLS_CERT`, `MEDEWID_TLS_KEY`, `MEDEWID_TLS_CLIENT_CA` | `-tls-cert`, `-tls-key`, `-tls-client-ca` | none |
 | `MEDEWID_HEALTH_ADDR` | `-health-addr` | `127.0.0.1:9114` (plaintext `/healthz`) |
 | `MEDEWID_EVENT_EXEC` | `-event-exec` | none |
+| `MEDEWID_RAW_DIR` | `-raw-dir` | `/var/lib/medewid/raw` |
+| `MEDEWID_RAW_RETENTION` | `-raw-retention` | `168h`; `0` disables the raw log |
+| `MEDEWID_RAW_MAX_MB` | `-raw-max-mb` | `256` |
 
 The API requires mutual TLS: set the server certificate, key and client CA.
 `-insecure-http` exists for local testing only and exits with an error when
 combined with TLS settings.
+
+**Raw traffic log.** medewid keeps what it exchanges with the machine in
+`-raw-dir` for `-raw-retention` (7 days; capped at `-raw-max-mb`), so a
+failure noticed days later can be troubleshot from the exact bytes. One
+gzip file per session (rotated hourly) of JSON lines in the fixture event
+format. Every chunk sent is kept; of the received lines only report lines
+(`{`), banners (`$id:`) and replies to commands medewid itself sent shortly
+before. `MCu`/`MCm` replies (which contain the license key) are never
+logged. If an explicitly configured directory cannot be opened, medewid
+exits 1; with the default directory it only warns and runs without the log.
+Counters: `medewi_rawlog_dropped_total`, `medewi_rawlog_write_errors_total`,
+`medewi_rawlog_redacted_lines_total`. Approximate replay through `levasim`
+(it replays every received line, banners and replies included, as the
+report stream):
+
+```sh
+gzip -dc FILE 2>/dev/null > DIR/log.jsonl; levasim -fixtures DIR
+```
 
 NixOS module (`nixosModules.medewid`): options
 `services.medewid.{enable,package,environmentFile,xmlFile,tlsCert,tlsKey,tlsClientCA,listen,healthAddr}`.
@@ -68,8 +89,9 @@ privileges drop): the files may be root-owned `0600` and live anywhere,
 including `/home` or `/run/secrets`. The XML keeps its base name as
 credential name, because the spec name must match the machine's `XML=`
 reply. The `environmentFile` must contain `MEDEWID_MACHINE_ADDR` (and
-optionally `MEDEWID_EVENT_EXEC`); a `MEDEWID_DB` override must stay under
-`/var/lib/medewid`. The module never passes `-insecure-http`.
+optionally `MEDEWID_EVENT_EXEC`); a `MEDEWID_DB` or `MEDEWID_RAW_DIR` override must
+stay under `/var/lib/medewid`. The unit starts after `time-sync.target`, so
+an unsynced clock does not prune the raw log. The module never passes `-insecure-http`.
 
 `medewictl` is the client: `MEDEWID_URL` plus `MEDEWID_CTL_CERT`,
 `MEDEWID_CTL_KEY` and `MEDEWID_CTL_CA` for the client certificate and the
@@ -105,7 +127,7 @@ MEDEWI_BIN=$HOME/tmp/medewi-bin
 MEDEWI_DATA=$HOME/tmp/medewi-data
 nix develop --command go build -o "$MEDEWI_BIN/" ./cmd/medewid ./cmd/medewictl
 mkdir -p "$MEDEWI_DATA"
-"$MEDEWI_BIN/medewid" -insecure-http -listen 127.0.0.1:8080 -db "$MEDEWI_DATA/medewi.db"
+"$MEDEWI_BIN/medewid" -insecure-http -listen 127.0.0.1:8080 -db "$MEDEWI_DATA/medewi.db" -raw-dir "$MEDEWI_DATA/raw"
 ```
 
 Expect `medewid serving … tls=false`, then `connected … firmware=…` and

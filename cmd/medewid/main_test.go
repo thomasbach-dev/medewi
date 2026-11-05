@@ -124,7 +124,147 @@ func baseArgs(t *testing.T, machine, xml string) []string {
 		"-machine", machine, "-xml", xml,
 		"-db", filepath.Join(t.TempDir(), "m.db"),
 		"-listen", "127.0.0.1:0",
+		"-raw-dir", filepath.Join(t.TempDir(), "raw"),
 		"-health-addr", freeAddr(t),
+	}
+}
+
+// argVal returns the value following flag in args.
+func argVal(t *testing.T, args []string, flag string) string {
+	t.Helper()
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag {
+			return args[i+1]
+		}
+	}
+	t.Fatalf("flag %s not in args", flag)
+	return ""
+}
+
+// metricsText fetches /metrics from a running insecure daemon.
+func metricsText(t *testing.T, r *running) string {
+	t.Helper()
+	resp, err := http.Get("http://" + r.addr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// blockedDir returns a path below a regular file, which no MkdirAll can create.
+func blockedDir(t *testing.T) string {
+	t.Helper()
+	f := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(f, "raw")
+}
+
+func TestRawLogFlags(t *testing.T) {
+	clearEnv(t)
+	machine, xml := startSim(t)
+	args := append(baseArgs(t, machine, xml), "-insecure-http")
+	r := start(t, args...)
+	waitStatus(t, "http://"+r.addr, http.DefaultClient, func(m map[string]any) bool {
+		return m["connected"] == true && m["spec_ok"] == true
+	})
+	m := metricsText(t, r)
+	for _, name := range []string{"medewi_rawlog_dropped_total", "medewi_rawlog_write_errors_total", "medewi_rawlog_redacted_lines_total"} {
+		if !strings.Contains(m, name) {
+			t.Errorf("metrics lack %s", name)
+		}
+	}
+	if code := r.shutdown(); code != 0 {
+		t.Fatalf("exit %d\n%s", code, r.stderr.String())
+	}
+	files, err := filepath.Glob(filepath.Join(argVal(t, args, "-raw-dir"), "*.jsonl.gz"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no raw log file (err %v)\n%s", err, r.stderr.String())
+	}
+}
+
+func TestRawLogEnv(t *testing.T) {
+	clearEnv(t)
+	machine, xml := startSim(t)
+	dir := filepath.Join(t.TempDir(), "envraw")
+	t.Setenv("MEDEWID_RAW_DIR", dir)
+	t.Setenv("MEDEWID_RAW_RETENTION", "24h")
+	t.Setenv("MEDEWID_RAW_MAX_MB", "1")
+	args := []string{
+		"-machine", machine, "-xml", xml, "-insecure-http", "-listen", "127.0.0.1:0",
+		"-health-addr", freeAddr(t), "-db", filepath.Join(t.TempDir(), "m.db"),
+	}
+	r := start(t, args...)
+	if code := r.shutdown(); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MEDEWID_RAW_RETENTION", "bogus")
+	if code, _ := runExit(t, args...); code != 2 {
+		t.Fatalf("bad env retention: exit %d, want 2", code)
+	}
+}
+
+func TestRawLogDisabled(t *testing.T) {
+	clearEnv(t)
+	machine, xml := startSim(t)
+	args := append(baseArgs(t, machine, xml), "-insecure-http", "-raw-retention", "0")
+	r := start(t, args...)
+	waitStatus(t, "http://"+r.addr, http.DefaultClient, func(m map[string]any) bool {
+		return m["connected"] == true
+	})
+	if m := metricsText(t, r); strings.Contains(m, "medewi_rawlog_") {
+		t.Error("rawlog metrics present while disabled")
+	}
+	r.shutdown()
+	if es, _ := os.ReadDir(argVal(t, args, "-raw-dir")); len(es) != 0 {
+		t.Errorf("raw dir not empty: %v", es)
+	}
+}
+
+func TestRawLogExplicitDirUnusable(t *testing.T) {
+	clearEnv(t)
+	machine, xml := startSim(t)
+	args := append(baseArgs(t, machine, xml), "-insecure-http", "-raw-dir", blockedDir(t))
+	if code, se := runExit(t, args...); code != 1 {
+		t.Fatalf("exit %d, want 1\n%s", code, se)
+	}
+}
+
+func TestRawLogDefaultDirUnusableWarns(t *testing.T) {
+	clearEnv(t)
+	machine, xml := startSim(t)
+	old := rawDefault
+	rawDefault = blockedDir(t)
+	t.Cleanup(func() { rawDefault = old })
+	args := baseArgs(t, machine, xml)
+	args = append(args[:8:8], args[10:]...) // drop -raw-dir
+	args = append(args, "-insecure-http")
+	r := start(t, args...)
+	if code := r.shutdown(); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if !strings.Contains(r.stderr.String(), "raw traffic log disabled") {
+		t.Errorf("no warning in stderr:\n%s", r.stderr.String())
+	}
+}
+
+func TestRawLogBadFlags(t *testing.T) {
+	clearEnv(t)
+	machine, xml := startSim(t)
+	for _, extra := range [][]string{{"-raw-retention", "-1h"}, {"-raw-max-mb", "0"}, {"-raw-retention", "x"}} {
+		args := append(append(baseArgs(t, machine, xml), "-insecure-http"), extra...)
+		if code, se := runExit(t, args...); code != 2 {
+			t.Errorf("%v: exit %d, want 2\n%s", extra, code, se)
+		}
 	}
 }
 
@@ -134,6 +274,7 @@ func clearEnv(t *testing.T) {
 		"MEDEWID_MACHINE_ADDR", "MEDEWI_MACHINE_ADDR", "MEDEWID_XML_PATH", "MEDEWI_XML_PATH",
 		"MEDEWID_DB", "MEDEWID_LISTEN", "MEDEWID_TLS_CERT", "MEDEWID_TLS_KEY",
 		"MEDEWID_TLS_CLIENT_CA", "MEDEWID_HEALTH_ADDR", "MEDEWID_EVENT_EXEC",
+		"MEDEWID_RAW_DIR", "MEDEWID_RAW_RETENTION", "MEDEWID_RAW_MAX_MB",
 	} {
 		t.Setenv(k, "")
 	}

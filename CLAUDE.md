@@ -8,8 +8,8 @@ medewi: a per-coffee recipe system for espresso machines running the leva!
 controller firmware. Phase 1 (complete): protocol library (`leva/`),
 machine simulator (`sim/`, `cmd/levasim`), conformance suite
 (`conformance/`), capture tooling (`cmd/levacap`). Phase 2 (implemented):
-the always-on daemon `medewid` (`daemon/`, `watch/`, `brew/`, `store/`:
-exporter, brew DB, power control, ops panel), the client `cmd/medewictl`
+the always-on daemon `medewid` (`daemon/`, `watch/`, `brew/`, `store/`, `rawlog/`:
+exporter, brew DB, power control, ops panel, raw traffic log), the client `cmd/medewictl`
 and the NixOS module `nix/module.nix`; recipe execution is still to come.
 Start with
 [docs/architecture.md](docs/architecture.md); decisions live in
@@ -65,6 +65,8 @@ local, gitignored `.envrc` — see the README's Configuration section.
   text), real `MCu`/`MCm` dumps (license key inside), private hostnames or
   paths. `private/` and `captures/` are gitignored;
   `conformance/real_fixtures_test.go` trips on known-private strings.
+- The raw log must never contain `MCu`/`MCm` reply lines; keep the `rawlog`
+  allowlist and its tests.
 - Personas are "barista" and "regular" — no real personal names.
 - Pure Go, no cgo (protects cross-compile and gomobile paths).
 - TDD (failing test first), conventional commits, one feature branch + PR

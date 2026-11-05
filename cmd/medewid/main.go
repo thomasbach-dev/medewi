@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -28,6 +29,7 @@ import (
 	"github.com/thomasbach-dev/medewi/brew"
 	"github.com/thomasbach-dev/medewi/daemon"
 	"github.com/thomasbach-dev/medewi/leva"
+	"github.com/thomasbach-dev/medewi/rawlog"
 	"github.com/thomasbach-dev/medewi/store"
 	"github.com/thomasbach-dev/medewi/watch"
 )
@@ -37,8 +39,15 @@ const (
 	defaultListen = ":8443"
 	defaultHealth = "127.0.0.1:9114"
 
+	defaultRawRetention = 168 * time.Hour
+	defaultRawMaxMB     = 256
+
 	shutdownTimeout = 5 * time.Second
 )
+
+// rawDefault is the raw traffic log directory when none is configured; a
+// variable so tests can point it somewhere unusable.
+var rawDefault = "/var/lib/medewid/raw"
 
 func main() {
 	// SIGHUP too: a closed terminal must still stop the stream with "MC ".
@@ -83,23 +92,53 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 	caFile := fset.String("tls-client-ca", os.Getenv("MEDEWID_TLS_CLIENT_CA"), "client CA PEM (env MEDEWID_TLS_CLIENT_CA)")
 	health := fset.String("health-addr", envOr("MEDEWID_HEALTH_ADDR", defaultHealth), "plaintext /healthz listen address (env MEDEWID_HEALTH_ADDR)")
 	eventExec := fset.String("event-exec", os.Getenv("MEDEWID_EVENT_EXEC"), "shell command run per detector event (env MEDEWID_EVENT_EXEC)")
+	rawDir := fset.String("raw-dir", envOr("MEDEWID_RAW_DIR", rawDefault), "raw traffic log directory (env MEDEWID_RAW_DIR)")
+	rawRetention := fset.Duration("raw-retention", defaultRawRetention, "raw traffic log retention, 0 disables it (env MEDEWID_RAW_RETENTION)")
+	rawMaxMB := fset.Int64("raw-max-mb", defaultRawMaxMB, "raw traffic log size cap in MiB (env MEDEWID_RAW_MAX_MB)")
 	insecure := fset.Bool("insecure-http", false, "serve the API without TLS")
+	exit := func(code int, format string, a ...any) int {
+		_, _ = fmt.Fprintf(stderr, "medewid: "+format+"\n", a...)
+		return code
+	}
+	// Environment defaults for the raw-log numbers; a bad value is a usage
+	// error like a bad flag. Flags parsed below override them.
+	if v := os.Getenv("MEDEWID_RAW_RETENTION"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return exit(2, "MEDEWID_RAW_RETENTION: %v", err)
+		}
+		*rawRetention = d
+	}
+	if v := os.Getenv("MEDEWID_RAW_MAX_MB"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return exit(2, "MEDEWID_RAW_MAX_MB: %v", err)
+		}
+		*rawMaxMB = n
+	}
 	if err := fset.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 2
 	}
-
-	exit := func(code int, format string, a ...any) int {
-		_, _ = fmt.Fprintf(stderr, "medewid: "+format+"\n", a...)
-		return code
-	}
+	rawExplicit := os.Getenv("MEDEWID_RAW_DIR") != ""
+	fset.Visit(func(f *flag.Flag) {
+		if f.Name == "raw-dir" {
+			rawExplicit = true
+		}
+	})
 	if *machine == "" {
 		return exit(2, "-machine (or MEDEWID_MACHINE_ADDR / MEDEWI_MACHINE_ADDR) is required")
 	}
 	if *xmlPath == "" {
 		return exit(2, "-xml (or MEDEWID_XML_PATH / MEDEWI_XML_PATH) is required")
+	}
+	if *rawRetention < 0 {
+		return exit(2, "-raw-retention must not be negative")
+	}
+	if *rawMaxMB <= 0 {
+		return exit(2, "-raw-max-mb must be positive")
 	}
 	nTLS := 0
 	for _, s := range []string{*certFile, *keyFile, *caFile} {
@@ -143,6 +182,32 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 		}
 	}()
 
+	// The raw log is opened after the store and closed after the daemon
+	// stopped (defers run last-in first-out), so its sessions' partial lines
+	// are flushed before the log shuts down.
+	var raw *rawlog.Log
+	if *rawRetention > 0 {
+		raw, err = rawlog.Open(rawlog.Config{
+			Dir:       *rawDir,
+			Retention: *rawRetention,
+			MaxBytes:  *rawMaxMB << 20,
+		})
+		switch {
+		case err != nil && rawExplicit:
+			return exit(1, "open raw traffic log: %v", err)
+		case err != nil:
+			logger.Warn("raw traffic log disabled", "dir", *rawDir, "err", err)
+			raw = nil
+		}
+	}
+	if raw != nil {
+		defer func() {
+			if err := raw.Close(); err != nil {
+				_, _ = fmt.Fprintf(stderr, "medewid: close raw log: %v\n", err)
+			}
+		}()
+	}
+
 	mainLn, err := net.Listen("tcp", *listen)
 	if err != nil {
 		return exit(1, "listen: %v", err)
@@ -154,6 +219,22 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 	}
 
 	reg := prometheus.NewRegistry()
+	if raw != nil {
+		reg.MustRegister(
+			prometheus.NewCounterFunc(prometheus.CounterOpts{
+				Name: "medewi_rawlog_dropped_total",
+				Help: "Raw-log events dropped because the queue was full.",
+			}, func() float64 { return float64(raw.Dropped()) }),
+			prometheus.NewCounterFunc(prometheus.CounterOpts{
+				Name: "medewi_rawlog_write_errors_total",
+				Help: "Raw-log write, flush or close errors.",
+			}, func() float64 { return float64(raw.WriteErrors()) }),
+			prometheus.NewCounterFunc(prometheus.CounterOpts{
+				Name: "medewi_rawlog_redacted_lines_total",
+				Help: "Received lines the raw log dropped by its allowlist (MCu/MCm replies, unsolicited lines).",
+			}, func() float64 { return float64(raw.Redacted()) }),
+		)
+	}
 	d := daemon.New(daemon.Config{
 		Addr:      *machine,
 		Spec:      spec,
@@ -163,6 +244,7 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 		Watch:     watch.DefaultConfig(),
 		EventExec: *eventExec,
 		Registry:  reg,
+		Raw:       raw,
 	})
 
 	mainSrv := &http.Server{
@@ -215,8 +297,8 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 		code = exit(1, "daemon: %v", err)
 	}
 
-	// Drain HTTP first, then stop the daemon; the deferred store close runs
-	// last.
+	// Drain HTTP first, then stop the daemon; the deferred raw-log and store
+	// closes run last.
 	sctx, scancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer scancel()
 	for _, s := range []*http.Server{mainSrv, healthSrv} {

@@ -64,6 +64,8 @@ flowchart LR
 - **Database** — SQLite. Shots are events with identity (timestamp, coffee,
   drink, recipe version, curves, optional verdict); recipes carry their
   edit history. Exports to LLM-friendly text.
+- **Raw traffic log** — the daemon also keeps the last days of machine
+  traffic as gzip JSON-lines files (`rawlog/`), minus license-key replies.
 
 ## Deployment modes
 
