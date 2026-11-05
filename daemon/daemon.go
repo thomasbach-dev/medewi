@@ -2,7 +2,9 @@
 // machine, reconnects with backoff, gates the report stream on a spec-name
 // handshake, feeds report lines to the watch detector and the brew recorder,
 // stores brews, and publishes a Status snapshot. A single command worker
-// runs power changes and settings dumps on the same connection.
+// runs power changes and settings dumps on the same connection. With
+// Config.Raw set, each connection's raw traffic goes to a rawlog session
+// (dump replies are never logged).
 //
 // The only strings it sends are the handshake and stream commands "MC?",
 // "MCr" and "MC ", the dumps "MCu" and "MCm", and the power toggles "MCa",
@@ -22,6 +24,7 @@ import (
 
 	"github.com/thomasbach-dev/medewi/brew"
 	"github.com/thomasbach-dev/medewi/leva"
+	"github.com/thomasbach-dev/medewi/rawlog"
 	"github.com/thomasbach-dev/medewi/store"
 	"github.com/thomasbach-dev/medewi/watch"
 )
@@ -83,6 +86,8 @@ type Config struct {
 	BackoffMin, BackoffMax time.Duration
 	// Registry receives the Prometheus metrics; nil disables them.
 	Registry prometheus.Registerer
+	// Raw logs the raw machine traffic of every session; nil disables it.
+	Raw *rawlog.Log
 }
 
 // Daemon owns the machine connection. Create it with New and start it with Run.
@@ -199,6 +204,12 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 		}
 		return false
 	}
+	// Deferred in reverse: disconnected (and its conn.Close) runs first, the
+	// tap is removed next, the raw session closes last. The final "MC " is
+	// sent in the loop body before any of them runs, so it is logged.
+	rs := d.cfg.Raw.Session()
+	defer rs.Close()
+	defer conn.Tap(rs.Tap)()
 	defer d.disconnected(ctx, conn)
 
 	rctx, cancel := context.WithTimeout(ctx, readyTimeout)
