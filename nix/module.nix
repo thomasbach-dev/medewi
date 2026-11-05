@@ -10,6 +10,8 @@ self:
 let
   cfg = config.services.medewid;
   xmlName = baseNameOf cfg.xmlFile;
+  # ":8443", "0.0.0.0:8443" and "[::]:8443" all end in the port.
+  listenPort = lib.toInt (lib.last (lib.splitString ":" cfg.listen));
   # An absolute path string outside the store: a path literal (./medewid.key)
   # would copy the key or the vendor XML into the world-readable store.
   secretPath = lib.types.pathWith {
@@ -89,13 +91,39 @@ in
       default = "127.0.0.1:9114";
       description = "Address of the plaintext /healthz listener.";
     };
+
+    openFirewall = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open the `listen` port in the firewall.";
+    };
+
+    ipAddressAllow = lib.mkOption {
+      type = lib.types.nullOr (lib.types.listOf lib.types.str);
+      default = null;
+      example = [
+        "192.168.178.0/24"
+        "10.100.0.0/24"
+      ];
+      description = ''
+        Networks the daemon may exchange packets with, besides loopback
+        (systemd `IPAddressAllow`; everything else is denied). Must cover the
+        machine, the API clients (Prometheus, phones, `medewictl`), the DNS
+        server if `MEDEWID_MACHINE_ADDR` is a name, and any host the event
+        hook talks to. A compromised daemon then cannot reach the rest of
+        the network. `null` (the default) applies no IP filter.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
     systemd.services.medewid = {
       description = "medewid leva! espresso-machine daemon";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network-online.target" "time-sync.target" ];
+      after = [
+        "network-online.target"
+        "time-sync.target"
+      ];
       wants = [ "network-online.target" ];
       serviceConfig = {
         ExecStart = lib.concatStringsSep " " [
@@ -122,7 +150,42 @@ in
         ProtectSystem = "strict";
         ProtectHome = true;
         PrivateTmp = true;
+        # Sandbox: a bug in medewid must not become a foothold on the host.
+        # The event hook runs inside the same sandbox.
+        UMask = "0077";
+        CapabilityBoundingSet = "";
+        PrivateDevices = true;
+        PrivateUsers = true;
+        ProtectClock = true;
+        ProtectControlGroups = true;
+        ProtectHostname = true;
+        ProtectKernelLogs = true;
+        ProtectKernelModules = true;
+        ProtectKernelTunables = true;
+        ProtectProc = "invisible";
+        ProcSubset = "pid";
+        LockPersonality = true;
+        MemoryDenyWriteExecute = true;
+        RestrictAddressFamilies = [
+          "AF_INET"
+          "AF_INET6"
+          "AF_UNIX"
+        ];
+        RestrictNamespaces = true;
+        RestrictRealtime = true;
+        SystemCallArchitectures = "native";
+        SystemCallFilter = [
+          "@system-service"
+          "~@privileged"
+        ];
+        SystemCallErrorNumber = "EPERM";
+      }
+      // lib.optionalAttrs (cfg.ipAddressAllow != null) {
+        IPAddressDeny = "any";
+        IPAddressAllow = [ "localhost" ] ++ cfg.ipAddressAllow;
       };
     };
+
+    networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ listenPort ];
   };
 }
