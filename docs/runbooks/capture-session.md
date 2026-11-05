@@ -12,7 +12,9 @@ Below, `levacap ...` means `go run ./cmd/levacap ...`.
 
 1. **Whitelist.** The only commands ever sent are `MCh MC? MCu MCm MCb MCf`
    plus stream control `MCr` (start reports) and `MC ` (MC + space, stop
-   reports and reset state). Nothing else. Do not type extra commands by
+   reports and reset state), and `MC@` (display mirror, scenario `display`).
+   Nothing else; in particular never the display protocol's button codes
+   (`MC` + a raw byte), which press keys on the machine. Do not type extra commands by
    hand on port 23 during a capture.
 2. **Never touch port 2323.** It is the bootloader; the first byte sent there
    resets the controller into flashing mode. `levacap` and the library refuse
@@ -34,6 +36,17 @@ Below, `levacap ...` means `go run ./cmd/levacap ...`.
 
 - Machine on, warm or cold as the scenario needs, idle.
 - Status Monitor closed on every computer.
+- medewid stopped on the host that runs it: `systemctl stop medewid`
+  (start it again afterwards with `systemctl start medewid`). Only one
+  client may talk to the machine, and stream toggles are global: a capture's
+  `MC ` stops medewid's stream too (it then reconnects after its stall
+  timeout and restarts the stream with `MCr` mid-capture).
+- The machine is idle on the wire: `go run ./cmd/levacap session-reset`
+  prints "the machine is idle". If a phone app or a crashed client left a
+  stream on, it sends `MC ` once and checks that the banner comes back; if
+  the banner stays away, another device is still connected and restarts its
+  stream, so disconnect it and run `session-reset` again. It cannot detect
+  devices that hold a connection without streaming.
 - `direnv allow` done in the repo, so `MEDEWI_MACHINE_ADDR`
   (the machine's `host:port`) and `MEDEWI_XML_PATH` (local copy of the
   firmware's release XML, e.g. `leva!-65FCB201.xml`) are set — see the
@@ -49,6 +62,11 @@ Below, `levacap ...` means `go run ./cmd/levacap ...`.
   connecting is silently swallowed. `levacap` waits up to 5 s for a banner,
   then until a second banner arrives or 1.5 s have passed since the first, and
   refuses to send otherwise.
+- **No banner while a stream is on, not even on connect.** The banner is the
+  idle heartbeat. If another client left `MCr` or `MC@` on (stream toggles
+  are global), a new connection sees only reports or display frames.
+  `levacap` then exits with "data received but no $id banner" and points to
+  `levacap session-reset` (Prerequisites).
 - `MC?` answers `XML=leva!-65FCB201`. The name must match the file behind
   `MEDEWI_XML_PATH`; Status Monitor and medewi cannot decode reports with a
   mismatched XML.
@@ -82,6 +100,7 @@ go run ./cmd/levacap capture -scenario stream          # 2. idle report stream
 go run ./cmd/levacap capture -scenario stream -out captures/warmup   # 3. warmup
 go run ./cmd/levacap capture -scenario shot            # 4. a real shot
 go run ./cmd/levacap capture -scenario shot -out captures/shot2      # 5. second shot
+go run ./cmd/levacap capture -scenario display -out captures/warmup-display  # 6. warm-up to READY
 ```
 
 1. **commands** — sends `MCh MC? MCu MCm MCb MCf` with a 1 s pause between
@@ -95,7 +114,18 @@ go run ./cmd/levacap capture -scenario shot -out captures/shot2      # 5. second
    because the scenario name decides the subdirectory.)
 4. **shots, 1 or 2** — scenario `shot` prints "pull the shot now, press Enter
    when done". Start recording, pull a real shot, press Enter afterwards.
-5. **optional: second-client fan-out** — while a `stream` capture runs, open
+6. **warm-up to READY, with the display (20–30 min)** — scenario `display`
+   records the report stream (`MCr`) and samples the LCD mirror (`MC@`, 10
+   frames/s): the machine sends only one of the two at a time, so `levacap`
+   switches to `MC@` for 500 ms every 10 s and back to `MCr` (tune with
+   `-display-every`, `-display-for`). About 1.2 KB/s. Start it while the
+   machine is in standby or eco (cold is best), then wake the machine. Type `m` + Enter when you hear the
+   three READY beeps (and at anything else worth finding again); the marks
+   land in the manifest notes as milliseconds since start. An empty line
+   stops: `MC ` ends both streams. Purpose: the exact READY moment from the
+   display next to the full report data, to build the daemon's readiness
+   heuristic.
+7. **optional: second-client fan-out** — while a `stream` capture runs, open
    `nc rancilio 23` in another terminal, only read, then disconnect. Note in
    `manifest.json` whether both clients saw the same lines. This also covers
    the 4/5-client question below if you are willing to try.
@@ -106,12 +136,15 @@ Behavior of the tool you need to know:
   in the target directory, `levacap` exits 1 with "refusing to overwrite";
   use a different `-out` or `-force` (only when you meant to replace a
   *complete* capture).
-- **Ctrl-C is a clean stop for `stream` and `shot`.** Once recording has
+- **Ctrl-C is a clean stop for `stream`, `shot` and `display`.** Once recording has
   started, Ctrl-C does exactly what Enter does: `levacap` sends `MC `, writes a
   complete `log.jsonl` and `manifest.json`, and exits 0. Ctrl-C during the
   banner wait aborts without writing any files (exit 1). Ctrl-C during the
   `MC?` query, or at any point in `commands`, aborts the run and writes
   partial files (next bullet).
+- **A lost connection ends the recording at once** with exit 1 and partial
+  files; `levacap` does not wait for Enter. Marks typed after that point
+  would be meaningless.
 - **Any other failure** (a disconnect, a timeout, a failed `MC `, or an abort
   as above) writes `log.partial.jsonl` / `manifest.partial.json` with the
   reason in the manifest notes, and exits 1. Partial files never overwrite a
@@ -154,7 +187,7 @@ Record the answer in the manifest notes and fix code/simulator if wrong.
 | 4 | Safe keepalive: periodic CRLF versus periodic `MC?`; and the real idle-timeout length (simulator assumes 5 min, the design's guess). | Hold an idle connection with no traffic and time the disconnect; then try each keepalive candidate over a longer period. Until verified: reconnect on timeout. |
 | 5 | 5th client behavior (simulator caps at 4 clients; the real behavior is unknown). | Only if cheap: open five `nc` sessions, note what the fifth sees. Close them afterwards. |
 | 6 | Real `MCr` after `MC ` resumes versus restarts the stream. | Start, stop, start again; compare sequence/timestamps in the log. |
-| 7 | `MC@` alone emits display frames passively. | Not sent by default. Input injection is out of scope; skip unless `MC@` alone is shown to be safe. |
+| 7 | `MC@` alone emits display frames passively. | Verified 2026-11-04: frames every 100 ms, no key presses; `MC@` replaces the report stream and `MCr` replaces it back. Button codes stay out of scope. |
 
 ## 5. Firmware-flash gate
 

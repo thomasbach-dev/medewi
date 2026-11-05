@@ -64,6 +64,8 @@ flowchart LR
 - **Database** — SQLite. Shots are events with identity (timestamp, coffee,
   drink, recipe version, curves, optional verdict); recipes carry their
   edit history. Exports to LLM-friendly text.
+- **Raw traffic log** — the daemon also keeps the last days of machine
+  traffic as gzip JSON-lines files (`rawlog/`), minus license-key replies.
 
 ## Deployment modes
 
@@ -79,11 +81,28 @@ flowchart LR
    only happens while the app is open. The pure-Go/no-cgo policy exists to
    keep this path (gomobile) open.
 
+## Phase 2 packages (implemented)
+
+- `watch/` — machine-state detector over the decoded report stream
+  (READY, steam, eco events).
+- `brew/` — brew recorder: pump runs as episodes, classification, curves.
+- `store/` — SQLite persistence of brews and their curves. Settings
+  backups are files that `medewictl backup` writes, not database rows.
+- `rawlog/` — raw traffic log: gzip'd per-session JSON lines, allowlist
+  that keeps license-key replies out, retention, marks as notes.
+- `daemon/` — connection supervision, HTTP API, metrics, ops panel
+  (`panel.html`, embedded), power control, machine READY (`[READY]`),
+  display sampling and marks.
+- `cmd/medewid` — the daemon binary (mTLS API, plaintext health listener).
+- `cmd/medewictl` — client for status, power, marks and backups.
+- `nix/module.nix` — the `nixosModules.medewid` service.
+
 ## Build order
 
 1. Capture session against the real machine → protocol fixtures.
 2. Simulator + protocol library (developed against the fixtures).
-3. Daemon: exporter, shot capture → DB, recipe execution, HTTP API.
+3. Daemon: exporter, shot capture → DB, HTTP API — **implemented** (phase 2);
+   recipe execution is still to come.
 4. Web UI: guided mode and barista mode.
 5. Extensions: hot-water dosing, steam guidance, settings push via the
    firmware's Virtual-LCD protocol, V60 program, optional

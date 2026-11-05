@@ -19,13 +19,16 @@ const (
 	TX Dir = "tx"
 	// RX marks bytes received from the machine.
 	RX Dir = "rx"
+	// Note marks a plain-text annotation by the recorder (for example
+	// "dropped 3 lines"). It is not traffic: replay ignores it.
+	Note Dir = "note"
 )
 
 // Event is a single recorded chunk of raw traffic.
 // Data marshals as base64, so arbitrary binary content round-trips exactly.
 type Event struct {
 	T    int64  `json:"t"`    // milliseconds since session start
-	Dir  Dir    `json:"dir"`  // TX or RX
+	Dir  Dir    `json:"dir"`  // TX, RX or Note
 	Data []byte `json:"data"` // raw bytes
 }
 

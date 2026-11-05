@@ -27,7 +27,8 @@ func (r Record) Field(name string) (Field, bool) {
 	return Field{}, false
 }
 
-// Float returns the named field parsed as a float.
+// Float returns the named field parsed as a float and scaled by the spec's
+// Factor (zero counts as 1).
 func (r Record) Float(name string) (float64, bool) {
 	f, ok := r.Field(name)
 	if !ok {
@@ -36,6 +37,9 @@ func (r Record) Float(name string) (float64, bool) {
 	v, err := strconv.ParseFloat(f.Raw, 64)
 	if err != nil {
 		return 0, false
+	}
+	if f.Spec.Factor != 0 {
+		v *= f.Spec.Factor
 	}
 	return v, true
 }

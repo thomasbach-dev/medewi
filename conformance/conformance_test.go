@@ -16,6 +16,7 @@ import (
 func synthLine(temp string) []byte {
 	line := []byte(strings.Repeat(" ", 54))
 	line[0] = '{'
+	line[2] = '-'
 	copy(line[4:], "1:%")
 	copy(line[7:], temp)
 	copy(line[18:], " 42")
@@ -30,6 +31,11 @@ func startSim(t *testing.T) string {
 	for i, temp := range []string{" 93.50", " 93.60", " 93.70", " 93.80"} {
 		stream = append(stream, fixture.Event{T: int64(i * 10), Dir: fixture.RX, Data: synthLine(temp)})
 	}
+	return startSimStream(t, stream)
+}
+
+func startSimStream(t *testing.T, stream []fixture.Event) string {
+	t.Helper()
 	s := sim.New(sim.Config{
 		Banner: "$id: leva! 3.2",
 		Responses: map[string][]string{
@@ -72,6 +78,32 @@ func TestAllChecksPassAgainstSim(t *testing.T) {
 			t.Errorf("%s: skipped=%v err=%v", r.Name, r.Skipped, r.Err)
 		}
 	}
+}
+
+func TestBadPumpMarkerFailsReportsDecode(t *testing.T) {
+	var stream []fixture.Event
+	for i := range 4 {
+		line := synthLine(" 93.50")
+		line[2] = 'x'
+		stream = append(stream, fixture.Event{T: int64(i * 10), Dir: fixture.RX, Data: line})
+	}
+	addr := startSimStream(t, stream)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	res, err := Run(ctx, addr, StreamState, Env{Spec: synthSpec(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range res {
+		if r.Name != "reports-decode" {
+			continue
+		}
+		if r.Err == nil || !strings.Contains(r.Err.Error(), "pump marker") {
+			t.Errorf("reports-decode err=%v, want pump marker error", r.Err)
+		}
+		return
+	}
+	t.Fatal("no reports-decode result")
 }
 
 func TestMaxClassSkips(t *testing.T) {

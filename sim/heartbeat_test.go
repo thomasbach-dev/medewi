@@ -30,6 +30,29 @@ func TestNoHeartbeatByDefault(t *testing.T) {
 	}
 }
 
+// Like the real machine (2026-11-04: a phone app had left MCr on), a client
+// connecting while reporting is on gets reports and no banner: the banner
+// is the idle heartbeat, and it is silent while reporting.
+func TestNoConnectBannerWhileReporting(t *testing.T) {
+	cfg := Config{
+		BannerInterval: 20 * time.Millisecond,
+		IdleTimeout:    time10s,
+		Stream:         []fixture.Event{rx(0, "r1\r\n"), rx(20, "r2\r\n")},
+	}
+	s := start(t, cfg)
+	c1, r1 := dial(t, s)
+	send(t, c1, "MCr\r\n")
+	for line := ""; line != "r1\r\n"; { // skip banners queued before MCr
+		line = readLine(t, r1, c1)
+	}
+	c2, r2 := dial(t, s)
+	for i := range 5 {
+		if got := readLine(t, r2, c2); got == bannerLine {
+			t.Fatalf("line %d is a banner while reporting is on", i)
+		}
+	}
+}
+
 func TestHeartbeatPausesDuringReporting(t *testing.T) {
 	cfg := Config{
 		BannerInterval: 20 * time.Millisecond,

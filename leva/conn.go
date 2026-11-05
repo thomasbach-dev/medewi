@@ -26,6 +26,8 @@ const (
 	defaultIdleGap   = 300 * time.Millisecond
 	// defaultFirstLine is how long Command waits for the first output line.
 	defaultFirstLine = 2 * time.Second
+	// noticeBuf is the capacity of the notices channel; notices are rare.
+	noticeBuf = 16
 )
 
 // maxLine bounds a single wire line. A longer line is discarded in full (up
@@ -59,9 +61,12 @@ func WithReportBuffer(n int) Option { return func(c *config) { c.reportBuf = n }
 
 // Conn owns one connection to a leva! controller. A single reader goroutine
 // strips the trailing CR+LF from every line (project ruling R2) and
-// classifies the stripped line: "{" prefix is a report, "$id:" prefix is a
-// banner, anything else is command output. Lines are delivered
-// byte-identically otherwise (NUL and Latin-1 bytes included).
+// classifies the stripped line: "{" prefix is a report, "<" a display frame,
+// "[" a machine notice such as "[READY]", "$id:" prefix is a banner,
+// anything else is command output. Report and
+// frame lines glued together at a stream switch are split first (split).
+// Lines are delivered byte-identically otherwise (NUL and Latin-1 bytes
+// included).
 type Conn struct {
 	nc  net.Conn
 	cfg config
@@ -75,6 +80,7 @@ type Conn struct {
 	err       error
 	closed    bool
 	reporting bool
+	display   bool // between StartDisplay and StartReports/StopReports
 	collect   bool
 	lines     []string
 	notify    chan struct{}
@@ -84,11 +90,17 @@ type Conn struct {
 	// reports is created in NewConn and closed (by the reader only) when
 	// the reader exits. It is fed only between StartReports and StopReports.
 	reports chan []byte
-	done    chan struct{} // closed when the reader goroutine has exited
+	// displayFrames is fed only between StartDisplay and the next
+	// StartReports/StopReports, notices always; the reader closes both.
+	displayFrames chan []byte
+	notices       chan []byte
+	done          chan struct{} // closed when the reader goroutine has exited
 
 	dropped   atomic.Uint64
 	oversized atomic.Uint64
 	banners   atomic.Uint64
+	frames    atomic.Uint64
+	fragments atomic.Uint64
 }
 
 // Dial connects to a leva! controller's command port. The port is resolved
@@ -126,11 +138,13 @@ func NewConn(nc net.Conn, opts ...Option) *Conn {
 		cfg.reportBuf = 1
 	}
 	c := &Conn{
-		nc:      nc,
-		cfg:     cfg,
-		taps:    map[int]func(string, []byte){},
-		reports: make(chan []byte, cfg.reportBuf),
-		done:    make(chan struct{}),
+		nc:            nc,
+		cfg:           cfg,
+		taps:          map[int]func(string, []byte){},
+		reports:       make(chan []byte, cfg.reportBuf),
+		displayFrames: make(chan []byte, cfg.reportBuf),
+		notices:       make(chan []byte, noticeBuf),
+		done:          make(chan struct{}),
 	}
 	go c.readLoop()
 	return c
@@ -152,8 +166,8 @@ func (c *Conn) Err() error {
 	return c.err
 }
 
-// Dropped returns the number of reports discarded because the reports
-// channel was full.
+// Dropped returns the number of reports, display frames and notices
+// discarded because their channel was full.
 func (c *Conn) Dropped() uint64 { return c.dropped.Load() }
 
 // Oversized returns the number of lines discarded for exceeding the
@@ -162,6 +176,13 @@ func (c *Conn) Oversized() uint64 { return c.oversized.Load() }
 
 // Banners returns the number of "$id:" banner lines seen so far.
 func (c *Conn) Banners() uint64 { return c.banners.Load() }
+
+// Frames returns the number of "<…>" display frames seen so far.
+func (c *Conn) Frames() uint64 { return c.frames.Load() }
+
+// Fragments returns the number of report or frame pieces dropped because a
+// stream switch cut them off (see split).
+func (c *Conn) Fragments() uint64 { return c.fragments.Load() }
 
 // WaitReady blocks until the machine is ready to take commands: it has sent
 // two banners, or it has sent one and settle has elapsed since WaitReady
@@ -264,6 +285,9 @@ func (c *Conn) send(ctx context.Context, line string) error {
 		_ = c.nc.SetWriteDeadline(time.Now())
 	})
 	buf := []byte(line + "\r\n")
+	// Tap before writing so a tap sees the tx before the reply's first
+	// byte; a failed write is still tapped.
+	c.fireTaps("tx", buf)
 	_, werr := c.nc.Write(buf)
 	if !stop() {
 		// The cancel hook has started; stop() does not wait for it. Wait
@@ -276,7 +300,6 @@ func (c *Conn) send(ctx context.Context, line string) error {
 			werr = ctx.Err()
 		}
 	}
-	c.fireTaps("tx", buf)
 	if werr != nil {
 		return fmt.Errorf("leva: write: %w", werr)
 	}
@@ -302,6 +325,14 @@ func (c *Conn) send(ctx context.Context, line string) error {
 // idle gap can still leak into a later Command's result; that is inherent
 // to idle-gap collection.
 func (c *Conn) Command(ctx context.Context, cmd string) ([]string, error) {
+	return c.CommandOpts(ctx, cmd, c.cfg.firstLine, c.cfg.idleGap)
+}
+
+// CommandOpts is Command with per-call timings: firstLine bounds the wait for
+// the first output line and idleGap ends collection after that. Use it for
+// replies that pause mid-stream (long settings dumps). The quiet-drain before
+// sending still uses the configured idle gap.
+func (c *Conn) CommandOpts(ctx context.Context, cmd string, firstLine, idleGap time.Duration) ([]string, error) {
 	c.cmdMu.Lock()
 	defer c.cmdMu.Unlock()
 
@@ -329,7 +360,7 @@ func (c *Conn) Command(ctx context.Context, cmd string) ([]string, error) {
 	}
 
 	if c.quiet {
-		if err := c.waitIdle(ctx, notify, c.cfg.idleGap); err != nil {
+		if err := c.waitIdle(ctx, notify, c.cfg.idleGap, c.cfg.idleGap); err != nil {
 			return fail(err)
 		}
 		c.quiet = false
@@ -349,7 +380,7 @@ func (c *Conn) Command(ctx context.Context, cmd string) ([]string, error) {
 		c.quiet = true // the write may have been partially delivered
 		return nil, err
 	}
-	if err := c.waitIdle(ctx, notify, c.cfg.firstLine); err != nil {
+	if err := c.waitIdle(ctx, notify, firstLine, idleGap); err != nil {
 		if err != errConnDone {
 			c.quiet = true // command sent, reply still pending
 		}
@@ -362,14 +393,14 @@ var errConnDone = errors.New("leva: reader finished")
 
 // waitIdle blocks until no notification arrived for one idle gap (nil), ctx
 // is done (ctx.Err()) or the reader exited (errConnDone). The wait for the
-// first notification is bounded by first instead of the idle gap.
-func (c *Conn) waitIdle(ctx context.Context, notify <-chan struct{}, first time.Duration) error {
+// first notification is bounded by first instead of gap.
+func (c *Conn) waitIdle(ctx context.Context, notify <-chan struct{}, first, gap time.Duration) error {
 	timer := time.NewTimer(first)
 	defer timer.Stop()
 	for {
 		select {
 		case <-notify:
-			timer.Reset(c.cfg.idleGap)
+			timer.Reset(gap)
 		case <-timer.C:
 			return nil
 		case <-ctx.Done():
@@ -389,7 +420,7 @@ func (c *Conn) waitIdle(ctx context.Context, notify <-chan struct{}, first time.
 // channel.
 func (c *Conn) StartReports(ctx context.Context) (<-chan []byte, error) {
 	c.mu.Lock()
-	c.reporting = true
+	c.reporting, c.display = true, false
 	c.mu.Unlock()
 	if err := c.send(ctx, "MCr"); err != nil {
 		c.mu.Lock()
@@ -400,11 +431,43 @@ func (c *Conn) StartReports(ctx context.Context) (<-chan []byte, error) {
 	return c.reports, nil
 }
 
+// StartDisplay sends "MC@": the machine then mirrors its LCD as one
+// "<BKL…>" frame line every 100 ms until "MC " (StopReports) or "MCr"
+// (StartReports). The two streams are mutually exclusive: MC@ replaces the
+// report stream and MCr replaces the display. Frames go to DisplayFrames
+// until then; they never count as command replies, so Command keeps working
+// while the display streams. Never send the display protocol's button codes
+// ("MC" + raw byte).
+func (c *Conn) StartDisplay(ctx context.Context) error {
+	c.mu.Lock()
+	c.display = true
+	c.mu.Unlock()
+	if err := c.send(ctx, "MC@"); err != nil {
+		c.mu.Lock()
+		c.display = false
+		c.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
+// DisplayFrames returns the channel of raw display frames ("<…>", CR+LF
+// stripped; see ParseFrame). It is fed between StartDisplay and the next
+// StartReports or StopReports, buffered like the reports channel (a full
+// buffer drops and counts in Dropped), and closed when the connection ends.
+func (c *Conn) DisplayFrames() <-chan []byte { return c.displayFrames }
+
+// Notices returns the channel of unsolicited bracketed lines such as
+// "[READY]" (CR+LF stripped). It is fed in every mode, never counts as a
+// command reply, and is closed when the connection ends.
+func (c *Conn) Notices() <-chan []byte { return c.notices }
+
 // StopReports sends "MC " (MC + space), which resets the machine's state and
-// stops the report stream. Reports still in flight afterwards are discarded.
+// stops the report stream (and the display stream, see StartDisplay).
+// Reports and frames still in flight afterwards are discarded.
 func (c *Conn) StopReports(ctx context.Context) error {
 	c.mu.Lock()
-	c.reporting = false
+	c.reporting, c.display = false, false
 	c.mu.Unlock()
 	return c.send(ctx, "MC ")
 }
@@ -424,10 +487,13 @@ func (c *Conn) Close() error {
 	return err
 }
 
-// readLoop is the only reader of nc and the only closer of c.reports.
+// readLoop is the only reader of nc and the only closer of c.reports,
+// c.displayFrames and c.notices.
 func (c *Conn) readLoop() {
 	defer close(c.done)
 	defer close(c.reports)
+	defer close(c.displayFrames)
+	defer close(c.notices)
 
 	br := bufio.NewReaderSize(tapReader{c}, 4096)
 	var acc []byte
@@ -468,6 +534,62 @@ func (c *Conn) readLoop() {
 func (c *Conn) dispatch(raw []byte) {
 	line := bytes.TrimSuffix(raw, []byte("\n"))
 	line = bytes.TrimSuffix(line, []byte("\r"))
+	c.split(line)
+}
+
+// split undoes what a stream switch (MCr/MC@) does on the real machine: it
+// can cut a report or display frame off without its CRLF and glue the next
+// record onto it. A report or frame line is split at the next record start;
+// the part before it is delivered if it is a whole frame or report and
+// dropped as a fragment otherwise. Other lines (command replies) are never
+// split: help text may contain "<100" and the like.
+func (c *Conn) split(line []byte) {
+	if isFrame(line) {
+		c.route(line) // intact; its text may contain "<100" and the like
+		return
+	}
+	for len(line) > 0 && (line[0] == '{' || line[0] == '<') {
+		i := nextRecord(line)
+		if i < 0 {
+			break
+		}
+		head := line[:i]
+		if isFrame(head) || (head[0] == '{' && head[i-1] == '}') {
+			c.route(head)
+		} else {
+			c.fragments.Add(1)
+		}
+		line = line[i:]
+	}
+	if len(line) > 0 && line[0] == '<' && !isFrame(line) {
+		c.fragments.Add(1) // a frame cut off by "MC " or MCr, nothing glued on
+		return
+	}
+	c.route(line)
+}
+
+// nextRecord returns the index after 0 where a report ("{ " and a pump
+// marker), a display frame ("<", backlight 0/1, two digits) or a banner
+// starts, or -1.
+func nextRecord(line []byte) int {
+	for i := 1; i < len(line); i++ {
+		r := line[i:]
+		switch {
+		case len(r) >= 3 && r[0] == '{' && r[1] == ' ' && (r[2] == '-' || r[2] == '*' || r[2] == '?'):
+			return i
+		case len(r) >= 4 && r[0] == '<' && (r[1] == '0' || r[1] == '1') && isDigit(r[2]) && isDigit(r[3]):
+			return i
+		case bytes.HasPrefix(r, []byte("$id:")):
+			return i
+		}
+	}
+	return -1
+}
+
+func isDigit(b byte) bool { return b >= '0' && b <= '9' }
+
+// route delivers one complete line by its shape.
+func (c *Conn) route(line []byte) {
 	switch {
 	case bytes.HasPrefix(line, []byte("{")):
 		c.mu.Lock()
@@ -486,6 +608,25 @@ func (c *Conn) dispatch(raw []byte) {
 		c.id = string(line)
 		c.mu.Unlock()
 		c.banners.Add(1)
+	case bytes.HasPrefix(line, []byte("<")):
+		c.frames.Add(1)
+		c.mu.Lock()
+		deliver := c.display
+		c.mu.Unlock()
+		if !deliver {
+			return
+		}
+		select {
+		case c.displayFrames <- bytes.Clone(line):
+		default:
+			c.dropped.Add(1)
+		}
+	case bytes.HasPrefix(line, []byte("[")):
+		select {
+		case c.notices <- bytes.Clone(line):
+		default:
+			c.dropped.Add(1)
+		}
 	default:
 		c.mu.Lock()
 		if c.collect {

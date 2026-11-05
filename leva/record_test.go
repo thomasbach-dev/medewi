@@ -3,6 +3,7 @@ package leva
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 )
@@ -69,7 +70,7 @@ func TestDecodeBinaryBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := rec.Fields[4]
+	f := rec.Fields[5]
 	if f.Raw != "\x00\xDF" {
 		t.Errorf("Raw = %q, want NUL+0xDF", f.Raw)
 	}
@@ -126,5 +127,21 @@ func TestChecksumPinnedVector(t *testing.T) {
 	}
 	if _, err := VerifyChecksum([]byte("{hello}~4A")); err == nil {
 		t.Error("~4A must not verify")
+	}
+}
+
+func TestRecordFloatScaled(t *testing.T) {
+	rec := Record{Fields: []Field{{Spec: ValueSpec{Name: "Flow rate", Factor: 0.0166}, Raw: "151"}}}
+	v, ok := rec.Float("Flow rate")
+	if !ok || math.Abs(v-2.5066) > 1e-9 {
+		t.Errorf("Float = %v, %v; want 2.5066", v, ok)
+	}
+}
+
+func TestRecordFloatZeroFactor(t *testing.T) {
+	rec := Record{Fields: []Field{{Spec: ValueSpec{Name: "Pressure"}, Raw: "91.5"}}}
+	v, ok := rec.Float("Pressure")
+	if !ok || v != 91.5 {
+		t.Errorf("Float = %v, %v; want 91.5", v, ok)
 	}
 }

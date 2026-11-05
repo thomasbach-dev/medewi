@@ -14,8 +14,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/thomasbach-dev/medewi/conformance"
@@ -26,9 +29,11 @@ import (
 const (
 	envAddr = "MEDEWI_MACHINE_ADDR"
 	envXML  = "MEDEWI_XML_PATH"
-
-	bannerTimeout = 5 * time.Second
 )
+
+// bannerTimeout is how long waitBanner waits for the first banner (shrunk
+// in tests).
+var bannerTimeout = 5 * time.Second
 
 // bannerSettle is how long waitBanner waits after a lone first banner for a
 // second one (shrunk in tests).
@@ -58,6 +63,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runConform(args[1:], stdin, stdout, stderr)
 	case "capture":
 		return runCapture(args[1:], stdin, stdout, stderr)
+	case "session-reset":
+		return runSessionReset(args[1:], stdout, stderr)
 	case "-h", "-help", "--help", "help":
 		usage(stdout)
 		return 0
@@ -71,7 +78,8 @@ func usage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, `usage: levacap <subcommand> [flags]
 
   conform [-addr host:port] [-max readonly|stream] [-yes]
-  capture -scenario commands|stream|shot [-addr host:port] [-out captures/]
+  capture -scenario commands|stream|shot|display [-addr host:port] [-out captures/]
+  session-reset [-addr host:port]   stop a stream another client left on
 
 Target defaults to $MEDEWI_MACHINE_ADDR; decode spec from $MEDEWI_XML_PATH.`)
 }
@@ -178,16 +186,23 @@ func formatResult(r conformance.Result) string {
 
 func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs, addr := newFlagSet("capture", stderr)
-	scenario := fs.String("scenario", "", "scenario: commands|stream|shot (required)")
+	scenario := fs.String("scenario", "", "scenario: commands|stream|shot|display (required)")
 	out := fs.String("out", "captures", "output directory")
 	force := fs.Bool("force", false, "overwrite an existing complete capture")
+	sample := displaySample{}
+	fs.DurationVar(&sample.every, "display-every", 10*time.Second, "display scenario: switch to the LCD mirror this often")
+	fs.DurationVar(&sample.dur, "display-for", 500*time.Millisecond, "display scenario: stay on the LCD mirror this long per sample")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	switch *scenario {
-	case "commands", "stream", "shot":
+	case "commands", "stream", "shot", "display":
 	default:
-		_, _ = fmt.Fprintf(stderr, "levacap: -scenario must be one of commands, stream, shot (got %q)\n", *scenario)
+		_, _ = fmt.Fprintf(stderr, "levacap: -scenario must be one of commands, stream, shot, display (got %q)\n", *scenario)
+		return 2
+	}
+	if sample.every <= 0 || sample.dur <= 0 || sample.dur >= sample.every {
+		_, _ = fmt.Fprintln(stderr, "levacap: need 0 < -display-for < -display-every")
 		return 2
 	}
 	if *addr == "" {
@@ -218,7 +233,8 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		xmlSHA = hex.EncodeToString(sum[:])
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	// SIGHUP too: a closed terminal must still stop the stream with "MC ".
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 
 	// leva.Dial refuses the bootloader port 2323 before connecting.
@@ -246,12 +262,15 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	})
 	defer remove()
 
-	if err := waitBanner(ctx, c); err != nil {
+	received, removeRX := watchRX(c)
+	defer removeRX()
+	if err := waitBanner(ctx, c, received); err != nil {
 		_, _ = fmt.Fprintf(stderr, "levacap: %v\n", err)
 		return 1
 	}
 
 	xmlName := ""
+	var marks []int64
 	capErr := func() error {
 		if *scenario == "commands" {
 			return captureCommands(ctx, c, &xmlName)
@@ -261,10 +280,21 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return err
 		}
 		xmlName = name
-		return captureStream(ctx, c, *scenario, stdin, stdout)
+		marks, err = captureStream(ctx, c, *scenario, sample, start, stdin, stdout)
+		return err
 	}()
 
 	var notes []string
+	if *scenario == "display" {
+		notes = append(notes, fmt.Sprintf("display sampled %v every %v", sample.dur, sample.every))
+	}
+	if len(marks) > 0 {
+		ms := make([]string, len(marks))
+		for i, m := range marks {
+			ms[i] = strconv.FormatInt(m, 10)
+		}
+		notes = append(notes, "marks (ms): "+strings.Join(ms, ", "))
+	}
 	if xmlName == "" {
 		_, _ = fmt.Fprintln(stderr, "levacap: warning: MC? returned no XML= line")
 		notes = append(notes, "MC? returned no XML= line")
@@ -290,10 +320,28 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// errStreamOn means the machine sent data but no banner: the banner is the
+// idle heartbeat, silent while a report or display stream is on, and stream
+// toggles are global machine state.
+var errStreamOn = errors.New("data received but no $id banner: a stream is on. " +
+	"Another device may hold a connection (a phone app, medewid), or a previous client left its stream on. " +
+	"Ensure that all other devices are disconnected and/or run 'levacap session-reset'")
+
+// watchRX reports whether c has received any bytes so far.
+func watchRX(c *leva.Conn) (received func() bool, remove func()) {
+	var got atomic.Bool
+	remove = c.Tap(func(dir string, p []byte) {
+		if dir == "rx" && len(p) > 0 {
+			got.Store(true)
+		}
+	})
+	return got.Load, remove
+}
+
 // waitBanner waits until the machine is ready (second banner, or first
 // banner plus settle); the real machine swallows commands sent right after
-// connect.
-func waitBanner(ctx context.Context, c *leva.Conn) error {
+// connect. Without a banner it returns errStreamOn if received reports data.
+func waitBanner(ctx context.Context, c *leva.Conn, received func() bool) error {
 	wctx, cancel := context.WithTimeout(ctx, bannerTimeout+bannerSettle)
 	defer cancel()
 	if err := leva.WaitReady(wctx, c, bannerSettle); err != nil {
@@ -301,30 +349,32 @@ func waitBanner(ctx context.Context, c *leva.Conn) error {
 			return ctx.Err()
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			return errors.New("no $id banner within 5s; refusing to send commands")
+			if received() {
+				return fmt.Errorf("refusing to send commands: %w", errStreamOn)
+			}
+			return fmt.Errorf("no $id banner within %v; refusing to send commands", bannerTimeout)
 		}
 		return err
 	}
 	return nil
 }
 
-func xmlFromLines(lines []string) string {
-	for _, l := range lines {
-		if v, ok := strings.CutPrefix(l, "XML="); ok {
-			return strings.TrimSpace(v)
-		}
-	}
-	return ""
-}
+// MC? is tried mcqTries times, mcqSpacing apart, like the daemon's
+// handshake: the machine can swallow the first command even after the
+// banner wait (seen 2026-11-05). mcqSpacing is shrunk in tests.
+var mcqSpacing = 2 * time.Second
+
+const (
+	mcqTries   = 3
+	mcqIdleGap = 300 * time.Millisecond
+)
 
 func queryXMLName(ctx context.Context, c *leva.Conn) (string, error) {
-	cctx, cancel := context.WithTimeout(ctx, cmdTimeout)
-	defer cancel()
-	lines, err := c.Command(cctx, "MC?")
+	name, err := leva.QueryXMLName(ctx, c, mcqTries, mcqSpacing, mcqIdleGap)
 	if err != nil {
 		return "", fmt.Errorf("MC?: %w", err)
 	}
-	return xmlFromLines(lines), nil
+	return name, nil
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
@@ -345,7 +395,7 @@ func captureCommands(ctx context.Context, c *leva.Conn, xmlName *string) error {
 			return fmt.Errorf("%s: %w", cmd, err)
 		}
 		if cmd == "MC?" {
-			*xmlName = xmlFromLines(lines)
+			*xmlName, _ = leva.XMLName(lines)
 		}
 		if err := sleepCtx(ctx, cmdWait); err != nil {
 			return err
@@ -354,36 +404,134 @@ func captureCommands(ctx context.Context, c *leva.Conn, xmlName *string) error {
 	return nil
 }
 
-func captureStream(ctx context.Context, c *leva.Conn, scenario string, stdin io.Reader, stdout io.Writer) error {
+// displaySample is how the "display" scenario interleaves the LCD mirror
+// with the report stream: the machine sends only one of the two at a time.
+type displaySample struct {
+	every, dur time.Duration
+}
+
+// sampleDisplay switches to the LCD mirror for s.dur every s.every and back
+// to reports, until ctx ends. It returns once nothing more will be sent.
+func sampleDisplay(ctx context.Context, c *leva.Conn, s displaySample) error {
+	t := time.NewTicker(s.every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-t.C:
+		}
+		if err := c.StartDisplay(ctx); err != nil {
+			return ignoreCanceled(ctx, fmt.Errorf("start display: %w", err))
+		}
+		// A stop mid-sample skips the switch back: the caller's "MC "
+		// ends both streams.
+		if sleepCtx(ctx, s.dur) != nil {
+			return nil
+		}
+		if _, err := c.StartReports(ctx); err != nil {
+			return ignoreCanceled(ctx, fmt.Errorf("resume reports: %w", err))
+		}
+	}
+}
+
+func ignoreCanceled(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return nil
+	}
+	return err
+}
+
+// captureStream records the report stream (for "display" interleaved with
+// LCD mirror samples) until an empty line or EOF on stdin. A line "m"
+// records a mark: milliseconds since start, e.g. when the READY beeps sound.
+func captureStream(ctx context.Context, c *leva.Conn, scenario string, sample displaySample, start time.Time, stdin io.Reader, stdout io.Writer) ([]int64, error) {
 	reports, err := c.StartReports(ctx)
 	if err != nil {
-		return fmt.Errorf("start reports: %w", err)
+		return nil, fmt.Errorf("start reports: %w", err)
 	}
-	// Raw traffic is recorded by the tap; just drain the channel.
+	// Raw traffic is recorded by the tap; just drain the channel. The read
+	// loop closes it when the connection dies.
+	lost := make(chan struct{})
 	go func() {
+		defer close(lost)
 		for range reports {
 		}
 	}()
-	if scenario == "shot" {
+	// Frames and notices too, so Conn.Dropped stays meaningful.
+	for _, ch := range []<-chan []byte{c.DisplayFrames(), c.Notices()} {
+		go func() {
+			for range ch {
+			}
+		}()
+	}
+	var sampled chan struct{} // closed when the display sampler gives up; nil: no sampler
+	stop := func() error {
+		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cmdTimeout)
+		defer cancel()
+		if err := c.StopReports(sctx); err != nil {
+			return fmt.Errorf("stop reports: %w", err)
+		}
+		return nil
+	}
+	switch scenario {
+	case "shot":
 		_, _ = fmt.Fprintln(stdout, "recording: pull the shot now, press Enter when done")
-	} else {
+	case "display":
+		sctx, cancel := context.WithCancel(ctx)
+		sampled = make(chan struct{})
+		var sampleErr error
+		go func() {
+			defer close(sampled)
+			sampleErr = sampleDisplay(sctx, c, sample)
+		}()
+		// Wrap stop so no sample command can follow "MC ".
+		stopReports := stop
+		stop = func() error {
+			cancel()
+			<-sampled
+			return errors.Join(sampleErr, stopReports())
+		}
+		_, _ = fmt.Fprintf(stdout, "recording reports, display every %v: type m + Enter to mark a moment, Enter to stop\n", sample.every)
+	default:
 		_, _ = fmt.Fprintln(stdout, "recording report stream: press Enter to stop")
 	}
+	var (
+		mu    sync.Mutex
+		marks []int64
+	)
 	enter := make(chan struct{})
 	go func() {
-		_, _ = bufio.NewReader(stdin).ReadString('\n')
-		close(enter)
+		defer close(enter)
+		sc := bufio.NewScanner(stdin)
+		for sc.Scan() {
+			switch strings.TrimSpace(sc.Text()) {
+			case "":
+				return
+			case "m":
+			default:
+				_, _ = fmt.Fprintln(stdout, "type m + Enter to mark, an empty line to stop")
+				continue
+			}
+			ms := time.Since(start).Milliseconds()
+			mu.Lock()
+			marks = append(marks, ms)
+			n := len(marks)
+			mu.Unlock()
+			_, _ = fmt.Fprintf(stdout, "mark %d at %s\n", n, (time.Duration(ms) * time.Millisecond).Round(time.Second))
+		}
 	}()
+	// Without the last two cases a dead connection keeps "recording" until
+	// the operator presses Enter.
 	select {
 	case <-enter:
 	case <-ctx.Done():
+	case <-lost:
+	case <-sampled:
 	}
-	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cmdTimeout)
-	defer cancel()
-	if err := c.StopReports(sctx); err != nil {
-		return fmt.Errorf("stop reports: %w", err)
-	}
-	return nil
+	mu.Lock()
+	defer mu.Unlock()
+	return marks, stop()
 }
 
 // writeOutput writes both files under temp names and renames them into place

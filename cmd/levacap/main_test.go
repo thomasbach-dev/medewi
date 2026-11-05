@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,6 +18,7 @@ import (
 func synthLine(temp string) []byte {
 	line := []byte(strings.Repeat(" ", 54))
 	line[0] = '{'
+	line[2] = '-'
 	copy(line[4:], "1:%")
 	copy(line[7:], temp)
 	copy(line[18:], " 42")
@@ -342,4 +344,127 @@ func TestConformXMLMismatchFails(t *testing.T) {
 	}
 }
 
-func init() { bannerSettle = 50 * time.Millisecond }
+func init() {
+	bannerSettle = 50 * time.Millisecond
+	bannerTimeout = time.Second
+}
+
+func TestCaptureDisplayRecordsFramesAndMarks(t *testing.T) {
+	old := cmdWait
+	cmdWait = 50 * time.Millisecond
+	t.Cleanup(func() { cmdWait = old })
+	frame := "<002SOAK 1.0b       1: 91.0\xdf     PID|             4% 0.0b\x05  0s   0ml>"
+	s := startSim(t, sim.Config{Responses: map[string][]string{
+		"MC?": {"XML=synthetic"},
+		"MC@": {frame},
+	}})
+	dir := t.TempDir()
+	var out, errb bytes.Buffer
+	// One mark; a mistyped line must not stop; an empty line does.
+	in := &slowReader{lines: []string{"m\n", "M\n", "\n"}, gap: 250 * time.Millisecond}
+	code := run([]string{
+		"capture", "-scenario", "display", "-addr", s.Addr().String(), "-out", dir,
+		"-display-every", "200ms", "-display-for", "50ms",
+	}, in, &out, &errb)
+	if code != 0 {
+		t.Fatalf("exit %d stderr %s", code, errb.String())
+	}
+	f, err := os.Open(filepath.Join(dir, "display", "log.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	evs, err := fixture.ReadLog(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tx, rx strings.Builder
+	for _, e := range evs {
+		if e.Dir == fixture.TX {
+			tx.Write(e.Data)
+		} else {
+			rx.Write(e.Data)
+		}
+	}
+	// MCr and MC@ are mutually exclusive on the machine: every display
+	// sample must switch back to reports, and "MC " comes last.
+	if got := tx.String(); !regexp.MustCompile(`^MC\?\r\nMCr\r\n(MC@\r\nMCr\r\n)+(MC@\r\n)?MC \r\n$`).MatchString(got) {
+		t.Errorf("TX = %q, want MC?, MCr, (MC@, MCr)+, \"MC \"", got)
+	}
+	if !strings.Contains(rx.String(), frame) {
+		t.Error("display frame not recorded")
+	}
+	m, err := fixture.LoadManifest(filepath.Join(dir, "display", "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(m.Notes, "display sampled 50ms every 200ms") {
+		t.Errorf("manifest notes %q lack the sampling", m.Notes)
+	}
+	if !regexp.MustCompile(`marks \(ms\): \d+`).MatchString(m.Notes) {
+		t.Errorf("manifest notes %q lack the mark", m.Notes)
+	}
+	if !strings.Contains(out.String(), "an empty line to stop") {
+		t.Errorf("stdout %q lacks the hint for a mistyped line", out.String())
+	}
+	if !strings.Contains(out.String(), "mark 1") {
+		t.Errorf("stdout %q does not acknowledge the mark", out.String())
+	}
+}
+
+// A connection lost mid-recording must end the capture at once, not wait for
+// the operator's Enter: on 2026-11-04 a display capture kept "recording" for
+// minutes after the machine had hung up.
+func TestCaptureStreamLostConnectionStopsAtOnce(t *testing.T) {
+	for _, scenario := range []string{"stream", "display"} {
+		t.Run(scenario, func(t *testing.T) {
+			s := startSim(t, sim.Config{Responses: map[string][]string{"MC?": {"XML=synthetic"}}})
+			go func() {
+				time.Sleep(1500 * time.Millisecond)
+				_ = s.Stop()
+			}()
+			stdin, w := io.Pipe() // the operator never types anything
+			t.Cleanup(func() { _ = w.Close() })
+			dir := t.TempDir()
+			var out, errb bytes.Buffer
+			done := make(chan int, 1)
+			go func() {
+				done <- run([]string{
+					"capture", "-scenario", scenario, "-addr", s.Addr().String(), "-out", dir,
+					"-display-every", "100ms", "-display-for", "30ms",
+				}, stdin, &out, &errb)
+			}()
+			select {
+			case code := <-done:
+				if code != 1 {
+					t.Errorf("exit %d, want 1", code)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("capture still waiting for stdin after the connection was lost")
+			}
+			// Under load the loss can surface as a failed write instead.
+			if !regexp.MustCompile(`connection lost|write`).MatchString(errb.String()) {
+				t.Errorf("stderr %q does not report the lost connection", errb.String())
+			}
+			if _, err := os.Stat(filepath.Join(dir, scenario, "log.partial.jsonl")); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+}
+
+// slowReader hands out one line per Read, gap apart, then EOF.
+type slowReader struct {
+	lines []string
+	gap   time.Duration
+}
+
+func (r *slowReader) Read(p []byte) (int, error) {
+	if len(r.lines) == 0 {
+		return 0, io.EOF
+	}
+	time.Sleep(r.gap)
+	n := copy(p, r.lines[0])
+	r.lines = r.lines[1:]
+	return n, nil
+}
