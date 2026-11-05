@@ -84,6 +84,9 @@
         test = check "test" "go test -race ./...";
         tidy = check "tidy" "go mod tidy -diff";
 
+        # Boots the module against levasim; needs KVM.
+        medewid-vm = import ./nix/vm-test.nix { inherit self pkgs; };
+
         # Forces evaluation of the unit without building a system closure.
         # Also checks that a path literal for a secret is refused: it would
         # copy the key or the vendor XML into the world-readable store.

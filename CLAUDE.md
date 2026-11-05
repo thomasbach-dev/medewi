@@ -14,8 +14,9 @@ and the NixOS module `nix/module.nix`; recipe execution is still to come.
 Start with
 [docs/architecture.md](docs/architecture.md); decisions live in
 [docs/decisions/](docs/decisions/), plans in `docs/superpowers/plans/`,
-operator procedures in [docs/runbooks/](docs/runbooks/) and
-[docs/procedure.md](docs/procedure.md).
+operator procedures in [docs/runbooks/](docs/runbooks/),
+[docs/procedure.md](docs/procedure.md) and
+[docs/deployment.md](docs/deployment.md).
 
 ## Commands
 
