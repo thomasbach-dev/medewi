@@ -41,6 +41,7 @@ const (
 
 	defaultRawRetention = 168 * time.Hour
 	defaultRawMaxMB     = 256
+	maxRawMaxMB         = 1 << 20 // 1 TiB; larger values would overflow the byte count
 
 	shutdownTimeout = 5 * time.Second
 )
@@ -137,8 +138,8 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 	if *rawRetention < 0 {
 		return exit(2, "-raw-retention must not be negative")
 	}
-	if *rawMaxMB <= 0 {
-		return exit(2, "-raw-max-mb must be positive")
+	if *rawMaxMB <= 0 || *rawMaxMB > maxRawMaxMB {
+		return exit(2, "-raw-max-mb must be between 1 and 1048576 (1 TiB)")
 	}
 	nTLS := 0
 	for _, s := range []string{*certFile, *keyFile, *caFile} {

@@ -209,7 +209,9 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	// sent in the loop body before any of them runs, so it is logged.
 	rs := d.cfg.Raw.Session()
 	defer rs.Close()
-	defer conn.Tap(rs.Tap)()
+	if d.cfg.Raw != nil {
+		defer conn.Tap(rs.Tap)()
+	}
 	defer d.disconnected(ctx, conn)
 
 	rctx, cancel := context.WithTimeout(ctx, readyTimeout)

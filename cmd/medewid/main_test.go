@@ -245,8 +245,15 @@ func TestRawLogDefaultDirUnusableWarns(t *testing.T) {
 	old := rawDefault
 	rawDefault = blockedDir(t)
 	t.Cleanup(func() { rawDefault = old })
-	args := baseArgs(t, machine, xml)
-	args = append(args[:8:8], args[10:]...) // drop -raw-dir
+	var args []string
+	base := baseArgs(t, machine, xml)
+	for i := 0; i < len(base); i++ {
+		if base[i] == "-raw-dir" {
+			i++ // skip its value
+			continue
+		}
+		args = append(args, base[i])
+	}
 	args = append(args, "-insecure-http")
 	r := start(t, args...)
 	if code := r.shutdown(); code != 0 {
@@ -260,7 +267,7 @@ func TestRawLogDefaultDirUnusableWarns(t *testing.T) {
 func TestRawLogBadFlags(t *testing.T) {
 	clearEnv(t)
 	machine, xml := startSim(t)
-	for _, extra := range [][]string{{"-raw-retention", "-1h"}, {"-raw-max-mb", "0"}, {"-raw-retention", "x"}} {
+	for _, extra := range [][]string{{"-raw-retention", "-1h"}, {"-raw-max-mb", "0"}, {"-raw-max-mb", "1048577"}, {"-raw-max-mb", "9223372036854775807"}, {"-raw-retention", "x"}} {
 		args := append(append(baseArgs(t, machine, xml), "-insecure-http"), extra...)
 		if code, se := runExit(t, args...); code != 2 {
 			t.Errorf("%v: exit %d, want 2\n%s", extra, code, se)

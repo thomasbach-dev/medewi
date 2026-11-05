@@ -94,7 +94,7 @@ in
       description = "medewid leva! espresso-machine daemon";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" "time-sync.target" ];
-      wants = [ "network-online.target" "time-sync.target" ];
+      wants = [ "network-online.target" ];
       serviceConfig = {
         ExecStart = lib.concatStringsSep " " [
           "${cfg.package}/bin/medewid"

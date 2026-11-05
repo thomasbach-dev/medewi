@@ -30,7 +30,10 @@ bytes, and roughly replayed through `levasim`.
    the file being written or one left by a crash.
    Replay recipe (approximate: the sim replays every `rx` line, banners and
    replies included, as the report stream):
-   `gzip -dc FILE 2>/dev/null > DIR/log.jsonl; levasim -fixtures DIR`.
+   `gzip -dc FILE 2>/dev/null | grep '}$' > DIR/log.jsonl; levasim -fixtures DIR`
+   (the `grep` keeps only complete lines, so a file still being written or
+   left by a crash replays: a complete event line always ends in `}`, and
+   base64 never contains `}`).
 3. **Files:** one file per session, rotated when it is `RotateEvery` (1 h)
    old by the monotonic clock. Name: UTC wall time at open,
    `20061102T150405.000Z.jsonl.gz`, created with `O_EXCL` (on a collision
@@ -41,14 +44,20 @@ bytes, and roughly replayed through `levasim`.
 4. **Retention:** at startup and after each new file is opened, delete
    `*.jsonl.gz` files whose name time is older than `Retention`, then the
    oldest files while the directory total exceeds `MaxBytes`. The open
-   file is never deleted; other files are left alone. The NixOS unit
-   orders after `time-sync.target`, so a not-yet-synced clock does not
-   delete the logs of a fresh boot.
+   file is never deleted and is excluded from that total, so the directory
+   can exceed the cap by one file; other files are left alone. The NixOS
+   unit orders after `time-sync.target`, which makes a not-yet-synced clock
+   less likely to delete the logs of a fresh boot; a hard guarantee that the
+   clock is synced needs `systemd-time-wait-sync`, the operator's choice
+   (the module does not enable it).
 5. **The license key never lands in the log.** `MCu` and `MCm` replies
    contain it, and the machine sends replies to every connected client,
    also for commands another client sent. Received lines are therefore
    dropped unless they are
-   - a report line (starts `{`; truncated reports are kept too),
+   - a report line (starts `{`; truncated reports are kept too; a `{`
+     line longer than 1024 bytes including its terminator is dropped and
+     counted as redacted: a report missing its CRLF may have glued a dump
+     line onto it),
    - a banner (starts `$id:`), or
    - inside a reply window: up to `ReplyWindow` (5 s) after medewid sent
      a command other than `MCu`/`MCm`, and other than the stream toggles

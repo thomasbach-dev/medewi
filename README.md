@@ -77,8 +77,11 @@ Counters: `medewi_rawlog_dropped_total`, `medewi_rawlog_write_errors_total`,
 report stream):
 
 ```sh
-gzip -dc FILE 2>/dev/null > DIR/log.jsonl; levasim -fixtures DIR
+gzip -dc FILE 2>/dev/null | grep '}$' > DIR/log.jsonl; levasim -fixtures DIR
 ```
+
+The `grep` keeps only complete lines, so a file still being written or left
+by a crash replays too.
 
 NixOS module (`nixosModules.medewid`): options
 `services.medewid.{enable,package,environmentFile,xmlFile,tlsCert,tlsKey,tlsClientCA,listen,healthAddr}`.
@@ -90,8 +93,10 @@ including `/home` or `/run/secrets`. The XML keeps its base name as
 credential name, because the spec name must match the machine's `XML=`
 reply. The `environmentFile` must contain `MEDEWID_MACHINE_ADDR` (and
 optionally `MEDEWID_EVENT_EXEC`); a `MEDEWID_DB` or `MEDEWID_RAW_DIR` override must
-stay under `/var/lib/medewid`. The unit starts after `time-sync.target`, so
-an unsynced clock does not prune the raw log. The module never passes `-insecure-http`.
+stay under `/var/lib/medewid`. The unit orders after `time-sync.target`, which
+makes an unsynced clock less likely to prune the raw log; a hard guarantee
+that the clock is synced needs `systemd-time-wait-sync` (your choice; the
+module does not enable it). The module never passes `-insecure-http`.
 
 `medewictl` is the client: `MEDEWID_URL` plus `MEDEWID_CTL_CERT`,
 `MEDEWID_CTL_KEY` and `MEDEWID_CTL_CA` for the client certificate and the

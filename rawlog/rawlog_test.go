@@ -1,12 +1,15 @@
 package rawlog
 
 import (
+	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -143,7 +146,7 @@ func TestSessionWritesLinesAndTX(t *testing.T) {
 func TestLongPartialLineEmitted(t *testing.T) {
 	l, dir := openLog(t, Config{FlushEvery: 20 * time.Millisecond})
 	s := l.Session()
-	s.Tap("rx", []byte("{"+strings.Repeat("x", 4999)))
+	s.Tap("rx", []byte("$id:"+strings.Repeat("x", 4996)))
 	deadline := time.Now().Add(time.Second)
 	for {
 		names := fileNames(t, dir)
@@ -685,8 +688,8 @@ func TestLongLineSplitAcrossTapsAndPieces(t *testing.T) {
 }
 
 func TestLongKeptLineAllPiecesKept(t *testing.T) {
-	evs, _ := runSteps(t, "rx:{"+strings.Repeat("x", 5000)+"\r\n")
-	if got := strings.Join(kept(evs), ""); len(got) != 5003 {
+	evs, _ := runSteps(t, "rx:$id:"+strings.Repeat("x", 5000)+"\r\n")
+	if got := strings.Join(kept(evs), ""); len(got) != 5006 {
 		t.Errorf("kept %d bytes", len(got))
 	}
 }
@@ -761,5 +764,92 @@ func TestBannerKeptDuringDumpQuiet(t *testing.T) {
 	evs, _ := runSteps(t, "tx:MCu\r\n", "rx:$id: leva! (3.2)\r\n")
 	if got := kept(evs); !eq(got, []string{"$id: leva! (3.2)\r\n"}) {
 		t.Errorf("kept = %q", got)
+	}
+}
+
+func TestOverlongReportLineDropped(t *testing.T) {
+	report := "{" + strings.Repeat("a", 286) + "\r\n" // a normal 289-byte report
+	for _, tc := range []struct{ name, line string }{
+		{"one tap", "{" + strings.Repeat("a", 2000) + "\r\n"},
+		{"over a piece", "{" + strings.Repeat("a", 5000) + "\r\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			evs, l := runSteps(t, "rx:"+tc.line, "rx:"+report)
+			if got := kept(evs); !eq(got, []string{report}) {
+				t.Errorf("kept %d lines, want only the normal report", len(got))
+			}
+			if got := notes(evs); !eq(got, []string{"dropped 1 line"}) {
+				t.Errorf("notes = %q", got)
+			}
+			if l.Redacted() != 1 {
+				t.Errorf("redacted = %d, want 1", l.Redacted())
+			}
+		})
+	}
+	evs, _ := runSteps(t, "rx:"+report)
+	if got := kept(evs); !eq(got, []string{report}) || len(report) != 289 {
+		t.Errorf("normal report not kept: %d lines", len(got))
+	}
+}
+
+func TestOpenRecreatesDeletedDir(t *testing.T) {
+	clk := newClock()
+	l, dir := openLog(t, Config{Now: clk.Now})
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	s := l.Session()
+	s.Tap("rx", []byte("{a}\r\n"))
+	s.Close()
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := readDir(t, dir); len(got) != 1 || len(got[0]) != 1 {
+		t.Fatalf("files after recreating the dir: %v", got)
+	}
+	if fi, err := os.Stat(dir); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Errorf("dir = %v, %v; want mode 0700", fi, err)
+	}
+}
+
+// countHandler counts slog records whose message contains substr.
+type countHandler struct {
+	substr string
+	n      *atomic.Int32
+}
+
+func (h countHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h countHandler) Handle(_ context.Context, r slog.Record) error {
+	if strings.Contains(r.Message, h.substr) {
+		h.n.Add(1)
+	}
+	return nil
+}
+func (h countHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h countHandler) WithGroup(string) slog.Handler      { return h }
+
+func TestPruneKeepsTotalWhenRemoveFails(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "raw")
+	for _, n := range []string{"20261101", "20261102", "20261103"} {
+		writeFile(t, dir, n+"T000000.000Z.jsonl.gz", 1000)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if f, err := os.OpenFile(filepath.Join(dir, "probe"), os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+		_ = f.Close()
+		t.Skip("directory permissions not enforced (root?)")
+	}
+	var failed atomic.Int32
+	old := slog.Default()
+	slog.SetDefault(slog.New(countHandler{"remove failed", &failed}))
+	t.Cleanup(func() { slog.SetDefault(old) })
+	w := &writer{l: &Log{cfg: Config{Dir: dir, MaxBytes: 1500, Now: newClock().Now}}}
+	w.prune("")
+	// Failed removals must not shrink the running total: all three files
+	// are attempted (3000 > 1500 each time).
+	if got := failed.Load(); got != 3 {
+		t.Errorf("remove attempted %d times, want 3", got)
 	}
 }

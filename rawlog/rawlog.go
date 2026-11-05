@@ -29,8 +29,12 @@ const (
 	maxPiece = 4096
 	// maxNameTries bounds the O_EXCL collision bump of the file name.
 	maxNameTries = 1000
-	nameLayout   = "20060102T150405.000Z"
-	nameSuffix   = ".jsonl.gz"
+	// maxReportLine bounds a kept `{` line including its terminator; a
+	// longer one is a report with a lost CRLF that glued the next line
+	// (maybe a dump line) onto it.
+	maxReportLine = 1024
+	nameLayout    = "20060102T150405.000Z"
+	nameSuffix    = ".jsonl.gz"
 )
 
 // Config configures a Log. Zero values select the documented defaults.
@@ -333,6 +337,9 @@ func (s *Session) piece(now time.Time, data []byte, complete bool) {
 	if !s.decided {
 		s.decided = true
 		s.keep = s.judge(now, data)
+		if s.keep && data[0] == '{' && len(data) > maxReportLine {
+			s.keep = false
+		}
 		if !s.keep {
 			s.pending++
 			s.l.redacted.Add(1)
@@ -480,6 +487,10 @@ func (w *writer) write(it item) {
 // open creates a new file named after at (UTC), bumping the millisecond on
 // a name collision.
 func (w *writer) open(at time.Time) error {
+	// The directory may have been deleted since Open.
+	if err := os.MkdirAll(w.l.cfg.Dir, 0o700); err != nil {
+		return err
+	}
 	name := at.UTC()
 	for range maxNameTries {
 		path := filepath.Join(w.l.cfg.Dir, name.Format(nameLayout)+nameSuffix)
@@ -502,8 +513,9 @@ func (w *writer) open(at time.Time) error {
 }
 
 // prune deletes log files older than Retention (by name time), then the
-// oldest ones while the total size exceeds MaxBytes. It never touches open
-// or files whose names do not parse. Errors are logged, not counted.
+// oldest ones while the total size exceeds MaxBytes. The open file is
+// excluded from that total (and never deleted), so the directory can exceed
+// the cap by one file. Files whose names do not parse are left alone. Errors are logged, not counted.
 func (w *writer) prune(open string) {
 	cfg := &w.l.cfg
 	if cfg.Retention <= 0 && cfg.MaxBytes <= 0 {
@@ -555,15 +567,19 @@ func (w *writer) prune(open string) {
 		if total <= cfg.MaxBytes {
 			return
 		}
-		w.remove(f.path)
-		total -= f.size
+		if w.remove(f.path) {
+			total -= f.size
+		}
 	}
 }
 
-func (w *writer) remove(path string) {
+// remove deletes path and reports whether it succeeded.
+func (w *writer) remove(path string) bool {
 	if err := os.Remove(path); err != nil {
 		slog.Warn("rawlog: prune: remove failed", "file", path, "err", err)
+		return false
 	}
+	return true
 }
 
 // fail counts a write error and abandons the current file until the next
