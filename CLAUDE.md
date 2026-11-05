@@ -87,15 +87,24 @@ the firmware-flash gate. `cmd/levacap` records fixtures atomically;
 
 ## Empirical machine facts (from real captures; keep code consistent)
 
+Details and evidence: [docs/machine-behaviour.md](docs/machine-behaviour.md).
+
 - Report lines: 289 bytes, ~4/s, offsets count from the leading `{`.
 - Banner `$id: leva! (3.2)` ~1/s when idle, SILENT while reporting — also
   for a new connection: a stream left on by another client means no banner
   at all (`levacap session-reset` clears it).
 - `MC@` mirrors the LCD: one 69-char `<BKL…>` frame every 100 ms
   (backlight, pressed key, layout, four 16-char lines). Banners are silent
-  meanwhile; `MC ` stops the display stream too. READY is shown on the
-  display, not carried in the report stream. `MCr` and `MC@` are mutually
-  exclusive: the last one sent wins, so the daemon cannot watch both.
+  meanwhile; `MC ` stops the display stream too. `MCr` and `MC@` are
+  mutually exclusive: the last one sent wins, so the daemon cannot watch
+  both. A switch can glue a cut-off report or frame to the next record
+  (`leva` splits them).
+- READY is shown on the display only: it replaces the setpoint
+  (`1: 91.0ß   READY`) for about 10 s. `Heat PID (average)` updates once a
+  minute, and READY came right after such an update both times.
+- `Pressure SP` is set during profiled shots, `?????` during flushes and
+  program pump pulses. Programs (warm-up: setpoint 110 °C ramping down,
+  pump pulses) override the setpoint; the LCD names them.
 - A command sent shortly after connect is silently swallowed — even just
   after the first banner. Always go through `leva.WaitReady`.
 - A reply's first byte can take >300 ms (hence the two-phase `Command`).
