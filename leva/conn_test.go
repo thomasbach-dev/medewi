@@ -579,6 +579,77 @@ func TestStartDisplaySendsMCAt(t *testing.T) {
 	}
 }
 
+// A stream switch (MCr/MC@) can cut a report or display frame off without
+// its CRLF and glue the next record onto it; all shapes below were seen in
+// real captures. The cut-off part is dropped and counted, the record after
+// it is delivered.
+func TestGluedRecordsSplit(t *testing.T) {
+	report := "{ -1PID091.20091.0008-001.70009.20000.00000~ 6D}"
+	frame := "<102WARM-UP         01m:34s                       0% 0.0b\x05  4s 239ml>"
+	if len(frame) != 69 {
+		t.Fatalf("test frame is %d bytes, want 69", len(frame))
+	}
+	for _, tc := range []struct {
+		name              string
+		line              string
+		reports           []string
+		frames, fragments uint64
+		banners           uint64
+	}{
+		{"report cut, report", "{ -1PID091.20091.0008-001.70009" + report, []string{report}, 0, 1, 0},
+		{"frame cut, report", "<102SOAK 1.0b       1: 91.0\xdf \x04 91.0\xdf\x01             5% 0" + report, []string{report}, 0, 1, 0},
+		{"frame cut, frame", "<102WARM-UP         01m:42s                    " + frame, nil, 1, 1, 0},
+		{"report cut, frame", "{ -1PID090.95091.00060000." + frame, nil, 1, 1, 0},
+		{"frame cut, banner", "<102SOAK 1.0b   $id: leva! (3.2)", nil, 0, 1, 1},
+		{"whole frame, report", frame + report, []string{report}, 1, 0, 0},
+		{"report with label digits", "{ -1PID<1x9 label~ 00}", []string{"{ -1PID<1x9 label~ 00}"}, 0, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, s := newPair(t)
+			go func() { s.readLine(t) }() // MCr
+			reports, err := c.StartReports(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.write(t, tc.line+"\r\n{end}\r\n")
+			var got []string
+			for {
+				r := string(recvReport(t, reports))
+				if r == "{end}" {
+					break
+				}
+				got = append(got, r)
+			}
+			if !reflect.DeepEqual(got, tc.reports) {
+				t.Errorf("reports = %q, want %q", got, tc.reports)
+			}
+			if c.Frames() != tc.frames || c.Fragments() != tc.fragments || c.Banners() != tc.banners {
+				t.Errorf("frames %d fragments %d banners %d, want %d %d %d",
+					c.Frames(), c.Fragments(), c.Banners(), tc.frames, tc.fragments, tc.banners)
+			}
+		})
+	}
+}
+
+// Command replies are never split: help text may contain "<100" and such.
+func TestReplyLinesNotSplit(t *testing.T) {
+	c, s := newPair(t)
+	go func() {
+		s.readLine(t)
+		s.write(t, "wait <100 ms, then { -x\r\n")
+	}()
+	got, err := c.Command(context.Background(), "MCh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"wait <100 ms, then { -x"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if c.Fragments() != 0 || c.Frames() != 0 {
+		t.Errorf("fragments %d frames %d", c.Fragments(), c.Frames())
+	}
+}
+
 // Display frames arrive every 100 ms on the real machine, faster than the
 // idle gap: they must neither end up in a reply nor keep Command's
 // pre-send drain from ever seeing a quiet line.

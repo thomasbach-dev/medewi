@@ -29,9 +29,9 @@ const (
 	maxPiece = 4096
 	// maxNameTries bounds the O_EXCL collision bump of the file name.
 	maxNameTries = 1000
-	// maxReportLine bounds a kept `{` line including its terminator; a
-	// longer one is a report with a lost CRLF that glued the next line
-	// (maybe a dump line) onto it.
+	// maxReportLine bounds a kept `{` or `<` line including its terminator;
+	// a longer one is a report or display frame with a lost CRLF that glued
+	// the next line (maybe a dump line) onto it.
 	maxReportLine = 1024
 	nameLayout    = "20060102T150405.000Z"
 	nameSuffix    = ".jsonl.gz"
@@ -283,7 +283,7 @@ func (s *Session) tx(now time.Time, p []byte) {
 		switch {
 		case bytes.HasPrefix(cmd, []byte("MCu")), bytes.HasPrefix(cmd, []byte("MCm")):
 			s.dump(now)
-		case bytes.Equal(cmd, []byte("MCr")), bytes.Equal(cmd, []byte("MC ")):
+		case bytes.Equal(cmd, []byte("MCr")), bytes.Equal(cmd, []byte("MC ")), bytes.Equal(cmd, []byte("MC@")):
 		case now.Sub(s.l.lastDumpAt()) < cfg.DumpQuiet:
 			// quiet: a dump is recent, no window
 		default:
@@ -337,7 +337,7 @@ func (s *Session) piece(now time.Time, data []byte, complete bool) {
 	if !s.decided {
 		s.decided = true
 		s.keep = s.judge(now, data)
-		if s.keep && data[0] == '{' && len(data) > maxReportLine {
+		if s.keep && (data[0] == '{' || data[0] == '<') && len(data) > maxReportLine {
 			s.keep = false
 		}
 		if !s.keep {
@@ -356,15 +356,16 @@ func (s *Session) piece(now time.Time, data []byte, complete bool) {
 
 // judge decides from the start of a line whether it is kept. A dump line
 // (| or :, the Intel HEX of MCm) is never kept and records a dump. Otherwise
-// reports and banners are kept, and anything else only inside the window
-// the line started in, provided no dump happened since its first byte.
+// reports, display frames (MC@) and banners are kept, and anything else
+// only inside the window the line started in, provided no dump happened
+// since its first byte.
 func (s *Session) judge(now time.Time, data []byte) bool {
 	line := bytes.TrimRight(data, "\r\n")
 	if len(line) > 0 && (line[0] == '|' || line[0] == ':') {
 		s.dump(now)
 		return false
 	}
-	if len(line) > 0 && line[0] == '{' || bytes.HasPrefix(line, []byte("$id:")) {
+	if len(line) > 0 && (line[0] == '{' || line[0] == '<') || bytes.HasPrefix(line, []byte("$id:")) {
 		return true
 	}
 	return s.lineWin && s.lineSeq == s.l.dumpSeqNow()

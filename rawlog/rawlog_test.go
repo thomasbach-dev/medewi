@@ -792,6 +792,23 @@ func TestOverlongReportLineDropped(t *testing.T) {
 	}
 }
 
+// The daemon samples the LCD mirror (MC@): its frames carry no license data
+// and are kept like reports, including frames glued to the next line when a
+// stream switch cut them off (seen on the real machine), but not overlong
+// ones. MC@ itself gets no reply, so it opens no window.
+func TestDisplayFramesKept(t *testing.T) {
+	frame := "<102SOAK 1.0b       1: 91.0\xdf   READY             7% 0.1b  0s   0ml>\r\n"
+	glued := "<102WARM-UP         01m:42s   <102WARM-UP         01m:34s   0% 0.0b  4s 239ml>\r\n"
+	evs, l := runSteps(t, "tx:MC@\r\n", "rx:"+frame, "rx:"+glued, "rx:hello\r\n",
+		"rx:<"+strings.Repeat("a", 2000)+"\r\n")
+	if got := kept(evs); !eq(got, []string{frame, glued}) {
+		t.Errorf("kept = %q", got)
+	}
+	if l.Redacted() != 2 {
+		t.Errorf("redacted = %d, want 2 (the letter line and the overlong frame)", l.Redacted())
+	}
+}
+
 func TestOpenRecreatesDeletedDir(t *testing.T) {
 	clk := newClock()
 	l, dir := openLog(t, Config{Now: clk.Now})

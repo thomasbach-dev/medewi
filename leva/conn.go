@@ -59,9 +59,11 @@ func WithReportBuffer(n int) Option { return func(c *config) { c.reportBuf = n }
 
 // Conn owns one connection to a leva! controller. A single reader goroutine
 // strips the trailing CR+LF from every line (project ruling R2) and
-// classifies the stripped line: "{" prefix is a report, "$id:" prefix is a
-// banner, anything else is command output. Lines are delivered
-// byte-identically otherwise (NUL and Latin-1 bytes included).
+// classifies the stripped line: "{" prefix is a report, "<" a display frame,
+// "$id:" prefix is a banner, anything else is command output. Report and
+// frame lines glued together at a stream switch are split first (split).
+// Lines are delivered byte-identically otherwise (NUL and Latin-1 bytes
+// included).
 type Conn struct {
 	nc  net.Conn
 	cfg config
@@ -90,6 +92,7 @@ type Conn struct {
 	oversized atomic.Uint64
 	banners   atomic.Uint64
 	frames    atomic.Uint64
+	fragments atomic.Uint64
 }
 
 // Dial connects to a leva! controller's command port. The port is resolved
@@ -166,6 +169,10 @@ func (c *Conn) Banners() uint64 { return c.banners.Load() }
 
 // Frames returns the number of "<…>" display frames seen so far.
 func (c *Conn) Frames() uint64 { return c.frames.Load() }
+
+// Fragments returns the number of report or frame pieces dropped because a
+// stream switch cut them off (see split).
+func (c *Conn) Fragments() uint64 { return c.fragments.Load() }
 
 // WaitReady blocks until the machine is ready to take commands: it has sent
 // two banners, or it has sent one and settle has elapsed since WaitReady
@@ -493,6 +500,62 @@ func (c *Conn) readLoop() {
 func (c *Conn) dispatch(raw []byte) {
 	line := bytes.TrimSuffix(raw, []byte("\n"))
 	line = bytes.TrimSuffix(line, []byte("\r"))
+	c.split(line)
+}
+
+// frameLen is the length of an intact "<BKL…>" display frame.
+const frameLen = 69
+
+// split undoes what a stream switch (MCr/MC@) does on the real machine: it
+// can cut a report or display frame off without its CRLF and glue the next
+// record onto it. A report or frame line is split at the next record start;
+// the part before it is delivered if it is a whole frame or report and
+// dropped as a fragment otherwise. Other lines (command replies) are never
+// split: help text may contain "<100" and the like.
+func (c *Conn) split(line []byte) {
+	for len(line) > 0 && (line[0] == '{' || line[0] == '<') {
+		i := nextRecord(line)
+		if i < 0 {
+			break
+		}
+		head := line[:i]
+		if (head[0] == '<' && len(head) == frameLen && head[i-1] == '>') ||
+			(head[0] == '{' && head[i-1] == '}') {
+			c.route(head)
+		} else {
+			c.fragments.Add(1)
+		}
+		line = line[i:]
+	}
+	if len(line) > 0 && line[0] == '<' && (len(line) != frameLen || line[len(line)-1] != '>') {
+		c.fragments.Add(1) // a frame cut off by "MC " or MCr, nothing glued on
+		return
+	}
+	c.route(line)
+}
+
+// nextRecord returns the index after 0 where a report ("{ " and a pump
+// marker), a display frame ("<", backlight 0/1, two digits) or a banner
+// starts, or -1.
+func nextRecord(line []byte) int {
+	for i := 1; i < len(line); i++ {
+		r := line[i:]
+		switch {
+		case len(r) >= 3 && r[0] == '{' && r[1] == ' ' && (r[2] == '-' || r[2] == '*' || r[2] == '?'):
+			return i
+		case len(r) >= 4 && r[0] == '<' && (r[1] == '0' || r[1] == '1') && isDigit(r[2]) && isDigit(r[3]):
+			return i
+		case bytes.HasPrefix(r, []byte("$id:")):
+			return i
+		}
+	}
+	return -1
+}
+
+func isDigit(b byte) bool { return b >= '0' && b <= '9' }
+
+// route delivers one complete line by its shape.
+func (c *Conn) route(line []byte) {
 	switch {
 	case bytes.HasPrefix(line, []byte("{")):
 		c.mu.Lock()
