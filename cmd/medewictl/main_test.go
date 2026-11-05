@@ -207,10 +207,42 @@ func TestPowerRejectsBadState(t *testing.T) {
 	}
 }
 
+func TestMark(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b := new(bytes.Buffer)
+		_, _ = b.ReadFrom(r.Body)
+		if r.URL.Path != "/api/mark" || r.Header.Get("Content-Type") != "application/json" || b.String() != `{"text":"pre-infusion over"}` {
+			t.Errorf("bad request %s %q %q", r.URL.Path, r.Header.Get("Content-Type"), b)
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	if code, _, stderr := exec(t, srv, "mark", "pre-infusion", "over"); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+}
+
+func TestMarkFailure(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"ok":false,"error":"no raw traffic log"}`))
+	}))
+	defer srv.Close()
+	code, _, stderr := exec(t, srv, "mark", "x")
+	if code != 1 || !strings.Contains(stderr, "no raw traffic log") {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	var out, errb bytes.Buffer
+	if code := run([]string{"mark"}, &out, &errb); code != 2 {
+		t.Errorf("mark without text: exit %d, want 2", code)
+	}
+}
+
 func TestStatusOutput(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"connected":true,"spec_ok":true,"ready":false,"brew_open":false,` +
-			`"power":"eco","firmware":"3.2","temp":91.5,"setpoint":null,"last_brew":null}`))
+		_, _ = w.Write([]byte(`{"connected":true,"spec_ok":true,"ready":false,"machine_ready":true,"brew_open":false,` +
+			`"power":"eco","firmware":"3.2","temp":91.5,"setpoint":null,"last_brew":null,` +
+			`"display":{"rows":["SOAK 1.0b       ","1: 91.0°   READY","              7%","0.1b  0s   0ml  "],"at":"2026-11-05T10:00:00Z"}}`))
 	}))
 	defer srv.Close()
 	code, stdout, stderr := exec(t, srv, "status")
@@ -218,8 +250,9 @@ func TestStatusOutput(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 	for _, want := range []string{
-		"connected: true\n", "spec_ok: true\n", "ready: false\n", "brew_open: false\n",
+		"connected: true\n", "spec_ok: true\n", "ready: false\n", "machine_ready: true\n", "brew_open: false\n",
 		"power: eco\n", "firmware: 3.2\n", "temp: 91.5\n", "setpoint: unknown\n", "last_brew: none\n",
+		"display: |1: 91.0°   READY|\n",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("missing %q in:\n%s", want, stdout)

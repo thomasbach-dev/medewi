@@ -112,9 +112,14 @@ bytes, and roughly replayed through `levasim`.
 9. **Size:** about 100 MB/day raw; expected 5–10 MB/day compressed (to be
    measured on the first real week). `MaxBytes` is the backstop.
 
+**Amended 2026-11-05:** the daemon now samples the display, so requirement
+5 also keeps display frames (`<`, same length bound as reports) and short
+bracketed notices such as `[READY]` (at most 32 bytes); `MC@` opens no
+reply window. Marks are `note` events. See
+[2026-11-05-display-sampling.md](2026-11-05-display-sampling.md).
+
 ## Non-goals
 
-- Display frames (`MC@`): the daemon never sends it.
 - Shipping logs off the host, or an API to fetch them.
 - Reading `.gz` directly in `levasim`; capturing the pre-Tap banners
   (would need a `leva.Dial` tap option; later if needed).

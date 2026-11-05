@@ -57,6 +57,8 @@ environment variables (flags win):
 | `MEDEWID_RAW_DIR` | `-raw-dir` | `/var/lib/medewid/raw` |
 | `MEDEWID_RAW_RETENTION` | `-raw-retention` | `168h`; `0` disables the raw log |
 | `MEDEWID_RAW_MAX_MB` | `-raw-max-mb` | `256` |
+| `MEDEWID_DISPLAY_EVERY` | `-display-every` | `5s`; `0` disables display sampling |
+| `MEDEWID_DISPLAY_FOR` | `-display-for` | `500ms` |
 
 The API requires mutual TLS: set the server certificate, key and client CA.
 `-insecure-http` exists for local testing only and exits with an error when
@@ -67,9 +69,10 @@ combined with TLS settings.
 failure noticed days later can be troubleshot from the exact bytes. One
 gzip file per session (rotated hourly) of JSON lines in the fixture event
 format. Every chunk sent is kept; of the received lines only report lines
-(`{`), banners (`$id:`) and replies to commands medewid itself sent shortly
-before. `MCu`/`MCm` replies (which contain the license key) are never
-logged. If an explicitly configured directory cannot be opened, medewid
+(`{`), display frames (`<`), banners (`$id:`), short machine notices such as
+`[READY]`, and replies to commands medewid itself sent shortly before.
+`MCu`/`MCm` replies (which contain the license key) are never logged. Marks
+(below) land in the log as `note` events. If an explicitly configured directory cannot be opened, medewid
 exits 1; with the default directory it only warns and runs without the log.
 Counters: `medewi_rawlog_dropped_total`, `medewi_rawlog_write_errors_total`,
 `medewi_rawlog_redacted_lines_total`. Approximate replay through `levasim`
@@ -82,6 +85,19 @@ gzip -dc FILE 2>/dev/null | grep '}$' > DIR/log.jsonl; levasim -fixtures DIR
 
 The `grep` keeps only complete lines, so a file still being written or left
 by a crash replays too.
+
+**Display, machine READY and marks.** Every `-display-every` medewid
+switches the machine to its LCD mirror for `-display-for`, then back to
+reports, so the raw log also shows what the display shows (programs, menus,
+keys) at the cost of about 10 % of the report lines; other clients see the
+same switch. `/api/status` carries the latest LCD rows (`display`) and
+`machine_ready`, the machine's own `[READY]` announcement (cleared by eco,
+standby or a disconnect); `ready` is medewid's earlier "boiler at
+temperature". `[READY]` runs the event hook with `MEDEWI_EVENT=MACHINE_READY`
+and drives `medewi_machine_ready`. `POST /api/mark` (`{"text": "…"}`, the
+panel's Mark field or `medewictl mark`) writes `mark: …` into the raw log,
+to find a moment again later. Design:
+[docs/design/2026-11-05-display-sampling.md](docs/design/2026-11-05-display-sampling.md).
 
 NixOS module (`nixosModules.medewid`): options
 `services.medewid.{enable,package,environmentFile,xmlFile,tlsCert,tlsKey,tlsClientCA,listen,healthAddr}`.
@@ -107,6 +123,7 @@ server CA. Against a local `medewid -insecure-http`, pass `-insecure` with an
 ```sh
 medewictl status
 medewictl power eco            # active | eco | standby
+medewictl mark pre-infusion over
 medewictl backup -out DIR
 medewictl -insecure -url http://127.0.0.1:8080 status
 ```
@@ -120,8 +137,8 @@ the license key: they are written `0600` and must never be committed. If the
 ### Local trial run without TLS
 
 To try the daemon from a checkout against the real machine, without NixOS
-or certificates. Stop every other client first (`levawatch`, `levacap`, the
-vendor Status-Monitor app): only one client may talk to the machine, and
+or certificates. Stop every other client first (`levacap`, the vendor
+Status-Monitor app): only one client may talk to the machine, and
 starting or stopping the report stream affects every client.
 
 Terminal 1, the daemon (the `.envrc` above provides `MEDEWI_MACHINE_ADDR` and

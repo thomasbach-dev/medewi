@@ -13,6 +13,7 @@ import (
 // Config.Registry is set.
 type metrics struct {
 	connected, specMismatch, ready    prometheus.Gauge
+	machineReady                      prometheus.Gauge
 	boilerC, setpointC, heaterPercent prometheus.Gauge
 	power                             *prometheus.GaugeVec
 	shots, flushes, pumpSeconds       prometheus.Counter
@@ -32,7 +33,8 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 	m := &metrics{
 		connected:     g("medewi_machine_connected", "1 while a connection to the machine is up."),
 		specMismatch:  g("medewi_spec_mismatch", "1 while the machine's XML name differs from the loaded spec."),
-		ready:         g("medewi_ready", "1 while the machine is ready to brew (READY and active)."),
+		ready:         g("medewi_ready", "1 while the boiler is settled on the setpoint and the machine is active."),
+		machineReady:  g("medewi_machine_ready", "1 from the machine's own [READY] until eco, standby or a disconnect."),
 		boilerC:       g("medewi_boiler_celsius", "Boiler temperature; keeps its last value when masked."),
 		setpointC:     g("medewi_setpoint_celsius", "Boiler setpoint; keeps its last value when masked."),
 		heaterPercent: g("medewi_heater_percent", "Heater output."),
@@ -54,7 +56,7 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 	}
 	if reg != nil {
 		for _, col := range []prometheus.Collector{
-			m.connected, m.specMismatch, m.ready, m.boilerC, m.setpointC, m.heaterPercent, m.power,
+			m.connected, m.specMismatch, m.ready, m.machineReady, m.boilerC, m.setpointC, m.heaterPercent, m.power,
 			m.shots, m.flushes, m.pumpSeconds, m.volumeLiters, m.waterDraws, m.waterL,
 			m.lines, m.decodeErrors, m.reconnects,
 		} {
@@ -81,6 +83,7 @@ func (m *metrics) status(s Status) {
 		m.specMismatch.Set(0)
 	}
 	m.ready.Set(b2f(s.Ready))
+	m.machineReady.Set(b2f(s.MachineReady))
 	if s.Temp != nil {
 		m.boilerC.Set(*s.Temp)
 	}

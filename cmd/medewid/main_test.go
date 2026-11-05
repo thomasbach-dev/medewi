@@ -275,6 +275,53 @@ func TestRawLogBadFlags(t *testing.T) {
 	}
 }
 
+func TestDisplaySampling(t *testing.T) {
+	clearEnv(t)
+	s := sim.New(sim.Config{
+		Addr:   "127.0.0.1:0",
+		Banner: "$id: leva! (3.2)",
+		Responses: map[string][]string{
+			"MC?": {"XML=synthetic"},
+			"MC@": {"<102SOAK 1.0b       1: 91.0\xdf   READY\x02             7% 0.1b\x05  0s   0ml>"},
+		},
+	})
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Stop() })
+	xml := filepath.Join("..", "..", "testdata", "spec", "synthetic.xml")
+	r := start(t, append(baseArgs(t, s.Addr().String(), xml), "-insecure-http", "-display-every", "100ms", "-display-for", "20ms")...)
+	waitStatus(t, "http://"+r.addr, http.DefaultClient, func(m map[string]any) bool {
+		return m["display"] != nil
+	})
+	if code := r.shutdown(); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+}
+
+func TestDisplayFlagsValidated(t *testing.T) {
+	clearEnv(t)
+	machine, xml := startSim(t)
+	for _, extra := range [][]string{
+		{"-display-every", "-1s"}, {"-display-for", "0s"}, {"-display-every", "1s", "-display-for", "1s"}, {"-display-every", "x"},
+	} {
+		args := append(append(baseArgs(t, machine, xml), "-insecure-http"), extra...)
+		if code, se := runExit(t, args...); code != 2 {
+			t.Errorf("%v: exit %d, want 2\n%s", extra, code, se)
+		}
+	}
+	t.Setenv("MEDEWID_DISPLAY_EVERY", "bogus")
+	if code, _ := runExit(t, append(baseArgs(t, machine, xml), "-insecure-http")...); code != 2 {
+		t.Errorf("bad env: exit %d, want 2", code)
+	}
+	// 0 disables sampling, whatever -display-for says.
+	t.Setenv("MEDEWID_DISPLAY_EVERY", "0")
+	r := start(t, append(baseArgs(t, machine, xml), "-insecure-http")...)
+	if code := r.shutdown(); code != 0 {
+		t.Fatalf("display disabled: exit %d\n%s", code, r.stderr.String())
+	}
+}
+
 func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
@@ -282,6 +329,7 @@ func clearEnv(t *testing.T) {
 		"MEDEWID_DB", "MEDEWID_LISTEN", "MEDEWID_TLS_CERT", "MEDEWID_TLS_KEY",
 		"MEDEWID_TLS_CLIENT_CA", "MEDEWID_HEALTH_ADDR", "MEDEWID_EVENT_EXEC",
 		"MEDEWID_RAW_DIR", "MEDEWID_RAW_RETENTION", "MEDEWID_RAW_MAX_MB",
+		"MEDEWID_DISPLAY_EVERY", "MEDEWID_DISPLAY_FOR",
 	} {
 		t.Setenv(k, "")
 	}

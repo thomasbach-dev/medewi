@@ -19,6 +19,9 @@ const (
 	SteamWindow
 	// Eco means the setpoint dropped from a brew setpoint to an eco setpoint.
 	Eco
+	// MachineReady is the machine's own "[READY]" announcement. The
+	// Detector never emits it; the daemon does, from the notice.
+	MachineReady
 )
 
 func (k Kind) String() string {
@@ -29,6 +32,8 @@ func (k Kind) String() string {
 		return "STEAM_WINDOW"
 	case Eco:
 		return "ECO"
+	case MachineReady:
+		return "MACHINE_READY"
 	}
 	return "UNKNOWN"
 }

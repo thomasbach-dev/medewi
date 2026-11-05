@@ -47,6 +47,7 @@ const (
 	defaultSettle     = 1500 * time.Millisecond
 	defaultMinBackoff = time.Second
 	defaultMaxBackoff = 30 * time.Second
+	defaultDisplayFor = 500 * time.Millisecond
 
 	readyTimeout = 10 * time.Second       // bound on WaitReady per attempt
 	stopTimeout  = 2 * time.Second        // bound on the final "MC "
@@ -84,6 +85,9 @@ type Config struct {
 	// BackoffMin and BackoffMax bound the reconnect delay, which doubles
 	// per failed attempt (defaults 1 s and 30 s).
 	BackoffMin, BackoffMax time.Duration
+	// DisplayEvery, if positive, samples the LCD mirror this often for
+	// DisplayFor (default 500 ms) between reports; zero disables sampling.
+	DisplayEvery, DisplayFor time.Duration
 	// Registry receives the Prometheus metrics; nil disables them.
 	Registry prometheus.Registerer
 	// Raw logs the raw machine traffic of every session; nil disables it.
@@ -94,9 +98,10 @@ type Config struct {
 type Daemon struct {
 	cfg Config
 
-	mu   sync.RWMutex // guards st and conn
+	mu   sync.RWMutex // guards st, conn and rs
 	st   Status
-	conn *leva.Conn // set while st.Connected; the worker's connection
+	conn *leva.Conn      // set while st.Connected; the worker's connection
+	rs   *rawlog.Session // the current session's raw log, for marks; nil if none
 
 	reqs       chan request  // to the command worker
 	workerDone chan struct{} // closed when the worker has exited
@@ -125,6 +130,9 @@ func New(cfg Config) *Daemon {
 		cfg.BackoffMax = defaultMaxBackoff
 	}
 	cfg.BackoffMax = max(cfg.BackoffMax, cfg.BackoffMin)
+	if cfg.DisplayFor <= 0 {
+		cfg.DisplayFor = defaultDisplayFor
+	}
 	if cfg.Brew == (brew.Config{}) {
 		cfg.Brew = brew.DefaultConfig()
 	}
@@ -212,6 +220,9 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	if d.cfg.Raw != nil {
 		defer conn.Tap(rs.Tap)()
 	}
+	d.mu.Lock()
+	d.rs = rs
+	d.mu.Unlock()
 	defer d.disconnected(ctx, conn)
 
 	rctx, cancel := context.WithTimeout(ctx, readyTimeout)
@@ -258,8 +269,15 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 		return false
 	}
 	slog.Info("reports started")
+	if d.cfg.DisplayEvery > 0 {
+		sctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		go d.sampleDisplay(sctx, conn)
+	}
 	stall := time.NewTimer(reportStallTimeout)
 	defer stall.Stop()
+	// Both close with the connection; reports ending ends the session.
+	notices, frames := conn.Notices(), conn.DisplayFrames()
 	for {
 		select {
 		case <-ctx.Done():
@@ -275,6 +293,18 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 			}
 			d.handle(ctx, line)
 			stall.Reset(reportStallTimeout)
+		case n, ok := <-notices:
+			if !ok {
+				notices = nil
+				continue
+			}
+			d.notice(ctx, n)
+		case f, ok := <-frames:
+			if !ok {
+				frames = nil
+				continue
+			}
+			d.frame(f)
 		}
 	}
 }
@@ -334,6 +364,7 @@ func (d *Daemon) stopReports(ctx context.Context, conn *leva.Conn) {
 func (d *Daemon) disconnected(ctx context.Context, conn *leva.Conn) {
 	d.mu.Lock()
 	d.conn, d.st.Connected = nil, false // new requests are refused from here
+	d.rs = nil
 	d.met.status(d.st)
 	d.mu.Unlock()
 	_ = conn.Close() // aborts a request still running on conn
@@ -394,6 +425,9 @@ func (d *Daemon) handle(ctx context.Context, raw []byte) {
 	d.update(func(s *Status) {
 		s.Power, s.Ready, s.BrewOpen = power, ready, open
 		s.Temp, s.Setpoint = smp.Temp, smp.Setpoint
+		if power == PowerEco || power == PowerStandby {
+			s.MachineReady = false
+		}
 	})
 }
 

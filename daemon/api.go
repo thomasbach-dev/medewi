@@ -36,6 +36,7 @@ func NewHandler(d *Daemon, metrics http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/status", a.status)
 	mux.HandleFunc("POST /api/power", a.power)
+	mux.HandleFunc("POST /api/mark", a.mark)
 	mux.HandleFunc("GET /api/brews", a.brews)
 	mux.HandleFunc("GET /api/brews/{id}/points", a.points)
 	mux.HandleFunc("GET /api/backup/mcu", func(w http.ResponseWriter, r *http.Request) { a.backup(w, r, d.DumpMCu) })
@@ -99,31 +100,65 @@ func (a *api) status(w http.ResponseWriter, _ *http.Request) {
 		b := toBrewJSON(*s.LastBrew)
 		last = &b
 	}
+	var display *displayJSON
+	if s.Display != nil {
+		display = &displayJSON{s.Display.Rows, s.Display.At}
+	}
 	writeJSON(w, http.StatusOK, struct {
-		Connected bool       `json:"connected"`
-		SpecOK    bool       `json:"spec_ok"`
-		Ready     bool       `json:"ready"`
-		BrewOpen  bool       `json:"brew_open"`
-		Power     PowerState `json:"power"`
-		Firmware  string     `json:"firmware"`
-		Temp      *float64   `json:"temp"`
-		Setpoint  *float64   `json:"setpoint"`
-		LastBrew  *brewJSON  `json:"last_brew"`
-	}{s.Connected, s.SpecOK, s.Ready, s.BrewOpen, s.Power, s.Firmware, s.Temp, s.Setpoint, last})
+		Connected    bool         `json:"connected"`
+		SpecOK       bool         `json:"spec_ok"`
+		Ready        bool         `json:"ready"`
+		MachineReady bool         `json:"machine_ready"`
+		BrewOpen     bool         `json:"brew_open"`
+		Power        PowerState   `json:"power"`
+		Firmware     string       `json:"firmware"`
+		Temp         *float64     `json:"temp"`
+		Setpoint     *float64     `json:"setpoint"`
+		LastBrew     *brewJSON    `json:"last_brew"`
+		Display      *displayJSON `json:"display"`
+	}{s.Connected, s.SpecOK, s.Ready, s.MachineReady, s.BrewOpen, s.Power, s.Firmware, s.Temp, s.Setpoint, last, display})
+}
+
+type displayJSON struct {
+	Rows [4]string `json:"rows"`
+	At   time.Time `json:"at"`
+}
+
+// decodeJSON reads a size-bounded JSON body into v. It refuses any other
+// content type with 415: a JSON body cannot come from a "simple"
+// cross-origin form or fetch. On failure it has written the error.
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
+		writeErr(w, http.StatusUnsupportedMediaType, errors.New("content type must be application/json"))
+		return false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		writeErr(w, http.StatusBadRequest, errors.New("invalid JSON body"))
+		return false
+	}
+	return true
+}
+
+func (a *api) mark(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Text string `json:"text"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if err := a.d.Mark(body.Text); err != nil {
+		writeErr(w, statusFor(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (a *api) power(w http.ResponseWriter, r *http.Request) {
-	// A JSON body cannot come from a "simple" cross-origin form or fetch.
-	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
-		writeErr(w, http.StatusUnsupportedMediaType, errors.New("content type must be application/json"))
-		return
-	}
 	var body struct {
 		State PowerState `json:"state"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, errors.New("invalid JSON body"))
+	if !decodeJSON(w, r, &body) {
 		return
 	}
 	got, err := a.d.SetPower(r.Context(), body.State)
@@ -141,9 +176,9 @@ func (a *api) power(w http.ResponseWriter, r *http.Request) {
 // statusFor maps a daemon refusal or failure to its HTTP status.
 func statusFor(err error) int {
 	switch {
-	case errors.Is(err, ErrInvalidPower):
+	case errors.Is(err, ErrInvalidPower), errors.Is(err, ErrInvalidMark):
 		return http.StatusBadRequest
-	case errors.Is(err, ErrBrewOpen), errors.Is(err, ErrSpecMismatch):
+	case errors.Is(err, ErrBrewOpen), errors.Is(err, ErrSpecMismatch), errors.Is(err, ErrNoRawLog):
 		return http.StatusConflict
 	case errors.Is(err, ErrDisconnected):
 		return http.StatusServiceUnavailable

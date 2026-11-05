@@ -7,22 +7,28 @@
 <style>
   body { font-family: sans-serif; margin: 1rem auto; max-width: 24rem; padding: 0 1rem; }
   .big { font-size: 2rem; margin: .5rem 0; }
-  #ready { display: inline-block; padding: .2rem .6rem; border-radius: .3rem; background: #ccc; }
-  #ready.on { background: #2a2; color: #fff; }
+  .badge { display: inline-block; padding: .2rem .6rem; border-radius: .3rem; background: #ccc; }
+  .badge.on { background: #2a2; color: #fff; }
   button { font-size: 1.1rem; padding: .7rem 1rem; margin: .2rem .2rem .2rem 0; }
+  #lcd { background: #223; color: #cdf; padding: .4rem; font-size: 1rem; }
+  #mark { font-size: 1.1rem; padding: .6rem; width: 60%; }
   #msg { min-height: 1.5rem; color: #a00; }
 </style>
 </head>
 <body>
 <h1>medewi</h1>
-<div>Mode: <strong id="mode">?</strong> <span id="ready">READY</span></div>
+<div>Mode: <strong id="mode">?</strong>
+  <span id="ready" class="badge" title="boiler at temperature">hot</span>
+  <span id="machine-ready" class="badge" title="the machine's own READY">READY</span></div>
 <div class="big"><span id="temp">?</span> / <span id="setpoint">?</span> &deg;C</div>
 <div id="conn"></div>
+<pre id="lcd" hidden></pre>
 <p>
   <button data-state="active">Wake</button>
   <button data-state="eco">Eco</button>
   <button data-state="standby">Standby</button>
 </p>
+<p><input id="mark" placeholder="what just happened?" maxlength="200"> <button id="mark-btn">Mark</button></p>
 <div id="msg"></div>
 <script>
 const $ = id => document.getElementById(id);
@@ -33,30 +39,41 @@ async function refresh() {
     $("mode").textContent = s.power;
     $("temp").textContent = num(s.temp);
     $("setpoint").textContent = num(s.setpoint);
-    $("ready").className = s.ready ? "on" : "";
+    $("ready").className = "badge" + (s.ready ? " on" : "");
+    $("machine-ready").className = "badge" + (s.machine_ready ? " on" : "");
     $("conn").textContent = (s.connected ? "connected" : "disconnected") +
       (s.brew_open ? ", brewing" : "");
+    $("lcd").hidden = !s.display;
+    if (s.display) $("lcd").textContent = s.display.rows.join("\n");
   } catch (e) {
     $("conn").textContent = "daemon unreachable";
   }
 }
-async function setPower(state) {
+// post sends a JSON body and reports a failure in #msg; it returns success.
+async function post(path, body) {
   $("msg").textContent = "";
   try {
-    const r = await fetch("/api/power", {
+    const r = await fetch(path, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({state: state}),
+      body: JSON.stringify(body),
     });
     const j = await r.json();
     if (!r.ok) $("msg").textContent = j.error || ("failed (" + r.status + ")");
+    return r.ok;
   } catch (e) {
     $("msg").textContent = "request failed";
+    return false;
   }
-  refresh();
 }
-document.querySelectorAll("button").forEach(b =>
-  b.addEventListener("click", () => setPower(b.dataset.state)));
+document.querySelectorAll("button[data-state]").forEach(b =>
+  b.addEventListener("click", async () => { await post("/api/power", {state: b.dataset.state}); refresh(); }));
+async function mark() {
+  const text = $("mark").value.trim() || "mark";
+  if (await post("/api/mark", {text: text})) $("mark").value = "";
+}
+$("mark-btn").addEventListener("click", mark);
+$("mark").addEventListener("keydown", e => { if (e.key === "Enter") mark(); });
 refresh();
 setInterval(refresh, 2000);
 </script>

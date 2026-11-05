@@ -43,6 +43,11 @@ const (
 	defaultRawMaxMB     = 256
 	maxRawMaxMB         = 1 << 20 // 1 TiB; larger values would overflow the byte count
 
+	// The display shows READY for about 10 s and programs only there; see
+	// docs/design/2026-11-05-display-sampling.md.
+	defaultDisplayEvery = 5 * time.Second
+	defaultDisplayFor   = 500 * time.Millisecond
+
 	shutdownTimeout = 5 * time.Second
 )
 
@@ -96,19 +101,27 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 	rawDir := fset.String("raw-dir", envOr("MEDEWID_RAW_DIR", rawDefault), "raw traffic log directory (env MEDEWID_RAW_DIR)")
 	rawRetention := fset.Duration("raw-retention", defaultRawRetention, "raw traffic log retention, 0 disables it (env MEDEWID_RAW_RETENTION)")
 	rawMaxMB := fset.Int64("raw-max-mb", defaultRawMaxMB, "raw traffic log size cap in MiB (env MEDEWID_RAW_MAX_MB)")
+	displayEvery := fset.Duration("display-every", defaultDisplayEvery, "sample the machine's display this often, 0 disables it (env MEDEWID_DISPLAY_EVERY)")
+	displayFor := fset.Duration("display-for", defaultDisplayFor, "length of one display sample (env MEDEWID_DISPLAY_FOR)")
 	insecure := fset.Bool("insecure-http", false, "serve the API without TLS")
 	exit := func(code int, format string, a ...any) int {
 		_, _ = fmt.Fprintf(stderr, "medewid: "+format+"\n", a...)
 		return code
 	}
-	// Environment defaults for the raw-log numbers; a bad value is a usage
-	// error like a bad flag. Flags parsed below override them.
-	if v := os.Getenv("MEDEWID_RAW_RETENTION"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			return exit(2, "MEDEWID_RAW_RETENTION: %v", err)
+	// Environment defaults for the numbers; a bad value is a usage error
+	// like a bad flag. Flags parsed below override them.
+	for name, d := range map[string]*time.Duration{
+		"MEDEWID_RAW_RETENTION": rawRetention,
+		"MEDEWID_DISPLAY_EVERY": displayEvery,
+		"MEDEWID_DISPLAY_FOR":   displayFor,
+	} {
+		if v := os.Getenv(name); v != "" {
+			p, err := time.ParseDuration(v)
+			if err != nil {
+				return exit(2, "%s: %v", name, err)
+			}
+			*d = p
 		}
-		*rawRetention = d
 	}
 	if v := os.Getenv("MEDEWID_RAW_MAX_MB"); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)
@@ -140,6 +153,9 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 	}
 	if *rawMaxMB <= 0 || *rawMaxMB > maxRawMaxMB {
 		return exit(2, "-raw-max-mb must be between 1 and 1048576 (1 TiB)")
+	}
+	if *displayEvery < 0 || (*displayEvery > 0 && (*displayFor <= 0 || *displayFor >= *displayEvery)) {
+		return exit(2, "need -display-every 0 (off), or 0 < -display-for < -display-every")
 	}
 	nTLS := 0
 	for _, s := range []string{*certFile, *keyFile, *caFile} {
@@ -237,15 +253,17 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 		)
 	}
 	d := daemon.New(daemon.Config{
-		Addr:      *machine,
-		Spec:      spec,
-		SpecName:  specName,
-		Store:     st,
-		Brew:      brew.DefaultConfig(),
-		Watch:     watch.DefaultConfig(),
-		EventExec: *eventExec,
-		Registry:  reg,
-		Raw:       raw,
+		Addr:         *machine,
+		Spec:         spec,
+		SpecName:     specName,
+		Store:        st,
+		Brew:         brew.DefaultConfig(),
+		Watch:        watch.DefaultConfig(),
+		EventExec:    *eventExec,
+		Registry:     reg,
+		Raw:          raw,
+		DisplayEvery: *displayEvery,
+		DisplayFor:   *displayFor,
 	})
 
 	mainSrv := &http.Server{

@@ -1,6 +1,10 @@
 package daemon
 
-import "github.com/thomasbach-dev/medewi/store"
+import (
+	"time"
+
+	"github.com/thomasbach-dev/medewi/store"
+)
 
 // PowerState is the machine's power mode as read from report lines.
 type PowerState string
@@ -35,13 +39,24 @@ func powerFromPayload(p []byte) PowerState {
 type Status struct {
 	Connected bool // a connection passed WaitReady
 	SpecOK    bool // MC? named the loaded spec; reports run only then
-	Ready     bool // READY fired and the machine is active (not eco/standby)
-	BrewOpen  bool // a brew is pumping or coasting
-	Power     PowerState
-	Firmware  string // from the id banner, e.g. "3.2"
-	Temp      *float64
-	Setpoint  *float64
-	LastBrew  *store.Brew // most recent stored brew
+	Ready     bool // the boiler settled on the setpoint and the machine is active
+	// MachineReady is the machine's own whole-machine READY ("[READY]"),
+	// which comes minutes after Ready; cleared by eco, standby and
+	// disconnects.
+	MachineReady bool
+	BrewOpen     bool // a brew is pumping or coasting
+	Power        PowerState
+	Firmware     string // from the id banner, e.g. "3.2"
+	Temp         *float64
+	Setpoint     *float64
+	LastBrew     *store.Brew      // most recent stored brew
+	Display      *DisplaySnapshot // latest sampled LCD; nil without sampling
+}
+
+// DisplaySnapshot is the LCD content of the latest sampled frame.
+type DisplaySnapshot struct {
+	Rows [4]string // see leva.Frame
+	At   time.Time
 }
 
 // Status returns a copy of the current state; it shares no memory with the
@@ -58,6 +73,10 @@ func (d *Daemon) Status() Status {
 			b.EndedAt = &e
 		}
 		s.LastBrew = &b
+	}
+	if s.Display != nil {
+		ds := *s.Display
+		s.Display = &ds
 	}
 	return s
 }

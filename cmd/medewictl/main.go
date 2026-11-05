@@ -42,6 +42,7 @@ func usage(w io.Writer) {
 
   status
   power active|eco|standby
+  mark TEXT...              note TEXT in medewid's raw traffic log
   backup -out DIR|-
 
 Defaults come from $MEDEWID_URL (e.g. https://brewhost:8443),
@@ -81,7 +82,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		sfs.StringVar(&outDir, "out", "", "output directory, or - for stdout")
 	}
 	switch sub {
-	case "status", "power", "backup":
+	case "status", "power", "mark", "backup":
 	default:
 		_, _ = fmt.Fprintf(stderr, "medewictl: unknown subcommand %q\n", sub)
 		usage(stderr)
@@ -92,7 +93,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	rest = sfs.Args()
 
-	var state string
+	var state, text string
 	switch sub {
 	case "status":
 		if len(rest) != 0 {
@@ -105,6 +106,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		state = rest[0]
+	case "mark":
+		if text = strings.Join(rest, " "); text == "" {
+			_, _ = fmt.Fprintln(stderr, "medewictl: mark needs a text")
+			return 2
+		}
 	case "backup":
 		if len(rest) != 0 || outDir == "" {
 			_, _ = fmt.Fprintln(stderr, "medewictl: backup needs -out DIR (or -out -)")
@@ -124,6 +130,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdStatus(client, base, stdout, stderr)
 	case "power":
 		return cmdPower(client, base, state, stdout, stderr)
+	case "mark":
+		return cmdMark(client, base, text, stderr)
 	default:
 		return cmdBackup(client, base, outDir, stdout, stderr)
 	}
@@ -186,6 +194,20 @@ func get(client *http.Client, url string) (*http.Response, []byte, error) {
 	return do(client, req)
 }
 
+// postJSON posts v as JSON.
+func postJSON(client *http.Client, url string, v any) (*http.Response, []byte, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, nil, err
+	}
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(b))
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return do(client, req)
+}
+
 func cmdStatus(client *http.Client, base string, stdout, stderr io.Writer) int {
 	resp, body, err := get(client, base+"/api/status")
 	if err != nil {
@@ -197,15 +219,19 @@ func cmdStatus(client *http.Client, base string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	var s struct {
-		Connected bool     `json:"connected"`
-		SpecOK    bool     `json:"spec_ok"`
-		Ready     bool     `json:"ready"`
-		BrewOpen  bool     `json:"brew_open"`
-		Power     string   `json:"power"`
-		Firmware  string   `json:"firmware"`
-		Temp      *float64 `json:"temp"`
-		Setpoint  *float64 `json:"setpoint"`
-		LastBrew  *struct {
+		Connected    bool     `json:"connected"`
+		SpecOK       bool     `json:"spec_ok"`
+		Ready        bool     `json:"ready"`
+		MachineReady bool     `json:"machine_ready"`
+		BrewOpen     bool     `json:"brew_open"`
+		Power        string   `json:"power"`
+		Firmware     string   `json:"firmware"`
+		Temp         *float64 `json:"temp"`
+		Setpoint     *float64 `json:"setpoint"`
+		Display      *struct {
+			Rows []string `json:"rows"`
+		} `json:"display"`
+		LastBrew *struct {
 			ID        int64   `json:"id"`
 			StartedAt string  `json:"started_at"`
 			Kind      string  `json:"kind"`
@@ -235,19 +261,39 @@ func cmdStatus(client *http.Client, base string, stdout, stderr io.Writer) int {
 		last = fmt.Sprintf("id=%d kind=%s started=%s duration_s=%g peak_bar=%g volume_ml=%g",
 			b.ID, b.Kind, b.StartedAt, b.DurationS, b.PeakBar, b.VolumeML)
 	}
-	_, _ = fmt.Fprintf(stdout, "connected: %t\nspec_ok: %t\nready: %t\nbrew_open: %t\npower: %s\nfirmware: %s\ntemp: %s\nsetpoint: %s\nlast_brew: %s\n",
-		s.Connected, s.SpecOK, s.Ready, s.BrewOpen, str(s.Power), str(s.Firmware), num(s.Temp), num(s.Setpoint), last)
+	_, _ = fmt.Fprintf(stdout, "connected: %t\nspec_ok: %t\nready: %t\nmachine_ready: %t\nbrew_open: %t\npower: %s\nfirmware: %s\ntemp: %s\nsetpoint: %s\nlast_brew: %s\n",
+		s.Connected, s.SpecOK, s.Ready, s.MachineReady, s.BrewOpen, str(s.Power), str(s.Firmware), num(s.Temp), num(s.Setpoint), last)
+	if s.Display == nil {
+		_, _ = fmt.Fprintln(stdout, "display: none")
+	} else {
+		for _, r := range s.Display.Rows {
+			_, _ = fmt.Fprintf(stdout, "display: |%s|\n", r)
+		}
+	}
 	return 0
 }
 
-func cmdPower(client *http.Client, base, state string, stdout, stderr io.Writer) int {
-	req, err := http.NewRequest(http.MethodPost, base+"/api/power", strings.NewReader(fmt.Sprintf(`{"state":%q}`, state)))
+func cmdMark(client *http.Client, base, text string, stderr io.Writer) int {
+	resp, body, err := postJSON(client, base+"/api/mark", map[string]string{"text": text})
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "medewictl: %v\n", err)
 		return 1
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, body, err := do(client, req)
+	if resp.StatusCode != http.StatusOK {
+		var r struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(body, &r) != nil || r.Error == "" {
+			r.Error = string(bytes.TrimSpace(body))
+		}
+		_, _ = fmt.Fprintf(stderr, "medewictl: mark failed (%s): %s\n", resp.Status, r.Error)
+		return 1
+	}
+	return 0
+}
+
+func cmdPower(client *http.Client, base, state string, stdout, stderr io.Writer) int {
+	resp, body, err := postJSON(client, base+"/api/power", map[string]string{"state": state})
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "medewictl: %v\n", err)
 		return 1

@@ -65,13 +65,13 @@ func TestAPIStatus(t *testing.T) {
 		t.Fatalf("code = %d", rec.Code)
 	}
 	m := decode[map[string]any](t, rec)
-	for _, k := range []string{"connected", "spec_ok", "ready", "brew_open", "power", "firmware", "temp", "setpoint", "last_brew"} {
+	for _, k := range []string{"connected", "spec_ok", "ready", "machine_ready", "brew_open", "power", "firmware", "temp", "setpoint", "last_brew", "display"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("status lacks key %q: %v", k, m)
 		}
 	}
-	if len(m) != 9 {
-		t.Errorf("status has %d keys, want 9: %v", len(m), m)
+	if len(m) != 11 {
+		t.Errorf("status has %d keys, want 11: %v", len(m), m)
 	}
 	if m["power"] != "active" || m["connected"] != true || m["spec_ok"] != true {
 		t.Errorf("status = %v", m)
@@ -429,7 +429,7 @@ func TestAPIMiscRoutes(t *testing.T) {
 		t.Fatalf("/ = %d %v", rec.Code, rec.Header())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"/api/power", "/api/status", "viewport", "2000", `"Content-Type": "application/json"`} {
+	for _, want := range []string{"/api/power", "/api/status", "/api/mark", "machine_ready", "viewport", "2000", `"Content-Type": "application/json"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("panel lacks %q", want)
 		}
