@@ -100,6 +100,7 @@ in
       serviceConfig = {
         ExecStart = lib.concatStringsSep " " [
           "${cfg.package}/bin/medewid"
+          "-log-flavour systemd"
           "-listen ${lib.escapeShellArg cfg.listen}"
           "-health-addr ${lib.escapeShellArg cfg.healthAddr}"
           "-xml ${credArg xmlName}"

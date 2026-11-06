@@ -106,6 +106,7 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 	rawMaxMB := fset.Int64("raw-max-mb", defaultRawMaxMB, "raw traffic log size cap in MiB (env MEDEWID_RAW_MAX_MB)")
 	displayEvery := fset.Duration("display-every", defaultDisplayEvery, "sample the machine's display this often, 0 disables it (env MEDEWID_DISPLAY_EVERY)")
 	displayFor := fset.Duration("display-for", defaultDisplayFor, "length of one display sample (env MEDEWID_DISPLAY_FOR)")
+	logFlavour := fset.String("log-flavour", envOr("MEDEWID_LOG_FLAVOUR", "text"), "log format: text, or systemd (no timestamps, syslog priority prefixes) (env MEDEWID_LOG_FLAVOUR)")
 	insecure := fset.Bool("insecure-http", false, "serve the API without TLS")
 	exit := func(code int, format string, a ...any) int {
 		_, _ = fmt.Fprintf(stderr, "medewid: "+format+"\n", a...)
@@ -151,6 +152,9 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 	if *xmlPath == "" {
 		return exit(2, "-xml (or MEDEWID_XML_PATH / MEDEWI_XML_PATH) is required")
 	}
+	if !logFlavours[*logFlavour] {
+		return exit(2, "-log-flavour must be text or systemd, not %q", *logFlavour)
+	}
 	if *rawRetention < 0 {
 		return exit(2, "-raw-retention must not be negative")
 	}
@@ -189,7 +193,7 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 	base := filepath.Base(*xmlPath)
 	specName := strings.TrimSuffix(base, filepath.Ext(base))
 
-	logger := slog.New(slog.NewTextHandler(stderr, nil))
+	logger := slog.New(newLogHandler(*logFlavour, stderr, slog.LevelInfo))
 	slog.SetDefault(logger)
 
 	st, err := store.Open(*dbPath)

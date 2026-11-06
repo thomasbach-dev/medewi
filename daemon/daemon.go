@@ -46,7 +46,7 @@ var fieldNames = []string{fieldTemp, fieldSetpoint, fieldHeat, fieldPressure, fi
 const (
 	defaultSettle     = 1500 * time.Millisecond
 	defaultMinBackoff = time.Second
-	defaultMaxBackoff = 30 * time.Second
+	defaultMaxBackoff = 3 * time.Minute
 	defaultDisplayFor = 500 * time.Millisecond
 
 	readyTimeout = 10 * time.Second       // bound on WaitReady per attempt
@@ -83,7 +83,7 @@ type Config struct {
 	// Settle is WaitReady's settle time (default 1.5 s).
 	Settle time.Duration
 	// BackoffMin and BackoffMax bound the reconnect delay, which doubles
-	// per failed attempt (defaults 1 s and 30 s).
+	// per failed attempt (defaults 1 s and 3 min).
 	BackoffMin, BackoffMax time.Duration
 	// DisplayEvery, if positive, samples the LCD mirror this often for
 	// DisplayFor (default 500 ms) between reports; zero disables sampling.
@@ -208,7 +208,7 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	conn, err := leva.Dial(ctx, d.cfg.Addr)
 	if err != nil {
 		if ctx.Err() == nil {
-			slog.Warn("dial failed", "addr", d.cfg.Addr, "err", err)
+			slog.Info("dial failed", "addr", d.cfg.Addr, "err", err)
 		}
 		return false
 	}
