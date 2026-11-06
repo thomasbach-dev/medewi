@@ -18,12 +18,12 @@ func TestSystemdHandler(t *testing.T) {
 	l.WithGroup("g").Info("grouped", "k", 1)
 
 	want := []string{
-		`<7>level=DEBUG msg=d addr=m:23`,
-		`<6>level=INFO msg=i addr=m:23`,
-		`<4>level=WARN msg=w addr=m:23`,
-		`<3>level=ERROR msg=e addr=m:23`,
-		`<3>level=ERROR+4 msg="beyond error" addr=m:23`,
-		`<6>level=INFO msg=grouped addr=m:23 g.k=1`,
+		`<7>msg=d addr=m:23`,
+		`<6>msg=i addr=m:23`,
+		`<4>msg=w addr=m:23`,
+		`<3>msg=e addr=m:23`,
+		`<3>msg="beyond error" addr=m:23`,
+		`<6>msg=grouped addr=m:23 g.k=1`,
 	}
 	got := strings.Split(strings.TrimSuffix(buf.String(), "\n"), "\n")
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -51,7 +51,7 @@ func TestLogFlavourFlag(t *testing.T) {
 	addr, xml := startSim(t)
 	r := start(t, append(baseArgs(t, addr, xml), "-insecure-http", "-log-flavour", "systemd")...)
 	r.shutdown()
-	if out := r.stderr.String(); !strings.Contains(out, "<6>level=INFO msg=\"medewid serving\"") || strings.Contains(out, "time=") {
+	if out := r.stderr.String(); !strings.Contains(out, "<6>msg=\"medewid serving\"") || strings.Contains(out, "time=") || strings.Contains(out, "level=") {
 		t.Errorf("stderr not in systemd flavour:\n%s", out)
 	}
 }
@@ -61,7 +61,7 @@ func TestLogFlavourEnv(t *testing.T) {
 	addr, xml := startSim(t)
 	r := start(t, append(baseArgs(t, addr, xml), "-insecure-http")...)
 	r.shutdown()
-	if out := r.stderr.String(); !strings.Contains(out, "<6>level=INFO") {
+	if out := r.stderr.String(); !strings.Contains(out, "<6>msg=") {
 		t.Errorf("MEDEWID_LOG_FLAVOUR ignored:\n%s", out)
 	}
 }

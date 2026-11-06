@@ -9,8 +9,8 @@ import (
 
 // logFlavours are the accepted -log-flavour values: "text" is slog's text
 // format with timestamps; "systemd" drops the timestamp (the journal adds
-// one) and prefixes each line with its syslog priority, "<N>", which
-// journald reads as the line's level.
+// one) and the level field, and prefixes each line with its syslog
+// priority, "<N>", which journald reads as the line's level.
 var logFlavours = map[string]bool{"text": true, "systemd": true}
 
 // newLogHandler returns the handler for flavour, writing to w.
@@ -24,7 +24,7 @@ func newLogHandler(flavour string, w io.Writer, level slog.Leveler) slog.Handler
 		h.hs[i] = slog.NewTextHandler(prefixWriter{mu, w, []byte(prio)}, &slog.HandlerOptions{
 			Level: level,
 			ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
-				if len(groups) == 0 && a.Key == slog.TimeKey {
+				if len(groups) == 0 && (a.Key == slog.TimeKey || a.Key == slog.LevelKey) {
 					return slog.Attr{}
 				}
 				return a
