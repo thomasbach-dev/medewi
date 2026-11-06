@@ -59,6 +59,7 @@ environment variables (flags win):
 | `MEDEWID_RAW_MAX_MB` | `-raw-max-mb` | `256` |
 | `MEDEWID_DISPLAY_EVERY` | `-display-every` | `5s`; `0` disables display sampling |
 | `MEDEWID_DISPLAY_FOR` | `-display-for` | `500ms`; at most `2s` |
+| `MEDEWID_LOG_FLAVOUR` | `-log-flavour` | `text`; `systemd` drops timestamps and prefixes syslog priorities for the journal |
 
 The API requires mutual TLS: set the server certificate, key and client CA.
 `-insecure-http` exists for local testing only and exits with an error when

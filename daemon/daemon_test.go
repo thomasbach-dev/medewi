@@ -308,3 +308,32 @@ func TestStalledStreamReconnects(t *testing.T) {
 	stop()
 	assertOnlyAllowed(t, s)
 }
+
+// A machine that is switched off refuses or drops connections: that is a
+// normal state, logged at info level, not a warning.
+func TestDialFailureIsInfo(t *testing.T) {
+	logs := &lockedBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+	runDaemon(t, daemonConfig(addr, openStore(t)))
+	waitFor(t, "dial failure logged", func() bool { return strings.Contains(logs.String(), "dial failed") })
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(line, "dial failed") && !strings.Contains(line, "level=INFO") {
+			t.Errorf("dial failure not at info level: %s", line)
+		}
+	}
+}
+
+func TestDefaultMaxBackoff(t *testing.T) {
+	if got := New(Config{}).cfg.BackoffMax; got != 3*time.Minute {
+		t.Errorf("default BackoffMax = %v, want 3m", got)
+	}
+}
