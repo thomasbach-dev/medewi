@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -373,6 +374,9 @@ func loadTLS(certFile, keyFile, caFile, metricsCAFile string) (*tls.Config, []*x
 		if err != nil {
 			return nil, nil, fmt.Errorf("metrics CA: %w", err)
 		}
+		if nested(admins, metrics) || nested(metrics, admins) {
+			return nil, nil, errors.New("the metrics CA and the client CA must be separate roots: one signs the other")
+		}
 		for _, c := range metrics {
 			pool.AddCert(c)
 		}
@@ -383,6 +387,30 @@ func loadTLS(certFile, keyFile, caFile, metricsCAFile string) (*tls.Config, []*x
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		ClientCAs:    pool,
 	}, admins, nil
+}
+
+// nested reports whether a certificate in inner, other than one also in
+// outer, chains to outer. Such a nesting would let a client pick its role:
+// a chain sent with the intermediate ends in outer, one without it in
+// inner. The same certificate in both files is allowed; it is an admin.
+func nested(outer, inner []*x509.Certificate) bool {
+	roots, rest := x509.NewCertPool(), x509.NewCertPool()
+	for _, c := range outer {
+		roots.AddCert(c)
+	}
+	for _, c := range inner {
+		rest.AddCert(c)
+	}
+	opts := x509.VerifyOptions{Roots: roots, Intermediates: rest, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}
+	for _, c := range inner {
+		if slices.ContainsFunc(outer, c.Equal) {
+			continue
+		}
+		if _, err := c.Verify(opts); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // readCAs parses every certificate in the PEM file name.

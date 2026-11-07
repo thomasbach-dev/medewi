@@ -92,6 +92,8 @@ in
         Optional CA PEM for scrape-only client certificates, delivered via
         systemd credentials: a certificate that chains to it, and not to
         `tlsClientCA`, may only `GET /metrics` and gets 403 elsewhere.
+        Must be a separate root: medewid refuses to start if either CA
+        signs the other.
       '';
     };
 

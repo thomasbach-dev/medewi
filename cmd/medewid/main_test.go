@@ -430,7 +430,13 @@ type pki struct {
 	key   *ecdsa.PrivateKey
 }
 
-func newPKI(t *testing.T) *pki {
+func newPKI(t *testing.T) *pki { t.Helper(); return newCA(t, nil) }
+
+// subCA returns a CA that parent signs.
+func (p *pki) subCA(t *testing.T) *pki { t.Helper(); return newCA(t, p) }
+
+// newCA generates a CA, self-signed if parent is nil.
+func newCA(t *testing.T, parent *pki) *pki {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -445,7 +451,13 @@ func newPKI(t *testing.T) *pki {
 		BasicConstraintsValid: true,
 		KeyUsage:              x509.KeyUsageCertSign,
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	signer, signerKey := tmpl, key
+	if parent != nil {
+		tmpl.SerialNumber = big.NewInt(100)
+		tmpl.Subject.CommonName = "test sub ca"
+		signer, signerKey = parent.ca, parent.key
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, signer, &key.PublicKey, signerKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -571,13 +583,7 @@ func statusOf(t *testing.T, c *http.Client, method, url string) int {
 func startMetricsCA(t *testing.T, admin *pki, clientCA, metricsCA []byte) *running {
 	t.Helper()
 	machine, xml := startSim(t)
-	dir := t.TempDir()
-	srvCert, srvKey := admin.issue(t, 2, x509.ExtKeyUsageServerAuth)
-	return start(t, append(baseArgs(t, machine, xml),
-		"-tls-cert", writeFile(t, dir, "srv.pem", srvCert),
-		"-tls-key", writeFile(t, dir, "srv.key", srvKey),
-		"-tls-client-ca", writeFile(t, dir, "ca.pem", clientCA),
-		"-tls-metrics-ca", writeFile(t, dir, "metrics-ca.pem", metricsCA))...)
+	return start(t, append(baseArgs(t, machine, xml), tlsArgs(t, admin, clientCA, metricsCA)...)...)
 }
 
 func TestMetricsCAOnlyScrapes(t *testing.T) {
@@ -642,5 +648,42 @@ func TestMetricsCANeedsTLS(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "-tls-metrics-ca needs the TLS settings") {
 		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
+// tlsArgs returns the TLS flags for a server certificate from admin with
+// clientCA and metricsCA as -tls-client-ca and -tls-metrics-ca.
+func tlsArgs(t *testing.T, admin *pki, clientCA, metricsCA []byte) []string {
+	t.Helper()
+	dir := t.TempDir()
+	srvCert, srvKey := admin.issue(t, 2, x509.ExtKeyUsageServerAuth)
+	return []string{
+		"-tls-cert", writeFile(t, dir, "srv.pem", srvCert),
+		"-tls-key", writeFile(t, dir, "srv.key", srvKey),
+		"-tls-client-ca", writeFile(t, dir, "ca.pem", clientCA),
+		"-tls-metrics-ca", writeFile(t, dir, "metrics-ca.pem", metricsCA),
+	}
+}
+
+// Nested CAs would let a client pick its role by the chain it sends.
+func TestMetricsCARefusesNesting(t *testing.T) {
+	root := newPKI(t)
+	sub := root.subCA(t)
+	for name, c := range map[string]struct{ clientCA, metricsCA []byte }{
+		"metrics CA under client CA": {root.caPEM, sub.caPEM},
+		"client CA under metrics CA": {sub.caPEM, root.caPEM},
+	} {
+		t.Run(name, func(t *testing.T) {
+			clearEnv(t)
+			args := append(baseArgs(t, "127.0.0.1:1", filepath.Join("..", "..", "testdata", "spec", "synthetic.xml")),
+				tlsArgs(t, root, c.clientCA, c.metricsCA)...)
+			code, stderr := runExit(t, args...)
+			if code != 1 {
+				t.Fatalf("exit = %d, want 1; stderr %s", code, stderr)
+			}
+			if !strings.Contains(stderr, "the metrics CA and the client CA must be separate roots") {
+				t.Fatalf("stderr = %q", stderr)
+			}
+		})
 	}
 }

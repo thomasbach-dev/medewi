@@ -82,7 +82,10 @@ listener. Rules the code imposes:
   above all when Prometheus sits outside the machine's Wifi: with an admin
   certificate, a compromised monitoring host could switch the machine and
   read the license key through medewid, which it otherwise cannot reach.
-  These are the only two roles; there is no per-subject authorization.
+  The metrics CA must be its own root: neither signed by the client CA
+  nor signing it, or a client could pick its role by the chain it sends.
+  medewid refuses to start with nested CAs. These are the only two roles;
+  there is no per-subject authorization.
 - **TLS 1.3 only**, on both the daemon and `medewictl`.
 - **The server certificate's SAN must match the name clients use** (the
   host in `MEDEWID_URL`, Prometheus' `server_name`, the panel's URL).
