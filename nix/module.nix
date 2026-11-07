@@ -77,7 +77,24 @@ in
     tlsClientCA = lib.mkOption {
       type = secretPath;
       example = "/run/secrets/clients-ca.crt";
-      description = "CA PEM that client certificates must chain to, delivered via systemd credentials.";
+      description = ''
+        CA PEM that admin client certificates chain to, delivered via
+        systemd credentials. Every certificate it signs may switch the
+        machine and download the license-key backups.
+      '';
+    };
+
+    tlsMetricsCA = lib.mkOption {
+      type = lib.types.nullOr secretPath;
+      default = null;
+      example = "/run/secrets/medewid-metrics-ca.crt";
+      description = ''
+        Optional CA PEM for scrape-only client certificates, delivered via
+        systemd credentials: a certificate that chains to it, and not to
+        `tlsClientCA`, may only `GET /metrics` and gets 403 elsewhere.
+        Must be a separate root: medewid refuses to start if either CA
+        signs the other.
+      '';
     };
 
     listen = lib.mkOption {
@@ -135,14 +152,16 @@ in
           "-tls-cert ${credArg "tls-cert"}"
           "-tls-key ${credArg "tls-key"}"
           "-tls-client-ca ${credArg "tls-client-ca"}"
-        ];
+        ]
+        + lib.optionalString (cfg.tlsMetricsCA != null) " -tls-metrics-ca ${credArg "tls-metrics-ca"}";
         EnvironmentFile = cfg.environmentFile;
         LoadCredential = [
           "${xmlName}:${cfg.xmlFile}"
           "tls-cert:${cfg.tlsCert}"
           "tls-key:${cfg.tlsKey}"
           "tls-client-ca:${cfg.tlsClientCA}"
-        ];
+        ]
+        ++ lib.optional (cfg.tlsMetricsCA != null) "tls-metrics-ca:${cfg.tlsMetricsCA}";
         DynamicUser = true;
         StateDirectory = "medewid";
         Restart = "always";

@@ -52,6 +52,7 @@ environment variables (flags win):
 | `MEDEWID_DB` | `-db` | `/var/lib/medewid/medewi.db` |
 | `MEDEWID_LISTEN` | `-listen` | `:8443` |
 | `MEDEWID_TLS_CERT`, `MEDEWID_TLS_KEY`, `MEDEWID_TLS_CLIENT_CA` | `-tls-cert`, `-tls-key`, `-tls-client-ca` | none |
+| `MEDEWID_TLS_METRICS_CA` | `-tls-metrics-ca` | none; its certificates may only `GET /metrics` |
 | `MEDEWID_HEALTH_ADDR` | `-health-addr` | `127.0.0.1:9114` (plaintext `/healthz`) |
 | `MEDEWID_EVENT_EXEC` | `-event-exec` | none |
 | `MEDEWID_RAW_DIR` | `-raw-dir` | `/var/lib/medewid/raw` |
@@ -62,6 +63,10 @@ environment variables (flags win):
 | `MEDEWID_LOG_FLAVOUR` | `-log-flavour` | `text`; `systemd` drops timestamps and `level=` and prefixes syslog priorities for the journal |
 
 The API requires mutual TLS: set the server certificate, key and client CA.
+Every certificate the client CA signs is an admin. `-tls-metrics-ca`
+(`MEDEWID_TLS_METRICS_CA`) optionally adds a second CA whose certificates
+may only `GET /metrics`, for a Prometheus that should not switch the
+machine or read the license key.
 `-insecure-http` exists for local testing only and exits with an error when
 combined with TLS settings.
 
@@ -102,11 +107,11 @@ to find a moment again later. Design:
 [docs/design/2026-11-05-display-sampling.md](docs/design/2026-11-05-display-sampling.md).
 
 NixOS module (`nixosModules.medewid`): options
-`services.medewid.{enable,package,environmentFile,xmlFile,tlsCert,tlsKey,tlsClientCA,listen,healthAddr,openFirewall,ipAddressAllow}`.
+`services.medewid.{enable,package,environmentFile,xmlFile,tlsCert,tlsKey,tlsClientCA,tlsMetricsCA,listen,healthAddr,openFirewall,ipAddressAllow}`.
 Step-by-step deployment (certificates, sandbox, event hook, metrics,
 alerts, backups): [docs/deployment.md](docs/deployment.md).
 The service runs with `DynamicUser`, so it cannot open root-owned files
-itself. `xmlFile`, `tlsCert`, `tlsKey` and `tlsClientCA` are therefore
+itself. `xmlFile`, `tlsCert`, `tlsKey`, `tlsClientCA` and `tlsMetricsCA` are therefore
 delivered via systemd credentials (`LoadCredential`, read as root before
 privileges drop): the files may be root-owned `0600` and live anywhere,
 including `/home` or `/run/secrets`. The XML keeps its base name as

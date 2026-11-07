@@ -331,7 +331,7 @@ func clearEnv(t *testing.T) {
 	for _, k := range []string{
 		"MEDEWID_MACHINE_ADDR", "MEDEWI_MACHINE_ADDR", "MEDEWID_XML_PATH", "MEDEWI_XML_PATH",
 		"MEDEWID_DB", "MEDEWID_LISTEN", "MEDEWID_TLS_CERT", "MEDEWID_TLS_KEY",
-		"MEDEWID_TLS_CLIENT_CA", "MEDEWID_HEALTH_ADDR", "MEDEWID_EVENT_EXEC",
+		"MEDEWID_TLS_CLIENT_CA", "MEDEWID_TLS_METRICS_CA", "MEDEWID_HEALTH_ADDR", "MEDEWID_EVENT_EXEC",
 		"MEDEWID_RAW_DIR", "MEDEWID_RAW_RETENTION", "MEDEWID_RAW_MAX_MB",
 		"MEDEWID_DISPLAY_EVERY", "MEDEWID_DISPLAY_FOR",
 	} {
@@ -430,7 +430,13 @@ type pki struct {
 	key   *ecdsa.PrivateKey
 }
 
-func newPKI(t *testing.T) *pki {
+func newPKI(t *testing.T) *pki { t.Helper(); return newCA(t, nil) }
+
+// subCA returns a CA that parent signs.
+func (p *pki) subCA(t *testing.T) *pki { t.Helper(); return newCA(t, p) }
+
+// newCA generates a CA, self-signed if parent is nil.
+func newCA(t *testing.T, parent *pki) *pki {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -445,7 +451,13 @@ func newPKI(t *testing.T) *pki {
 		BasicConstraintsValid: true,
 		KeyUsage:              x509.KeyUsageCertSign,
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	signer, signerKey := tmpl, key
+	if parent != nil {
+		tmpl.SerialNumber = big.NewInt(100)
+		tmpl.Subject.CommonName = "test sub ca"
+		signer, signerKey = parent.ca, parent.key
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, signer, &key.PublicKey, signerKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -534,5 +546,144 @@ func TestMTLSRequiresClientCert(t *testing.T) {
 	}
 	if code := r.shutdown(); code != 0 {
 		t.Fatalf("exit = %d\n%s", code, r.stderr.String())
+	}
+}
+
+// mtlsClient returns a client trusting serverCA that presents certPEM/keyPEM.
+func mtlsClient(t *testing.T, serverCA, certPEM, keyPEM []byte) *http.Client {
+	t.Helper()
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(serverCA)
+	pair, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{pair}},
+	}}
+}
+
+func statusOf(t *testing.T, c *http.Client, method, url string) int {
+	t.Helper()
+	req, err := http.NewRequest(method, url, strings.NewReader(`{"state":"eco"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
+}
+
+// startMetricsCA starts medewid with the server certificate from admin and
+// clientCA and metricsCA as -tls-client-ca and -tls-metrics-ca.
+func startMetricsCA(t *testing.T, admin *pki, clientCA, metricsCA []byte) *running {
+	t.Helper()
+	machine, xml := startSim(t)
+	return start(t, append(baseArgs(t, machine, xml), tlsArgs(t, admin, clientCA, metricsCA)...)...)
+}
+
+func TestMetricsCAOnlyScrapes(t *testing.T) {
+	clearEnv(t)
+	admin, mon := newPKI(t), newPKI(t)
+	r := startMetricsCA(t, admin, admin.caPEM, mon.caPEM)
+	base := "https://" + r.addr
+
+	scrapeCert, scrapeKey := mon.issue(t, 3, x509.ExtKeyUsageClientAuth)
+	scraper := mtlsClient(t, admin.caPEM, scrapeCert, scrapeKey)
+	if got := statusOf(t, scraper, "GET", base+"/metrics"); got != 200 {
+		t.Fatalf("metrics cert: /metrics = %d, want 200", got)
+	}
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/api/status"},
+		{"POST", "/api/power"},
+		{"POST", "/api/mark"},
+		{"GET", "/api/brews"},
+		{"GET", "/api/backup/mcu"},
+		{"GET", "/api/backup/mcm"},
+		{"GET", "/"},
+		{"GET", "/no-such-path"},
+	} {
+		if got := statusOf(t, scraper, c.method, base+c.path); got != http.StatusForbidden {
+			t.Errorf("metrics cert: %s %s = %d, want 403", c.method, c.path, got)
+		}
+	}
+
+	adminCert, adminKey := admin.issue(t, 4, x509.ExtKeyUsageClientAuth)
+	ctl := mtlsClient(t, admin.caPEM, adminCert, adminKey)
+	for _, path := range []string{"/api/status", "/metrics"} {
+		if got := statusOf(t, ctl, "GET", base+path); got != 200 {
+			t.Errorf("admin cert: %s = %d, want 200", path, got)
+		}
+	}
+	if code := r.shutdown(); code != 0 {
+		t.Fatalf("exit = %d\n%s", code, r.stderr.String())
+	}
+}
+
+// The same CA in both options keeps every certificate an admin.
+func TestMetricsCASameAsClientCA(t *testing.T) {
+	clearEnv(t)
+	admin := newPKI(t)
+	r := startMetricsCA(t, admin, admin.caPEM, admin.caPEM)
+	cert, key := admin.issue(t, 3, x509.ExtKeyUsageClientAuth)
+	if got := statusOf(t, mtlsClient(t, admin.caPEM, cert, key), "GET", "https://"+r.addr+"/api/status"); got != 200 {
+		t.Fatalf("/api/status = %d, want 200", got)
+	}
+	if code := r.shutdown(); code != 0 {
+		t.Fatalf("exit = %d\n%s", code, r.stderr.String())
+	}
+}
+
+func TestMetricsCANeedsTLS(t *testing.T) {
+	clearEnv(t)
+	args := append(baseArgs(t, "127.0.0.1:1", filepath.Join("..", "..", "testdata", "spec", "synthetic.xml")),
+		"-insecure-http", "-tls-metrics-ca", "x.pem")
+	code, stderr := runExit(t, args...)
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(stderr, "-tls-metrics-ca needs the TLS settings") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
+// tlsArgs returns the TLS flags for a server certificate from admin with
+// clientCA and metricsCA as -tls-client-ca and -tls-metrics-ca.
+func tlsArgs(t *testing.T, admin *pki, clientCA, metricsCA []byte) []string {
+	t.Helper()
+	dir := t.TempDir()
+	srvCert, srvKey := admin.issue(t, 2, x509.ExtKeyUsageServerAuth)
+	return []string{
+		"-tls-cert", writeFile(t, dir, "srv.pem", srvCert),
+		"-tls-key", writeFile(t, dir, "srv.key", srvKey),
+		"-tls-client-ca", writeFile(t, dir, "ca.pem", clientCA),
+		"-tls-metrics-ca", writeFile(t, dir, "metrics-ca.pem", metricsCA),
+	}
+}
+
+// Nested CAs would let a client pick its role by the chain it sends.
+func TestMetricsCARefusesNesting(t *testing.T) {
+	root := newPKI(t)
+	sub := root.subCA(t)
+	for name, c := range map[string]struct{ clientCA, metricsCA []byte }{
+		"metrics CA under client CA": {root.caPEM, sub.caPEM},
+		"client CA under metrics CA": {sub.caPEM, root.caPEM},
+	} {
+		t.Run(name, func(t *testing.T) {
+			clearEnv(t)
+			args := append(baseArgs(t, "127.0.0.1:1", filepath.Join("..", "..", "testdata", "spec", "synthetic.xml")),
+				tlsArgs(t, root, c.clientCA, c.metricsCA)...)
+			code, stderr := runExit(t, args...)
+			if code != 1 {
+				t.Fatalf("exit = %d, want 1; stderr %s", code, stderr)
+			}
+			if !strings.Contains(stderr, "the metrics CA and the client CA must be separate roots") {
+				t.Fatalf("stderr = %q", stderr)
+			}
+		})
 	}
 }

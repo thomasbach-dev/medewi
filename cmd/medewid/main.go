@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -99,6 +101,7 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 	certFile := fset.String("tls-cert", os.Getenv("MEDEWID_TLS_CERT"), "server certificate PEM (env MEDEWID_TLS_CERT)")
 	keyFile := fset.String("tls-key", os.Getenv("MEDEWID_TLS_KEY"), "server key PEM (env MEDEWID_TLS_KEY)")
 	caFile := fset.String("tls-client-ca", os.Getenv("MEDEWID_TLS_CLIENT_CA"), "client CA PEM (env MEDEWID_TLS_CLIENT_CA)")
+	metricsCAFile := fset.String("tls-metrics-ca", os.Getenv("MEDEWID_TLS_METRICS_CA"), "CA PEM whose client certificates may only scrape /metrics (env MEDEWID_TLS_METRICS_CA)")
 	health := fset.String("health-addr", envOr("MEDEWID_HEALTH_ADDR", defaultHealth), "plaintext /healthz listen address (env MEDEWID_HEALTH_ADDR)")
 	eventExec := fset.String("event-exec", os.Getenv("MEDEWID_EVENT_EXEC"), "shell command run per detector event (env MEDEWID_EVENT_EXEC)")
 	rawDir := fset.String("raw-dir", envOr("MEDEWID_RAW_DIR", rawDefault), "raw traffic log directory (env MEDEWID_RAW_DIR)")
@@ -177,12 +180,15 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 		return exit(2, "refusing to serve without TLS (pass -insecure-http to override)")
 	case nTLS == 3 && *insecure:
 		return exit(2, "-insecure-http conflicts with the TLS settings")
+	case nTLS == 0 && *metricsCAFile != "":
+		return exit(2, "-tls-metrics-ca needs the TLS settings")
 	}
 
 	var tlsCfg *tls.Config
+	var adminCAs []*x509.Certificate
 	if nTLS == 3 {
 		var err error
-		if tlsCfg, err = loadTLS(*certFile, *keyFile, *caFile); err != nil {
+		if tlsCfg, adminCAs, err = loadTLS(*certFile, *keyFile, *caFile, *metricsCAFile); err != nil {
 			return exit(1, "%v", err)
 		}
 	}
@@ -273,8 +279,12 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 		DisplayFor:   *displayFor,
 	})
 
+	handler := daemon.NewHandler(d, promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+	if *metricsCAFile != "" {
+		handler = metricsOnlyUnlessAdmin(handler, adminCAs)
+	}
 	mainSrv := &http.Server{
-		Handler:           daemon.NewHandler(d, promhttp.HandlerFor(reg, promhttp.HandlerOpts{})),
+		Handler:           handler,
 		TLSConfig:         tlsCfg,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -342,24 +352,117 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 	return code
 }
 
-// loadTLS builds the server config: TLS 1.3 and a verified client certificate.
-func loadTLS(certFile, keyFile, caFile string) (*tls.Config, error) {
+// loadTLS builds the server config: TLS 1.3 and a verified client
+// certificate that chains to the client CA or, if metricsCAFile is set, to
+// the metrics CA. It returns the client CA's certificates: chains anchored
+// there are admins.
+func loadTLS(certFile, keyFile, caFile, metricsCAFile string) (*tls.Config, []*x509.Certificate, error) {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
-		return nil, fmt.Errorf("load server key pair: %w", err)
+		return nil, nil, fmt.Errorf("load server key pair: %w", err)
 	}
-	pem, err := os.ReadFile(caFile)
+	admins, err := readCAs(caFile)
 	if err != nil {
-		return nil, fmt.Errorf("read client CA: %w", err)
+		return nil, nil, fmt.Errorf("client CA: %w", err)
 	}
 	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("client CA %s: no certificates found", caFile)
+	for _, c := range admins {
+		pool.AddCert(c)
+	}
+	if metricsCAFile != "" {
+		metrics, err := readCAs(metricsCAFile)
+		if err != nil {
+			return nil, nil, fmt.Errorf("metrics CA: %w", err)
+		}
+		if nested(admins, metrics) || nested(metrics, admins) {
+			return nil, nil, errors.New("the metrics CA and the client CA must be separate roots: one signs the other")
+		}
+		for _, c := range metrics {
+			pool.AddCert(c)
+		}
 	}
 	return &tls.Config{
 		MinVersion:   tls.VersionTLS13,
 		Certificates: []tls.Certificate{cert},
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		ClientCAs:    pool,
-	}, nil
+	}, admins, nil
+}
+
+// nested reports whether a certificate in inner, other than one also in
+// outer, chains to outer. Such a nesting would let a client pick its role:
+// a chain sent with the intermediate ends in outer, one without it in
+// inner. The same certificate in both files is allowed; it is an admin.
+func nested(outer, inner []*x509.Certificate) bool {
+	roots, rest := x509.NewCertPool(), x509.NewCertPool()
+	for _, c := range outer {
+		roots.AddCert(c)
+	}
+	for _, c := range inner {
+		rest.AddCert(c)
+	}
+	opts := x509.VerifyOptions{Roots: roots, Intermediates: rest, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}
+	for _, c := range inner {
+		if slices.ContainsFunc(outer, c.Equal) {
+			continue
+		}
+		if _, err := c.Verify(opts); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// readCAs parses every certificate in the PEM file name.
+func readCAs(name string) ([]*x509.Certificate, error) {
+	data, err := os.ReadFile(name)
+	if err != nil {
+		return nil, err
+	}
+	var certs []*x509.Certificate
+	for {
+		var b *pem.Block
+		if b, data = pem.Decode(data); b == nil {
+			break
+		}
+		if b.Type != "CERTIFICATE" {
+			continue
+		}
+		c, err := x509.ParseCertificate(b.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		certs = append(certs, c)
+	}
+	if len(certs) == 0 {
+		return nil, fmt.Errorf("%s: no certificates found", name)
+	}
+	return certs, nil
+}
+
+// metricsOnlyUnlessAdmin lets a client whose certificate chain is anchored
+// in one of admins through to next; every other client may only
+// GET /metrics and gets 403 otherwise.
+func metricsOnlyUnlessAdmin(next http.Handler, admins []*x509.Certificate) http.Handler {
+	isAdmin := func(r *http.Request) bool {
+		if r.TLS == nil {
+			return false
+		}
+		for _, chain := range r.TLS.VerifiedChains {
+			anchor := chain[len(chain)-1]
+			for _, a := range admins {
+				if anchor.Equal(a) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isAdmin(r) || (r.Method == http.MethodGet && r.URL.Path == "/metrics") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		http.Error(w, "forbidden: metrics-only certificate", http.StatusForbidden)
+	})
 }
