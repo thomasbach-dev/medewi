@@ -5,20 +5,24 @@
 let
   system = pkgs.stdenv.hostPlatform.system;
 
-  # Throwaway test PKI: one CA signs the server and the client certificate.
+  # Throwaway test PKI: one CA signs the server and the admin client
+  # certificate, a second CA the scrape-only one.
   pki = pkgs.runCommand "medewid-test-pki" { nativeBuildInputs = [ pkgs.openssl ]; } ''
     mkdir $out && cd $out
     openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
       -keyout ca.key -out ca.crt -days 3650 -subj /CN=medewid-test-ca
-    sign() {
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+      -keyout metrics-ca.key -out metrics-ca.crt -days 3650 -subj /CN=medewid-test-metrics-ca
+    sign() { # name, extensions, CA
       openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
         -keyout $1.key -out $1.csr -subj /CN=$1
-      openssl x509 -req -in $1.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+      openssl x509 -req -in $1.csr -CA ''${3:-ca}.crt -CAkey ''${3:-ca}.key -CAcreateserial \
         -out $1.crt -days 3650 -extfile <(printf '%s\n' "$2")
     }
     sign server 'subjectAltName=DNS:brewhost
     extendedKeyUsage=serverAuth'
     sign client 'extendedKeyUsage=clientAuth'
+    sign scraper 'extendedKeyUsage=clientAuth' metrics-ca
   '';
 
   # The synthetic stream plus the machine's "[READY]" notice, so the event
@@ -56,6 +60,10 @@ pkgs.testers.runNixOSTest {
         source = "${pki}/ca.crt";
         mode = "0600";
       };
+      "medewi/metrics-ca.crt" = {
+        source = "${pki}/metrics-ca.crt";
+        mode = "0600";
+      };
     };
 
     systemd.services.levasim = {
@@ -79,6 +87,7 @@ pkgs.testers.runNixOSTest {
       tlsCert = "/etc/medewi/server.crt";
       tlsKey = "/etc/medewi/server.key";
       tlsClientCA = "/etc/medewi/ca.crt";
+      tlsMetricsCA = "/etc/medewi/metrics-ca.crt";
       openFirewall = true;
       ipAddressAllow = [ "192.168.1.0/24" ];
     };
@@ -99,6 +108,12 @@ pkgs.testers.runNixOSTest {
     assert status["connected"] and status["spec_ok"], status
     brewhost.succeed(mtls + api + "/metrics | grep -q '^medewi_machine_connected 1'")
     brewhost.fail(curl + api + "/api/status")  # no client certificate
+
+    # The scrape-only certificate reaches /metrics and nothing else.
+    scraper = curl + "--cert ${pki}/scraper.crt --key ${pki}/scraper.key "
+    brewhost.succeed(scraper + api + "/metrics | grep -q '^medewi_machine_connected 1'")
+    code = brewhost.succeed("curl -s -o /dev/null -w '%{http_code}' --cacert ${pki}/ca.crt --cert ${pki}/scraper.crt --key ${pki}/scraper.key " + api + "/api/backup/mcu")
+    assert code == "403", code
 
     # The tripwire never fired: medewid kept off the bootloader port.
     brewhost.fail("journalctl -u levasim | grep -q 'TRIPWIRE:'")

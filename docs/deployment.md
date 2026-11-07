@@ -69,14 +69,20 @@ and the module refuses it.
 The API, the ops panel and `/metrics` all sit behind one mutual-TLS
 listener. Rules the code imposes:
 
-- **Every certificate the client CA signs is an admin.** There is no
-  per-client authorization: any certificate that chains to `tlsClientCA`
-  may switch the machine (`POST /api/power`) and download the controller
-  settings with the license key (`/api/backup/*`). Use a CA dedicated to
-  medewid and sign only certificates for medewid's own clients. Never
-  reuse a household CA whose certificates serve other services: the
-  handshake is the barrier that keeps everyone else away from medewid's
-  code.
+- **Every certificate the client CA signs is an admin.** Any certificate
+  that chains to `tlsClientCA` may switch the machine (`POST /api/power`)
+  and download the controller settings with the license key
+  (`/api/backup/*`). Use a CA dedicated to medewid and sign only
+  certificates for medewid's own clients. Never reuse a household CA whose
+  certificates serve other services: the handshake is the barrier that
+  keeps everyone else away from medewid's code.
+- **The metrics CA only scrapes.** A certificate that chains to the
+  optional `tlsMetricsCA` (and not to `tlsClientCA`) may only
+  `GET /metrics`; everything else answers 403. Use it for Prometheus,
+  above all when Prometheus sits outside the machine's Wifi: with an admin
+  certificate, a compromised monitoring host could switch the machine and
+  read the license key through medewid, which it otherwise cannot reach.
+  These are the only two roles; there is no per-subject authorization.
 - **TLS 1.3 only**, on both the daemon and `medewictl`.
 - **The server certificate's SAN must match the name clients use** (the
   host in `MEDEWID_URL`, Prometheus' `server_name`, the panel's URL).
@@ -89,8 +95,7 @@ listener. Rules the code imposes:
 
 ### A private CA (recommended)
 
-Run this on an admin machine; only `server.crt`, `server.key` and
-`ca.crt` go to the brewhost. The CA's name constraints permit the
+Run this on an admin machine. The CA's name constraints permit the
 brewhost's name and exclude every IP address (a constraint only covers
 the name types it lists), so a phone that trusts it cannot be fooled for
 any other site, by name or by IP. If clients must reach the brewhost by
@@ -107,26 +112,34 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
   -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
   -addext "keyUsage=critical,keyCertSign,cRLSign" \
   -addext "nameConstraints=critical,permitted;DNS:$HOST,excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::"
+# signs only Prometheus' certificate; nothing trusts it but medewid
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+  -keyout metrics-ca.key -out metrics-ca.crt -days 3650 -subj "/CN=medewid metrics CA" \
+  -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+  -addext "keyUsage=critical,keyCertSign,cRLSign"
 
-issue() { # name, extensions
+issue() { # name, extensions, CA (default ca)
   openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
     -keyout "$1.key" -out "$1.csr" -subj "/CN=$1"
-  openssl x509 -req -in "$1.csr" -CA ca.crt -CAkey ca.key -CAcreateserial \
+  openssl x509 -req -in "$1.csr" -CA "${3:-ca}.crt" -CAkey "${3:-ca}.key" -CAcreateserial \
     -days 825 -out "$1.crt" -extfile <(printf '%s\n' "$2")
   rm "$1.csr"
 }
 issue server "subjectAltName=DNS:$HOST
 extendedKeyUsage=serverAuth"
-for c in prometheus medewictl phone; do
+for c in medewictl phone; do
   issue "$c" "extendedKeyUsage=clientAuth"
 done
+issue prometheus "extendedKeyUsage=clientAuth" metrics-ca
 # for the phone or browser: certificate, key and CA in one file
 openssl pkcs12 -export -inkey phone.key -in phone.crt -certfile ca.crt \
   -name "medewid phone" -out phone.p12
 ```
 
 The same `ca.crt` is the server's client CA (`tlsClientCA`), `medewictl`'s
-`MEDEWID_CTL_CA` and Prometheus' `ca_file`. Renew the server certificate
+`MEDEWID_CTL_CA` and Prometheus' `ca_file`; `metrics-ca.crt` is
+`tlsMetricsCA`. Only `server.crt`, `server.key`, `ca.crt` and
+`metrics-ca.crt` go to the brewhost. Renew the server certificate
 before its 825 days run out, then restart the unit.
 
 **Phones and browsers.** The ops panel needs a client certificate in the
@@ -160,6 +173,7 @@ services.medewid = {
   tlsCert = "/etc/medewid/server.crt";
   tlsKey = "/etc/medewid/server.key";
   tlsClientCA = "/etc/medewid/ca.crt";
+  tlsMetricsCA = "/etc/medewid/metrics-ca.crt"; # optional: scrape-only certificates
   # listen = ":8443";              # all interfaces
   # healthAddr = "127.0.0.1:9114"; # plaintext /healthz
   openFirewall = true;             # opens the listen port; off by default
@@ -248,7 +262,8 @@ daemon holds the connection without starting reports until you fix it.
 ## Metrics
 
 `/metrics` is served on the mTLS listener only, so Prometheus needs a
-client certificate:
+client certificate. Issue it from the metrics CA (`tlsMetricsCA`) so it
+can scrape but not switch the machine or read the backups:
 
 ```yaml
 scrape_configs:
