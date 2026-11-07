@@ -180,3 +180,48 @@ func TestMetricsCountsFailedReconnectAttempts(t *testing.T) {
 		t.Error("connected = 1 with nothing listening")
 	}
 }
+
+// A fragment shows up while the connection that saw it is still up.
+func TestMetricsFragmentsLive(t *testing.T) {
+	cut := "<102SOAK 1.0b       1: 91.0\xdf \x04 91.0\xdf\x01             5% 0"
+	ls := idleLines(4)
+	ls = append(ls, append([]byte(cut), line('-', "PID", 93, 93, 0, -1, 0, 0)...))
+	ls = append(ls, line('-', "PID", 77.7, 93, 0, -1, 0, 0))
+	d, reg := metricsDaemon(t, ls)
+	waitSentinel(t, d)
+	if val(t, reg, "medewi_machine_connected") != 1 {
+		t.Fatal("not connected")
+	}
+	if got := val(t, reg, "medewi_fragments_total"); got != 1 {
+		t.Errorf("fragments = %v, want 1 while connected", got)
+	}
+}
+
+type fakeFragmenter struct{ n uint64 }
+
+func (f *fakeFragmenter) Fragments() uint64 { return f.n }
+
+// The count sums ended sessions and the live one, and a session's end
+// moves its count over without a dip.
+func TestFragmentCountSumsSessions(t *testing.T) {
+	var fc fragmentCount
+	a := &fakeFragmenter{n: 2}
+	fc.attach(a)
+	a.n = 3
+	if got := fc.value(); got != 3 {
+		t.Errorf("live = %v, want 3", got)
+	}
+	fc.detach(a)
+	if got := fc.value(); got != 3 {
+		t.Errorf("after end = %v, want 3", got)
+	}
+	b := &fakeFragmenter{n: 1}
+	fc.attach(b)
+	if got := fc.value(); got != 4 {
+		t.Errorf("second session = %v, want 4", got)
+	}
+	fc.detach(nil) // no live session: nothing changes
+	if got := fc.value(); got != 4 {
+		t.Errorf("detach(nil) = %v, want 4", got)
+	}
+}

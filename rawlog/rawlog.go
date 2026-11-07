@@ -104,6 +104,7 @@ type Log struct {
 	writeErrors atomic.Uint64
 	dropped     atomic.Uint64
 	redacted    atomic.Uint64
+	bytes       atomic.Uint64 // log files' total size after the last prune
 
 	// Dump state is shared by all sessions: a dump seen in one keeps the
 	// windows of the next shut (a reconnect must not reopen them).
@@ -448,6 +449,15 @@ func (s *Session) Close() {
 	s.l.enqueue(item{sess: s, at: now, end: true})
 }
 
+// Bytes is the total size of the log files after the last prune (at Open
+// and at each new file). The open file counts with its size at that time.
+func (l *Log) Bytes() uint64 {
+	if l == nil {
+		return 0
+	}
+	return l.bytes.Load()
+}
+
 // writer owns the open file; only the writer goroutine touches it.
 type writer struct {
 	l *Log
@@ -541,11 +551,9 @@ func (w *writer) open(at time.Time) error {
 // oldest ones while the total size exceeds MaxBytes. The open file is
 // excluded from that total (and never deleted), so the directory can exceed
 // the cap by one file. Files whose names do not parse are left alone. Errors are logged, not counted.
+// It always records the remaining total for Bytes, limits or not.
 func (w *writer) prune(open string) {
 	cfg := &w.l.cfg
-	if cfg.Retention <= 0 && cfg.MaxBytes <= 0 {
-		return
-	}
 	entries, err := os.ReadDir(cfg.Dir)
 	if err != nil {
 		slog.Warn("rawlog: prune: reading dir failed", "err", err)
@@ -556,8 +564,9 @@ func (w *writer) prune(open string) {
 		at   time.Time
 		size int64
 	}
-	var files []logFile // sorted by name, hence by time
-	var total int64
+	var files []logFile   // sorted by name, hence by time
+	var total, kept int64 // kept: the open file and expired ones not removed
+	defer func() { w.l.bytes.Store(uint64(max(0, total+kept))) }()
 	now := cfg.Now()
 	for _, e := range entries {
 		name, ok := strings.CutSuffix(e.Name(), nameSuffix)
@@ -569,16 +578,19 @@ func (w *writer) prune(open string) {
 			continue
 		}
 		path := filepath.Join(cfg.Dir, e.Name())
-		if path == open {
-			continue
-		}
 		info, err := e.Info()
 		if err != nil {
 			slog.Warn("rawlog: prune: stat failed", "file", path, "err", err)
 			continue
 		}
+		if path == open {
+			kept += info.Size()
+			continue
+		}
 		if cfg.Retention > 0 && now.Sub(at) > cfg.Retention {
-			w.remove(path)
+			if !w.remove(path) {
+				kept += info.Size()
+			}
 			continue
 		}
 		files = append(files, logFile{path, at, info.Size()})

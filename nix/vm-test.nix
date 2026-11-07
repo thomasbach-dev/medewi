@@ -106,12 +106,12 @@ pkgs.testers.runNixOSTest {
     api = "https://brewhost:8443"
     status = json.loads(brewhost.succeed(mtls + api + "/api/status"))
     assert status["connected"] and status["spec_ok"], status
-    brewhost.succeed(mtls + api + "/metrics | grep -q '^medewi_machine_connected 1'")
+    brewhost.succeed(mtls + api + "/metrics | grep '^medewi_machine_connected 1' >/dev/null")
     brewhost.fail(curl + api + "/api/status")  # no client certificate
 
     # The scrape-only certificate reaches /metrics and nothing else.
     scraper = curl + "--cert ${pki}/scraper.crt --key ${pki}/scraper.key "
-    brewhost.succeed(scraper + api + "/metrics | grep -q '^medewi_machine_connected 1'")
+    brewhost.succeed(scraper + api + "/metrics | grep '^medewi_machine_connected 1' >/dev/null")
     code = brewhost.succeed("curl -s -o /dev/null -w '%{http_code}' --cacert ${pki}/ca.crt --cert ${pki}/scraper.crt --key ${pki}/scraper.key " + api + "/api/backup/mcu")
     assert code == "403", code
 

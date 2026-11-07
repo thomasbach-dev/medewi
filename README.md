@@ -81,8 +81,9 @@ format. Every chunk sent is kept; of the received lines only report lines
 (below) land in the log as `note` events. If an explicitly configured
 directory cannot be opened, medewid exits 1; with the default directory it
 only warns and runs without the log.
-Counters: `medewi_rawlog_dropped_total`, `medewi_rawlog_write_errors_total`,
-`medewi_rawlog_redacted_lines_total`. Approximate replay through `levasim`
+Metrics: `medewi_rawlog_dropped_total`, `medewi_rawlog_write_errors_total`,
+`medewi_rawlog_redacted_lines_total` and the directory size
+`medewi_rawlog_bytes`. Approximate replay through `levasim`
 (it replays every received line, banners and replies included, as the
 report stream):
 
