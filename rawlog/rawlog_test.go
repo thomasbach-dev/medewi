@@ -2,6 +2,8 @@ package rawlog
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -433,8 +435,9 @@ func TestPruneSkipsOpenFile(t *testing.T) {
 	for {
 		names := fileNames(t, dir)
 		if len(names) == 1 {
+			// The listed file may be session a's, pruned before we read it.
 			evs, err := ReadFile(names[0])
-			if err != nil {
+			if err != nil && !errors.Is(err, fs.ErrNotExist) {
 				t.Fatal(err)
 			}
 			if len(evs) == 1 && string(evs[0].Data) == "{b}\r\n" {
