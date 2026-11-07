@@ -502,7 +502,7 @@ func TestWriteErrorKeepsRunning(t *testing.T) {
 
 func TestAccessorsNilSafe(t *testing.T) {
 	var l *Log
-	if l.Dropped() != 0 || l.WriteErrors() != 0 {
+	if l.Dropped() != 0 || l.WriteErrors() != 0 || l.Bytes() != 0 {
 		t.Error("nil log counts")
 	}
 }
@@ -911,5 +911,52 @@ func TestPruneKeepsTotalWhenRemoveFails(t *testing.T) {
 	// are attempted (3000 > 1500 each time).
 	if got := failed.Load(); got != 3 {
 		t.Errorf("remove attempted %d times, want 3", got)
+	}
+}
+
+func TestBytesAfterPrune(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "raw")
+	writeFile(t, dir, "20261101T000000.000Z.jsonl.gz", 1000)
+	writeFile(t, dir, "20261102T000000.000Z.jsonl.gz", 1000)
+	writeFile(t, dir, "20261103T000000.000Z.jsonl.gz", 1000)
+	writeFile(t, dir, "other.bin", 5000) // not a log: not counted
+	l, _ := openLog(t, Config{Dir: dir, Now: newClock().Now, MaxBytes: 2500})
+	if got := l.Bytes(); got != 2000 {
+		t.Errorf("Bytes = %d, want 2000 after pruning the oldest file", got)
+	}
+}
+
+func TestBytesWithoutLimits(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "raw")
+	writeFile(t, dir, "20261101T000000.000Z.jsonl.gz", 1000)
+	l, _ := openLog(t, Config{Dir: dir, Now: newClock().Now})
+	if got := l.Bytes(); got != 1000 {
+		t.Errorf("Bytes = %d, want 1000", got)
+	}
+}
+
+// A rotation prunes, and the total then counts the file just closed.
+func TestBytesCountsClosedFiles(t *testing.T) {
+	clk := newClock()
+	l, dir := openLog(t, Config{Now: clk.Now})
+	s := l.Session()
+	s.Tap("rx", []byte("{a}\r\n"))
+	s.Close()
+	clk.Advance(time.Second)
+	s = l.Session()
+	s.Tap("rx", []byte("{b}\r\n"))
+	deadline := time.Now().Add(2 * time.Second)
+	for l.Bytes() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("Bytes still 0, files %v", fileNames(t, dir))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	info, err := os.Stat(fileNames(t, dir)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := l.Bytes(); got < uint64(info.Size()) {
+		t.Errorf("Bytes = %d, want at least the closed file's %d", got, info.Size())
 	}
 }

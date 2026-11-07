@@ -175,7 +175,10 @@ func TestRawLogFlags(t *testing.T) {
 		return m["connected"] == true && m["spec_ok"] == true
 	})
 	m := metricsText(t, r)
-	for _, name := range []string{"medewi_rawlog_dropped_total", "medewi_rawlog_write_errors_total", "medewi_rawlog_redacted_lines_total"} {
+	for _, name := range []string{
+		"medewi_rawlog_dropped_total", "medewi_rawlog_write_errors_total", "medewi_rawlog_redacted_lines_total",
+		"medewi_rawlog_bytes", "process_start_time_seconds",
+	} {
 		if !strings.Contains(m, name) {
 			t.Errorf("metrics lack %s", name)
 		}
@@ -221,8 +224,12 @@ func TestRawLogDisabled(t *testing.T) {
 	waitStatus(t, "http://"+r.addr, http.DefaultClient, func(m map[string]any) bool {
 		return m["connected"] == true
 	})
-	if m := metricsText(t, r); strings.Contains(m, "medewi_rawlog_") {
+	m := metricsText(t, r)
+	if strings.Contains(m, "medewi_rawlog_") {
 		t.Error("rawlog metrics present while disabled")
+	}
+	if !strings.Contains(m, "process_start_time_seconds") {
+		t.Error("process metrics missing without a raw log")
 	}
 	r.shutdown()
 	if es, _ := os.ReadDir(argVal(t, args, "-raw-dir")); len(es) != 0 {

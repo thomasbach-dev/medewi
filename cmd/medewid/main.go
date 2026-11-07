@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/thomasbach-dev/medewi/brew"
@@ -249,6 +250,8 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 	}
 
 	reg := prometheus.NewRegistry()
+	// process_start_time_seconds makes restarts (counter resets) visible.
+	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	if raw != nil {
 		reg.MustRegister(
 			prometheus.NewCounterFunc(prometheus.CounterOpts{
@@ -263,6 +266,10 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 				Name: "medewi_rawlog_redacted_lines_total",
 				Help: "Received lines the raw log dropped by its allowlist (MCu/MCm replies, unsolicited lines).",
 			}, func() float64 { return float64(raw.Redacted()) }),
+			prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+				Name: "medewi_rawlog_bytes",
+				Help: "Raw-log directory size after the last prune (at start and at each new file).",
+			}, func() float64 { return float64(raw.Bytes()) }),
 		)
 	}
 	d := daemon.New(daemon.Config{

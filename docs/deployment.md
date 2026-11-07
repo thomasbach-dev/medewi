@@ -329,11 +329,16 @@ services.prometheus.checkConfig = "syntax-only";
 | `medewi_rawlog_dropped_total` | counter | raw-log events dropped, queue full | — |
 | `medewi_rawlog_write_errors_total` | counter | raw-log write, flush or close errors | — |
 | `medewi_rawlog_redacted_lines_total` | counter | received lines the raw log dropped by its allowlist | — |
+| `medewi_rawlog_bytes` | gauge | raw-log directory size, measured at start and at each new file (hourly rotation, new session) | — |
+| `process_start_time_seconds` | gauge | daemon start (Go process collector, with the other `process_*` metrics) | — |
 
 Gate temperature panels on `medewi_machine_connected == 1` and
 `medewi_power_state{state="standby"} == 0`; the stale values otherwise
 draw flat lines. `medewi_fragments_total` grows with display sampling and
-is not an error signal. Because switching the machine off disconnects
+is not an error signal; it counts the live connection too, not only
+ended ones. All counters restart at 0 with the daemon:
+`changes(process_start_time_seconds[1d])` shows restarts, and `rate()`
+and `increase()` already handle the resets. Because switching the machine off disconnects
 it, a disconnect alone is not alertable.
 
 ### Suggested alerts

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"log/slog"
+	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -19,7 +20,45 @@ type metrics struct {
 	shots, flushes, pumpSeconds       prometheus.Counter
 	volumeLiters, waterDraws, waterL  prometheus.Counter
 	lines, decodeErrors, reconnects   prometheus.Counter
-	fragments                         prometheus.Counter
+	fragments                         prometheus.CounterFunc
+	frags                             fragmentCount
+}
+
+// fragmenter is the part of *leva.Conn the fragment count reads.
+type fragmenter interface{ Fragments() uint64 }
+
+// fragmentCount sums the fragments of the ended sessions and the live one.
+// A session's end moves its count over under one lock, so the sum never dips.
+type fragmentCount struct {
+	mu     sync.Mutex
+	closed uint64
+	live   fragmenter
+}
+
+func (f *fragmentCount) attach(c fragmenter) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.live = c
+}
+
+// detach ends c's session; call it once c no longer reads.
+func (f *fragmentCount) detach(c fragmenter) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if c != nil && f.live == c {
+		f.closed += c.Fragments()
+		f.live = nil
+	}
+}
+
+func (f *fragmentCount) value() float64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := f.closed
+	if f.live != nil {
+		n += f.live.Fragments()
+	}
+	return float64(n)
 }
 
 var powerStates = []PowerState{PowerActive, PowerEco, PowerStandby, PowerUnknown}
@@ -51,8 +90,10 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 		lines:        c("medewi_report_lines_total", "Report lines received."),
 		decodeErrors: c("medewi_decode_errors_total", "Report lines skipped (checksum or decode error)."),
 		reconnects:   c("medewi_reconnects_total", "Connection attempts after the first, failed ones included."),
-		fragments:    c("medewi_fragments_total", "Report or frame pieces cut off at a stream switch (counted per ended session)."),
 	}
+	m.fragments = prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Name: "medewi_fragments_total", Help: "Report or frame pieces cut off at a stream switch.",
+	}, m.frags.value)
 	for _, s := range powerStates {
 		m.power.WithLabelValues(string(s)).Set(0)
 	}

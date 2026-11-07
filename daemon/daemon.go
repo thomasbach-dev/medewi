@@ -223,6 +223,7 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	d.mu.Lock()
 	d.rs = rs
 	d.mu.Unlock()
+	d.met.frags.attach(conn)
 	defer d.disconnected(ctx, conn)
 
 	rctx, cancel := context.WithTimeout(ctx, readyTimeout)
@@ -369,7 +370,7 @@ func (d *Daemon) disconnected(ctx context.Context, conn *leva.Conn) {
 	d.met.status(d.st)
 	d.mu.Unlock()
 	_ = conn.Close() // aborts a request still running on conn
-	d.met.fragments.Add(float64(conn.Fragments()))
+	d.met.frags.detach(conn)
 	if sum := d.rec.Abort(); sum != nil {
 		d.finish(ctx, *sum)
 	}
