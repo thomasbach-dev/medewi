@@ -83,7 +83,7 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 		}, []string{"state"}),
 		shots:        c("medewi_shots_total", "Completed shots."),
 		flushes:      c("medewi_flushes_total", "Completed flushes."),
-		pumpSeconds:  c("medewi_pump_seconds_total", "Seconds of finished brews, interrupted ones included."),
+		pumpSeconds:  c("medewi_pump_seconds_total", "Seconds of finished brews, truncated ones included."),
 		volumeLiters: c("medewi_volume_liters_total", "Liters of finished brews and wand draws."),
 		waterDraws:   c("medewi_water_draws_total", "Wand water draws."),
 		waterL:       c("medewi_water_liters_total", "Liters drawn at the wand."),
@@ -138,7 +138,7 @@ func (m *metrics) status(s Status) {
 	}
 }
 
-// brewClosed counts a finished brew. Interrupted ones are no shot or
+// brewClosed counts a finished brew. Truncated ones are no shot or
 // flush but still add pump time and volume.
 func (m *metrics) brewClosed(s brew.Summary) {
 	switch s.Kind {

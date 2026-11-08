@@ -168,7 +168,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if n, err := d.cfg.Store.CloseDangling(sctx); err != nil {
 		slog.Error("closing dangling brews", "err", err)
 	} else if n > 0 {
-		slog.Warn("marked brews left open by a crash as interrupted", "count", n)
+		slog.Warn("marked brews left open by a crash as truncated-crash", "count", n)
 	}
 	cancel()
 	d.refreshLastBrew(ctx)
@@ -362,7 +362,7 @@ func (d *Daemon) stopReports(ctx context.Context, conn *leva.Conn) {
 }
 
 // disconnected closes conn, ends any open episode and resets the state.
-// A pumping brew is stored as interrupted, a coasting one with its kind.
+// A pumping brew is stored as truncated, a coasting one with its kind.
 func (d *Daemon) disconnected(ctx context.Context, conn *leva.Conn) {
 	d.mu.Lock()
 	d.conn, d.st.Connected = nil, false // new requests are refused from here
@@ -371,7 +371,7 @@ func (d *Daemon) disconnected(ctx context.Context, conn *leva.Conn) {
 	d.mu.Unlock()
 	_ = conn.Close() // aborts a request still running on conn
 	d.met.frags.detach(conn)
-	if sum := d.rec.Abort(); sum != nil {
+	if sum := d.rec.Abort(brew.TruncatedLost); sum != nil {
 		d.finish(ctx, *sum)
 	}
 	d.det = watch.NewDetector(d.cfg.Watch)

@@ -139,12 +139,12 @@ func TestPowerStateOneHot(t *testing.T) {
 	}
 }
 
-func TestMetricsInterruptedAddsNoShot(t *testing.T) {
+func TestMetricsTruncatedAddsNoShot(t *testing.T) {
 	m := newMetrics(nil)
-	m.brewClosed(brew.Summary{Kind: brew.Interrupted, Duration: 2e9, VolumeML: 10})
+	m.brewClosed(brew.Summary{Kind: brew.TruncatedLost, Duration: 2e9, VolumeML: 10})
 	if testutil.ToFloat64(m.shots)+testutil.ToFloat64(m.flushes) != 0 ||
 		testutil.ToFloat64(m.pumpSeconds) != 2 || testutil.ToFloat64(m.volumeLiters) != 0.01 {
-		t.Error("interrupted brew mishandled")
+		t.Error("truncated brew mishandled")
 	}
 }
 

@@ -198,9 +198,9 @@ func TestAbort(t *testing.T) {
 	t.Run("pumping", func(t *testing.T) {
 		h := newHarness(t)
 		h.repeat(20, Sample{Pumping: true, PressureSP: f(9), Pressure: f(9)})
-		s := h.r.Abort()
-		if s == nil || s.Kind != Interrupted || s.PeakBar != 9 {
-			t.Fatalf("Abort = %+v, want interrupted", s)
+		s := h.r.Abort(TruncatedReleased)
+		if s == nil || s.Kind != TruncatedReleased || s.PeakBar != 9 {
+			t.Fatalf("Abort = %+v, want truncated-released", s)
 		}
 		if h.r.Open() {
 			t.Error("still open after Abort")
@@ -213,14 +213,14 @@ func TestAbort(t *testing.T) {
 		if !h.r.Open() {
 			t.Error("coasting brew should count as open")
 		}
-		if s := h.r.Abort(); s == nil || s.Kind != Shot {
+		if s := h.r.Abort(TruncatedLost); s == nil || s.Kind != Shot {
 			t.Fatalf("Abort = %+v, want shot", s)
 		}
 	})
 	t.Run("idle", func(t *testing.T) {
 		h := newHarness(t)
 		h.repeat(4, Sample{})
-		if s := h.r.Abort(); s != nil {
+		if s := h.r.Abort(TruncatedLost); s != nil {
 			t.Fatalf("Abort = %+v, want nil", s)
 		}
 	})
@@ -228,7 +228,7 @@ func TestAbort(t *testing.T) {
 		h := newHarness(t)
 		h.feed(Sample{Volume: f(10)})
 		h.feed(Sample{Volume: f(30)}) // open draw, dropped by Abort
-		h.r.Abort()
+		h.r.Abort(TruncatedLost)
 		h.feed(Sample{Volume: f(200)})
 		h.idle(4*time.Second, f(200))
 		h.wantNoWater()
@@ -317,5 +317,16 @@ func TestShotThenFlush(t *testing.T) {
 			}
 			h.wantNoWater()
 		})
+	}
+}
+
+func TestKindTruncated(t *testing.T) {
+	for k, want := range map[Kind]bool{
+		TruncatedLost: true, TruncatedReleased: true, TruncatedShutdown: true, TruncatedCrash: true,
+		Shot: false, Flush: false, Kind(""): false, Kind("truncated"): false,
+	} {
+		if got := k.Truncated(); got != want {
+			t.Errorf("Kind(%q).Truncated() = %v, want %v", k, got, want)
+		}
 	}
 }

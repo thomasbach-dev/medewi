@@ -26,9 +26,24 @@ const (
 	Shot Kind = "shot"
 	// Flush is a run without one.
 	Flush Kind = "flush"
-	// Interrupted is a run cut off by a disconnect or restart.
-	Interrupted Kind = "interrupted"
+	// TruncatedLost is a run cut off because the machine connection dropped.
+	TruncatedLost Kind = "truncated-lost"
+	// TruncatedReleased is a run cut off because the machine was released.
+	TruncatedReleased Kind = "truncated-released"
+	// TruncatedShutdown is a run cut off because the daemon shut down.
+	TruncatedShutdown Kind = "truncated-shutdown"
+	// TruncatedCrash is a run left open by a daemon crash, closed at startup.
+	TruncatedCrash Kind = "truncated-crash"
 )
+
+// Truncated reports whether the run was cut off before it finished.
+func (k Kind) Truncated() bool {
+	switch k {
+	case TruncatedLost, TruncatedReleased, TruncatedShutdown, TruncatedCrash:
+		return true
+	}
+	return false
+}
 
 // Config holds the recorder's timing thresholds.
 type Config struct {
@@ -224,16 +239,16 @@ func (r *Recorder) closeBrew(k Kind) *Summary {
 }
 
 // Abort ends the episode after a disconnect. A brew still pumping closes as
-// Interrupted, a coasting one with its normal kind; nil if none was open. An
+// cut (a truncated kind naming the cause), a coasting one with its normal kind; nil if none was open. An
 // open wand draw is dropped and the remembered Volume is forgotten, so water
 // drawn while disconnected never shows up as a draw.
-func (r *Recorder) Abort() *Summary {
+func (r *Recorder) Abort(cut Kind) *Summary {
 	r.draw = drawState{}
 	r.prev = nil
 	if !r.brew.open {
 		return nil
 	}
-	k := Interrupted
+	k := cut
 	if r.brew.coasting {
 		k = r.brew.normalKind()
 	}

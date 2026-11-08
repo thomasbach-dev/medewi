@@ -122,7 +122,7 @@ func TestCloseDangling(t *testing.T) {
 	for _, b := range brews {
 		switch b.ID {
 		case open:
-			if b.Kind != "interrupted" || b.EndedAt == nil || !b.EndedAt.Equal(start) {
+			if b.Kind != "truncated-crash" || b.EndedAt == nil || !b.EndedAt.Equal(start) {
 				t.Errorf("dangling = %+v", b)
 			}
 		case done:

@@ -172,11 +172,11 @@ func (s *Store) FinishBrew(ctx context.Context, id int64, sum brew.Summary) erro
 	return nil
 }
 
-// CloseDangling marks brews left open by a crash as interrupted and returns
+// CloseDangling marks brews left open by a crash as truncated-crash and returns
 // how many it changed.
 func (s *Store) CloseDangling(ctx context.Context) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE brews SET kind = ?, ended_at = started_at WHERE ended_at IS NULL`, string(brew.Interrupted))
+		`UPDATE brews SET kind = ?, ended_at = started_at WHERE ended_at IS NULL`, string(brew.TruncatedCrash))
 	if err != nil {
 		return 0, err
 	}
