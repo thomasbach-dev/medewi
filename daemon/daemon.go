@@ -224,7 +224,10 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	d.rs = rs
 	d.mu.Unlock()
 	d.met.frags.attach(conn)
-	defer d.disconnected(ctx, conn)
+	// A brew cut off by the connection ending is lost; ctx ending (a clean
+	// shutdown) says otherwise below.
+	cut := brew.TruncatedLost
+	defer func() { d.disconnected(ctx, conn, cut) }()
 
 	rctx, cancel := context.WithTimeout(ctx, readyTimeout)
 	err = leva.WaitReady(rctx, conn, d.cfg.Settle)
@@ -292,6 +295,7 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 			// and leave the machine streaming; the sampler ends with ctx.
 			<-samplerDone
 			d.stopReports(ctx, conn)
+			cut = brew.TruncatedShutdown
 			return true
 		case <-stall.C:
 			slog.Warn("report stream silent; reconnecting", "after", reportStallTimeout)
@@ -362,8 +366,9 @@ func (d *Daemon) stopReports(ctx context.Context, conn *leva.Conn) {
 }
 
 // disconnected closes conn, ends any open episode and resets the state.
-// A pumping brew is stored as truncated, a coasting one with its kind.
-func (d *Daemon) disconnected(ctx context.Context, conn *leva.Conn) {
+// A pumping brew is stored with kind cut (why the session ended), a
+// coasting one with its own kind.
+func (d *Daemon) disconnected(ctx context.Context, conn *leva.Conn, cut brew.Kind) {
 	d.mu.Lock()
 	d.conn, d.st.Connected = nil, false // new requests are refused from here
 	d.rs = nil
@@ -371,7 +376,7 @@ func (d *Daemon) disconnected(ctx context.Context, conn *leva.Conn) {
 	d.mu.Unlock()
 	_ = conn.Close() // aborts a request still running on conn
 	d.met.frags.detach(conn)
-	if sum := d.rec.Abort(brew.TruncatedLost); sum != nil {
+	if sum := d.rec.Abort(cut); sum != nil {
 		d.finish(ctx, *sum)
 	}
 	d.det = watch.NewDetector(d.cfg.Watch)

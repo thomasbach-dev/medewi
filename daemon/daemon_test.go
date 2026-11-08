@@ -237,6 +237,23 @@ func TestDisconnectMidShotTruncatedLost(t *testing.T) {
 	})
 }
 
+func TestShutdownMidShotTruncatedShutdown(t *testing.T) {
+	var pump [][]byte
+	for i := range 20 {
+		pump = append(pump, line('*', "PID", 93, 93, 9, 9, 120, float64(i+1)))
+	}
+	s := startSim(t, simConfig(pump))
+	st := openStore(t)
+	d, stop := runDaemon(t, daemonConfig(s.Addr().String(), st))
+	waitFor(t, "brew open", func() bool { return d.Status().BrewOpen })
+
+	stop()
+	bs := brews(t, st)
+	if len(bs) != 1 || bs[0].Kind != string(brew.TruncatedShutdown) || bs[0].EndedAt == nil {
+		t.Fatalf("brews = %+v, want one truncated-shutdown with EndedAt", bs)
+	}
+}
+
 func TestEventExecRuns(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "events")
 	s := startSim(t, simConfig(idleLines(20)))
