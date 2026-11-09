@@ -78,7 +78,7 @@ func replayFixture(t *testing.T, spec *leva.RecordSpec, name string) (closed []S
 			buf = buf[i+2:]
 		}
 	}
-	if s := r.Abort(); s != nil {
+	if s := r.Abort(TruncatedLost); s != nil {
 		closed = append(closed, *s)
 	}
 	return closed, water

@@ -17,7 +17,8 @@ tooling (`cmd/levacap`), and the always-on daemon `medewid` with its client
 - [Decision records](docs/decisions/)
 - [Phase 1 design](docs/design/2026-11-01-phase1-foundations.md)
 - [Capture-session runbook](docs/runbooks/capture-session.md) (first contact,
-  conformance runs, firmware-flash gate)
+  conformance runs, firmware-flash gate; release the machine from medewid
+  first with `medewictl release`)
 
 ## Configuration
 
@@ -136,8 +137,15 @@ medewictl status
 medewictl power eco            # active | eco | standby
 medewictl mark pre-infusion over
 medewictl backup -out DIR
+medewictl release --until=+1h30min  # free the machine; units h, min, s; default +1h
+medewictl reclaim                   # take it back early
 medewictl -insecure -url http://127.0.0.1:8080 status
 ```
+
+`release` makes medewid give up the machine until the given time (it
+returns once the connection is closed, so `medewictl release && levacap …`
+works); the release survives a daemon restart and ends by itself, or with
+`reclaim`. The ops panel shows it with a Reclaim button.
 
 `backup` reads the controller settings and writes two files into `DIR`:
 `<ts>_<fw>.mcu.txt` and `<ts>_<fw>.mcm.hex`, where `<ts>` looks like

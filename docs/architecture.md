@@ -81,6 +81,19 @@ flowchart LR
    only happens while the app is open. The pure-Go/no-cgo policy exists to
    keep this path (gomobile) open.
 
+## Releasing the machine
+
+The daemon can give the machine up until a given time (`medewictl
+release`, `POST /api/release`) so that another client (a conformance
+run, a firmware flash) gets a clean line. The release end is persisted in
+the database, so it holds across a daemon restart; while it lasts the
+daemon sends nothing, not even at startup or shutdown, and the
+supervision loop does not reconnect. It ends at the stored time or on
+`medewictl reclaim`. A brew open when the connection ends is stored with
+a truncated kind naming the cause (`truncated-lost`, `truncated-released`,
+`truncated-shutdown`, `truncated-crash`). See the
+[design](superpowers/specs/2026-11-08-release-machine-design.md).
+
 ## Phase 2 packages (implemented)
 
 - `watch/` — machine-state detector over the decoded report stream
@@ -94,7 +107,7 @@ flowchart LR
   (`panel.html`, embedded), power control, machine READY (`[READY]`),
   display sampling and marks.
 - `cmd/medewid` — the daemon binary (mTLS API, plaintext health listener).
-- `cmd/medewictl` — client for status, power, marks and backups.
+- `cmd/medewictl` — client for status, power, release/reclaim, marks and backups.
 - `nix/module.nix` — the `nixosModules.medewid` service.
 
 ## Build order

@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"math/big"
 	"net/http"
@@ -370,4 +371,140 @@ func argVal(t *testing.T, args []string, flag string) string {
 	}
 	t.Fatalf("flag %s not in args", flag)
 	return ""
+}
+
+func TestRelease(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want time.Duration
+	}{
+		{"explicit", []string{"release", "-until", "+30min"}, 30 * time.Minute},
+		{"double dash", []string{"release", "--until=+30min"}, 30 * time.Minute},
+		{"default", []string{"release"}, time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotUntil time.Time
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var req struct {
+					Until string `json:"until"`
+				}
+				if r.URL.Path != "/api/release" || r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/json" {
+					t.Errorf("bad request %s %s", r.Method, r.URL.Path)
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Error(err)
+				}
+				var err error
+				if gotUntil, err = time.Parse(time.RFC3339, req.Until); err != nil || !strings.HasSuffix(req.Until, "Z") {
+					t.Errorf("until %q: want UTC RFC 3339 (%v)", req.Until, err)
+				}
+				_, _ = w.Write([]byte(`{"ok":true,"until":"` + req.Until + `","banner":true}`))
+			}))
+			defer srv.Close()
+			before := time.Now()
+			code, stdout, stderr := exec(t, srv, tc.args...)
+			if code != 0 {
+				t.Fatalf("exit %d: %s", code, stderr)
+			}
+			if d := gotUntil.Sub(before.Add(tc.want)); d < -time.Second || d > 2*time.Second {
+				t.Errorf("until %v, want about now+%v", gotUntil, tc.want)
+			}
+			if want := "released until " + gotUntil.Local().Format(time.DateTime) + " (local time)\n"; stdout != want {
+				t.Errorf("stdout %q, want %q", stdout, want)
+			}
+			if strings.Contains(stderr, "warning") {
+				t.Errorf("unexpected warning: %q", stderr)
+			}
+		})
+	}
+}
+
+func TestReleaseBannerWarning(t *testing.T) {
+	for banner, wantWarn := range map[string]bool{"false": true, "null": false} {
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"ok":true,"until":"2030-01-01T00:00:00Z","banner":` + banner + `}`))
+		}))
+		code, _, stderr := exec(t, srv, "release")
+		srv.Close()
+		if code != 0 || strings.Contains(stderr, "warning") != wantWarn {
+			t.Errorf("banner %s: exit %d stderr %q, want warning=%t", banner, code, stderr, wantWarn)
+		}
+	}
+}
+
+func TestReleaseFailure(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"ok":false,"error":"store write failed"}`))
+	}))
+	defer srv.Close()
+	code, _, stderr := exec(t, srv, "release")
+	if code != 1 || !strings.Contains(stderr, "store write failed") {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+}
+
+func TestReleaseBadUntilSendsNothing(t *testing.T) {
+	called := false
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	defer srv.Close()
+	for _, a := range []string{"30min", "+0s", "-5min", "+6000000h"} {
+		if code, _, _ := exec(t, srv, "release", "-until", a); code != 2 {
+			t.Errorf("-until %s: exit %d, want 2", a, code)
+		}
+	}
+	if code, _, _ := exec(t, srv, "release", "extra"); code != 2 {
+		t.Errorf("extra arg: exit %d, want 2", code)
+	}
+	if called {
+		t.Error("request sent despite usage error")
+	}
+}
+
+func TestReclaim(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b := new(bytes.Buffer)
+		_, _ = b.ReadFrom(r.Body)
+		if r.URL.Path != "/api/reclaim" || r.Header.Get("Content-Type") != "application/json" || b.String() != `{}` {
+			t.Errorf("bad request %s %q %q", r.URL.Path, r.Header.Get("Content-Type"), b)
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	code, stdout, stderr := exec(t, srv, "reclaim")
+	if code != 0 || stdout != "reclaimed\n" {
+		t.Fatalf("exit %d out %q err %q", code, stdout, stderr)
+	}
+	if code, _, _ := exec(t, srv, "reclaim", "now"); code != 2 {
+		t.Errorf("extra arg: exit %d, want 2", code)
+	}
+}
+
+func TestReclaimFailure(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"ok":false,"error":"store write failed"}`))
+	}))
+	defer srv.Close()
+	code, _, stderr := exec(t, srv, "reclaim")
+	if code != 1 || !strings.Contains(stderr, "store write failed") {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+}
+
+func TestStatusReleasedUntil(t *testing.T) {
+	for _, tc := range []struct{ json, want string }{
+		{`"2030-01-02T03:04:05Z"`, "released_until: " + time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC).Local().Format(time.DateTime) + "\n"},
+		{`null`, "released_until: none\n"},
+	} {
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"connected":false,"released_until":` + tc.json + `}`))
+		}))
+		code, stdout, stderr := exec(t, srv, "status")
+		srv.Close()
+		if code != 0 || !strings.Contains(stdout, tc.want) {
+			t.Errorf("%s: exit %d out %q err %q", tc.json, code, stdout, stderr)
+		}
+	}
 }

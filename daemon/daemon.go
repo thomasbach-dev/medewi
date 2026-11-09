@@ -5,7 +5,10 @@
 // runs power changes, settings dumps and display samples on the same
 // connection. The machine's "[READY]" notice sets MachineReady. With
 // Config.Raw set, each connection's raw traffic goes to a rawlog session
-// (dump replies are never logged), where marks are noted too.
+// (dump replies are never logged), where marks are noted too. Release
+// gives the machine up until a time or a Reclaim: while released the daemon
+// sends nothing and does not dial; the release is persisted in the store and
+// survives restarts.
 //
 // The only strings it sends are the handshake and stream commands "MC?",
 // "MCr" and "MC ", the display mirror "MC@", the dumps "MCu" and "MCm", and
@@ -15,6 +18,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -69,6 +73,10 @@ var (
 // global). A variable so tests can shrink it.
 var reportStallTimeout = 10 * time.Second
 
+// sessionEnding runs as a session's end is derived; tests land a release
+// there.
+var sessionEnding = func() {}
+
 // Config configures a Daemon. Zero durations and zero Brew/Watch configs
 // select the defaults.
 type Config struct {
@@ -98,10 +106,16 @@ type Config struct {
 type Daemon struct {
 	cfg Config
 
-	mu   sync.RWMutex // guards st, conn and rs
+	mu   sync.RWMutex // guards st, conn, rs and sess
 	st   Status
 	conn *leva.Conn      // set while st.Connected; the worker's connection
 	rs   *rawlog.Session // the current session's raw log, for marks; nil if none
+	sess *sessionHandle  // the running session, from before Dial to its end; nil if none
+
+	wake chan struct{} // buffer 1: a release or reclaim nudges the reconnect loop
+	// releaseMu serialises each release store access with its state update
+	// (Release, Reclaim, Run's startup read), so the two never diverge.
+	releaseMu sync.Mutex
 
 	reqs       chan request  // to the command worker
 	workerDone chan struct{} // closed when the worker has exited
@@ -143,6 +157,7 @@ func New(cfg Config) *Daemon {
 		cfg:        cfg,
 		st:         Status{Power: PowerUnknown},
 		reqs:       make(chan request),
+		wake:       make(chan struct{}, 1),
 		workerDone: make(chan struct{}),
 		det:        watch.NewDetector(cfg.Watch),
 		rec:        brew.NewRecorder(cfg.Brew),
@@ -150,36 +165,58 @@ func New(cfg Config) *Daemon {
 	}
 }
 
-// Run closes brews left open by a crash, then connects and reconnects until
-// ctx is done. Before returning it stops the report stream (bounded by 2 s),
+// Run closes brews left open by a crash, reads the persisted release, then
+// connects and reconnects until ctx is done, waiting out any release before
+// each dial. Before returning it stops the report stream (bounded by 2 s),
 // closes the connection, stores any brew Recorder.Abort returns and waits
-// for running event hooks. Store errors are logged, never fatal; Run only
-// fails on a config without Spec or Store.
+// for running event hooks. Store errors are logged, never fatal, with one
+// exception: Run fails when it cannot read the release (it never dials
+// while the release state is unknown), and on a config without Spec or
+// Store.
 func (d *Daemon) Run(ctx context.Context) error {
 	if d.cfg.Spec == nil || d.cfg.Store == nil {
 		close(d.workerDone) // requests fail instead of waiting for a worker
 		return errors.New("daemon: Config.Spec and Config.Store are required")
 	}
 	defer d.hooks.Wait()
-	go d.worker(ctx)
-	defer func() { <-d.workerDone }()
 
 	sctx, cancel := storeCtx(ctx)
 	if n, err := d.cfg.Store.CloseDangling(sctx); err != nil {
 		slog.Error("closing dangling brews", "err", err)
 	} else if n > 0 {
-		slog.Warn("marked brews left open by a crash as interrupted", "count", n)
+		slog.Warn("marked brews left open by a crash as truncated-crash", "count", n)
 	}
+	d.releaseMu.Lock()
+	until, released, err := d.cfg.Store.Release(sctx)
 	cancel()
+	if err != nil {
+		d.releaseMu.Unlock()
+		close(d.workerDone)
+		return fmt.Errorf("daemon: reading the machine release: %w", err)
+	}
+	if released && until.After(time.Now()) {
+		slog.Info("machine released", "until", until.Local().Format(time.DateTime))
+		d.update(func(s *Status) { s.ReleasedUntil = &until })
+	}
+	d.releaseMu.Unlock()
+	go d.worker(ctx)
+	defer func() { <-d.workerDone }()
 	d.refreshLastBrew(ctx)
 	d.checkFields()
 
 	backoff := d.cfg.BackoffMin
 	for {
+		waited, ok := d.waitReleased(ctx)
+		if !ok {
+			return nil
+		}
+		if waited {
+			backoff = d.cfg.BackoffMin
+		}
 		if d.session(ctx) {
 			backoff = d.cfg.BackoffMin
 		}
-		if !sleepCtx(ctx, backoff) {
+		if !d.sleepWake(ctx, backoff) {
 			return nil
 		}
 		backoff = min(backoff*2, d.cfg.BackoffMax)
@@ -200,14 +237,37 @@ func (d *Daemon) checkFields() {
 }
 
 // session runs one connection from Dial to its end. It reports whether
-// StartReports succeeded, which resets the reconnect backoff.
+// StartReports succeeded, which resets the reconnect backoff. It does not
+// start while released; a Release ends it through sctx's cancel cause
+// (errReleased), and then it sends nothing unless reports had started, in
+// which case it sends "MC " and checks for the idle banner.
 func (d *Daemon) session(ctx context.Context) (started bool) {
+	sctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	h := &sessionHandle{cancel: cancel, done: make(chan struct{})}
+	d.mu.Lock()
+	if d.releasedNow() {
+		d.mu.Unlock()
+		return false
+	}
+	d.sess = h
+	d.mu.Unlock()
+	// Deferred first, so it runs last: Release returns once everything below
+	// has finished.
+	defer func() {
+		d.mu.Lock()
+		d.sess = nil
+		d.mu.Unlock()
+		close(h.done)
+	}()
+	released := func() bool { return errors.Is(context.Cause(sctx), errReleased) }
+
 	if d.attempts++; d.attempts > 1 {
 		d.met.reconnects.Inc()
 	}
-	conn, err := leva.Dial(ctx, d.cfg.Addr)
+	conn, err := leva.Dial(sctx, d.cfg.Addr)
 	if err != nil {
-		if ctx.Err() == nil {
+		if sctx.Err() == nil {
 			slog.Info("dial failed", "addr", d.cfg.Addr, "err", err)
 		}
 		return false
@@ -215,6 +275,7 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	// Deferred in reverse: disconnected (and its conn.Close) runs first, the
 	// tap is removed next, the raw session closes last. The final "MC " is
 	// sent in the loop body before any of them runs, so it is logged.
+	reporting := false // set once StartReports succeeded
 	rs := d.cfg.Raw.Session()
 	defer rs.Close()
 	if d.cfg.Raw != nil {
@@ -224,19 +285,38 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	d.rs = rs
 	d.mu.Unlock()
 	d.met.frags.attach(conn)
-	defer d.disconnected(ctx, conn)
+	// A brew cut off by the connection ending is lost, unless a release or a
+	// clean shutdown ended the session. Derived at the end, so a shutdown
+	// racing a lost connection still counts as a shutdown.
+	defer func() {
+		sessionEnding()
+		cut := brew.TruncatedLost
+		switch {
+		case released():
+			cut = brew.TruncatedReleased
+			if h.banner == nil { // no banner check ran
+				// Before the reports nothing was sent and the banners
+				// tell; after them no "MC " went out, so none is claimed.
+				b := !reporting && conn.Banners() > 0
+				h.banner = &b
+			}
+		case ctx.Err() != nil:
+			cut = brew.TruncatedShutdown
+		}
+		d.disconnected(ctx, conn, cut)
+	}()
 
-	rctx, cancel := context.WithTimeout(ctx, readyTimeout)
+	rctx, rcancel := context.WithTimeout(sctx, readyTimeout)
 	err = leva.WaitReady(rctx, conn, d.cfg.Settle)
-	cancel()
+	rcancel()
 	switch {
-	case ctx.Err() != nil:
+	case sctx.Err() != nil: // released or shut down: nothing sent yet
 		return false
 	case errors.Is(err, context.DeadlineExceeded):
 		// Banners are silent while reporting: the stream may still be on
 		// from a daemon killed without "MC ".
 		slog.Warn("machine not ready; stopping a possibly running stream and reconnecting")
-		d.stopReports(ctx, conn)
+		d.stopReports(sctx, conn)
 		return false
 	case err != nil:
 		slog.Warn("connection lost before ready", "err", err)
@@ -249,7 +329,7 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	d.mu.Unlock()
 	slog.Info("connected", "addr", d.cfg.Addr, "firmware", fw)
 
-	name, ok := d.xmlName(ctx, conn)
+	name, ok := d.xmlName(sctx, conn)
 	if !ok {
 		return false
 	}
@@ -257,26 +337,27 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 		slog.Error("machine XML does not match the loaded spec; not starting reports",
 			"machine", name, "spec", d.cfg.SpecName)
 		d.met.specMismatch.Set(1)
-		d.holdUntilEnd(ctx, conn)
+		d.holdUntilEnd(sctx, conn)
 		return false
 	}
 	d.update(func(s *Status) { s.SpecOK = true })
 
-	reports, err := conn.StartReports(ctx)
+	reports, err := conn.StartReports(sctx)
 	if err != nil {
-		if ctx.Err() == nil {
+		if sctx.Err() == nil {
 			slog.Warn("starting reports failed", "err", err)
 		}
 		return false
 	}
+	reporting = true
 	slog.Info("reports started")
 	samplerDone := make(chan struct{})
 	if d.cfg.DisplayEvery > 0 {
-		sctx, cancel := context.WithCancel(ctx)
-		defer cancel()
+		dctx, dcancel := context.WithCancel(sctx)
+		defer dcancel()
 		go func() {
 			defer close(samplerDone)
-			d.sampleDisplay(sctx, conn)
+			d.sampleDisplay(dctx, conn)
 		}()
 	} else {
 		close(samplerDone)
@@ -287,11 +368,16 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	notices, frames := conn.Notices(), conn.DisplayFrames()
 	for {
 		select {
-		case <-ctx.Done():
+		case <-sctx.Done():
 			// A sample still in flight could send MC@ or MCr after "MC "
-			// and leave the machine streaming; the sampler ends with ctx.
+			// and leave the machine streaming; the sampler ends with sctx.
 			<-samplerDone
-			d.stopReports(ctx, conn)
+			if released() {
+				b := d.stopForRelease(ctx, conn)
+				h.banner = &b
+			} else {
+				d.stopReports(sctx, conn)
+			}
 			return true
 		case <-stall.C:
 			slog.Warn("report stream silent; reconnecting", "after", reportStallTimeout)
@@ -301,7 +387,7 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 				slog.Warn("connection lost", "err", conn.Err())
 				return true
 			}
-			d.handle(ctx, line)
+			d.handle(ctx, line) // ctx, not sctx: a release must not kill event hooks
 			stall.Reset(reportStallTimeout)
 		case n, ok := <-notices:
 			if !ok {
@@ -362,8 +448,9 @@ func (d *Daemon) stopReports(ctx context.Context, conn *leva.Conn) {
 }
 
 // disconnected closes conn, ends any open episode and resets the state.
-// A pumping brew is stored as interrupted, a coasting one with its kind.
-func (d *Daemon) disconnected(ctx context.Context, conn *leva.Conn) {
+// A pumping brew is stored with kind cut (why the session ended), a
+// coasting one with its own kind.
+func (d *Daemon) disconnected(ctx context.Context, conn *leva.Conn, cut brew.Kind) {
 	d.mu.Lock()
 	d.conn, d.st.Connected = nil, false // new requests are refused from here
 	d.rs = nil
@@ -371,11 +458,13 @@ func (d *Daemon) disconnected(ctx context.Context, conn *leva.Conn) {
 	d.mu.Unlock()
 	_ = conn.Close() // aborts a request still running on conn
 	d.met.frags.detach(conn)
-	if sum := d.rec.Abort(); sum != nil {
+	if sum := d.rec.Abort(cut); sum != nil {
 		d.finish(ctx, *sum)
 	}
 	d.det = watch.NewDetector(d.cfg.Watch)
-	d.update(func(s *Status) { *s = Status{Power: PowerUnknown, LastBrew: s.LastBrew} })
+	d.update(func(s *Status) {
+		*s = Status{Power: PowerUnknown, LastBrew: s.LastBrew, ReleasedUntil: s.ReleasedUntil}
+	})
 }
 
 // handle processes one report line (CR+LF stripped).

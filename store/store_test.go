@@ -122,7 +122,7 @@ func TestCloseDangling(t *testing.T) {
 	for _, b := range brews {
 		switch b.ID {
 		case open:
-			if b.Kind != "interrupted" || b.EndedAt == nil || !b.EndedAt.Equal(start) {
+			if b.Kind != "truncated-crash" || b.EndedAt == nil || !b.EndedAt.Equal(start) {
 				t.Errorf("dangling = %+v", b)
 			}
 		case done:
@@ -231,5 +231,95 @@ func TestTimestampsSortAsText(t *testing.T) {
 	}
 	if len(got) != 2 || !got[0].StartedAt.Equal(base.Add(500*time.Millisecond)) || !got[1].StartedAt.Equal(base) {
 		t.Errorf("round trip = %+v", got)
+	}
+}
+
+func TestMigrateV1(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "brews.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		schemaV1,
+		`INSERT INTO schema_version VALUES (1)`,
+		`INSERT INTO brews (id, started_at, ended_at, kind) VALUES (1, '2026-01-01T00:00:00.000000000Z', '2026-01-01T00:00:01.000000000Z', 'interrupted')`,
+		`INSERT INTO brews (id, started_at, ended_at, kind) VALUES (2, '2026-01-02T00:00:00.000000000Z', '2026-01-02T00:00:01.000000000Z', 'shot')`,
+		`INSERT INTO brew_points (brew_id, seq, t_ms) VALUES (1, 0, 0), (1, 1, 250), (2, 0, 0)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = db.Close()
+
+	for range 2 { // the second Open checks idempotence
+		s, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := context.Background()
+		brews, err := s.Brews(ctx, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(brews) != 1 || brews[0].ID != 2 {
+			t.Fatalf("Brews = %+v, want only brew 2", brews)
+		}
+		if _, err := s.Points(ctx, 1); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("Points(1) err = %v, want ErrNotFound", err)
+		}
+		if pts, err := s.Points(ctx, 2); err != nil || len(pts) != 1 {
+			t.Fatalf("Points(2) = %v, %v; want 1 point", pts, err)
+		}
+		var v int
+		if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_version`).Scan(&v); err != nil || v != 2 {
+			t.Fatalf("version = %d, %v; want 2", v, err)
+		}
+		if _, ok, err := s.Release(ctx); err != nil || ok {
+			t.Fatalf("Release = ok %v, %v; want none", ok, err)
+		}
+		_ = s.Close()
+	}
+}
+
+func TestReleaseRoundTrip(t *testing.T) {
+	s, path := openTemp(t)
+	ctx := context.Background()
+	if _, ok, err := s.Release(ctx); err != nil || ok {
+		t.Fatalf("fresh Release = ok %v, %v; want none", ok, err)
+	}
+	t1 := time.Date(2026, 11, 8, 12, 0, 0, 123456789, time.UTC)
+	t2 := t1.Add(time.Hour)
+	if err := s.SetRelease(ctx, t1); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := s.Release(ctx); err != nil || !ok || !got.Equal(t1) || got.Location() != time.UTC {
+		t.Fatalf("Release = %v, %v, %v; want %v", got, ok, err, t1)
+	}
+	if err := s.SetRelease(ctx, t2.In(time.FixedZone("x", 3600))); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := s.Release(ctx); err != nil || !ok || !got.Equal(t2) {
+		t.Fatalf("Release after replace = %v, %v, %v; want %v", got, ok, err, t2)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	if got, ok, err := s.Release(ctx); err != nil || !ok || !got.Equal(t2) {
+		t.Fatalf("Release after reopen = %v, %v, %v; want %v", got, ok, err, t2)
+	}
+	for range 2 {
+		if err := s.ClearRelease(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok, err := s.Release(ctx); err != nil || ok {
+			t.Fatalf("Release after clear = ok %v, %v", ok, err)
+		}
 	}
 }

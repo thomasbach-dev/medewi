@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -65,13 +66,13 @@ func TestAPIStatus(t *testing.T) {
 		t.Fatalf("code = %d", rec.Code)
 	}
 	m := decode[map[string]any](t, rec)
-	for _, k := range []string{"connected", "spec_ok", "ready", "machine_ready", "brew_open", "power", "firmware", "temp", "setpoint", "last_brew", "display"} {
+	for _, k := range []string{"connected", "spec_ok", "ready", "machine_ready", "brew_open", "power", "firmware", "temp", "setpoint", "last_brew", "display", "released_until"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("status lacks key %q: %v", k, m)
 		}
 	}
-	if len(m) != 11 {
-		t.Errorf("status has %d keys, want 11: %v", len(m), m)
+	if len(m) != 12 {
+		t.Errorf("status has %d keys, want 12: %v", len(m), m)
 	}
 	if m["power"] != "active" || m["connected"] != true || m["spec_ok"] != true {
 		t.Errorf("status = %v", m)
@@ -230,6 +231,8 @@ func TestAPIMethodRestrictions(t *testing.T) {
 	_, h, _ := apiSetup(t, simConfig(idleLines(20)))
 	for _, tc := range [][2]string{
 		{"GET", "/api/power"},
+		{"GET", "/api/release"},
+		{"GET", "/api/reclaim"},
 		{"POST", "/api/status"},
 		{"POST", "/api/brews"},
 		{"POST", "/api/backup/mcm"},
@@ -436,5 +439,154 @@ func TestAPIMiscRoutes(t *testing.T) {
 	}
 	if strings.Contains(body, "http://") || strings.Contains(body, "https://") {
 		t.Error("panel references an external resource")
+	}
+}
+
+func TestPanelHasReclaim(t *testing.T) {
+	_, h, _ := apiSetup(t, powerSim(idleLines(20)))
+	body := apiDo(t, h, "GET", "/", "").Body.String()
+	for _, want := range []string{`id="reclaim"`, "/api/reclaim", "released_until", `"Machine released until "`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("panel lacks %q", want)
+		}
+	}
+	if strings.Contains(body, "/api/release\"") {
+		t.Error("panel must not offer a release button")
+	}
+}
+
+func TestAPIRelease(t *testing.T) {
+	_, h, _ := apiSetup(t, powerSim(idleLines(20)))
+	until := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	rec := apiDo(t, h, "POST", "/api/release", `{"until":"`+until.Format(time.RFC3339)+`"}`)
+	if rec.Code != 200 {
+		t.Fatalf("code = %d, body %s", rec.Code, rec.Body)
+	}
+	m := decode[map[string]any](t, rec)
+	if m["ok"] != true || m["banner"] != true {
+		t.Errorf("body = %v", m)
+	}
+	if got, _ := time.Parse(time.RFC3339, m["until"].(string)); !got.Equal(until) {
+		t.Errorf("until = %v, want %v", m["until"], until)
+	}
+	st := decode[map[string]any](t, apiDo(t, h, "GET", "/api/status", ""))
+	if st["released_until"] == nil || st["connected"] != false {
+		t.Errorf("status = %v", st)
+	}
+	rec = apiDo(t, h, "POST", "/api/power", `{"state":"eco"}`)
+	if rec.Code != 409 || !strings.Contains(rec.Body.String(), "released until") {
+		t.Errorf("power: code = %d, body %s", rec.Code, rec.Body)
+	}
+	if rec := apiDo(t, h, "GET", "/api/backup/mcu", ""); rec.Code != 409 {
+		t.Errorf("backup code = %d", rec.Code)
+	}
+	rec = apiDo(t, h, "POST", "/api/reclaim", `{}`)
+	if rec.Code != 200 || decode[map[string]any](t, rec)["ok"] != true {
+		t.Fatalf("reclaim: code = %d, body %s", rec.Code, rec.Body)
+	}
+	if st := decode[map[string]any](t, apiDo(t, h, "GET", "/api/status", "")); st["released_until"] != nil {
+		t.Errorf("released_until = %v after reclaim", st["released_until"])
+	}
+}
+
+func TestAPIReleaseBadInput(t *testing.T) {
+	_, h, _ := apiSetup(t, powerSim(idleLines(20)))
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	for name, body := range map[string]string{
+		"missing until": `{}`,
+		"past":          `{"until":"` + past + `"}`,
+		"not a time":    `{"until":"tomorrow"}`,
+	} {
+		if rec := apiDo(t, h, "POST", "/api/release", body); rec.Code != 400 {
+			t.Errorf("%s: code = %d, want 400 (%s)", name, rec.Code, rec.Body)
+		}
+	}
+	for _, path := range []string{"/api/release", "/api/reclaim"} {
+		body := `{}`
+		if rec := apiDoHeaders(t, h, "POST", path, body, nil); rec.Code != 415 {
+			t.Errorf("%s no content type: code = %d, want 415", path, rec.Code)
+		}
+		hdr := map[string]string{"Content-Type": "application/json", "Sec-Fetch-Site": "cross-site"}
+		if rec := apiDoHeaders(t, h, "POST", path, body, hdr); rec.Code != 403 {
+			t.Errorf("%s cross-origin: code = %d, want 403", path, rec.Code)
+		}
+	}
+	if st := decode[map[string]any](t, apiDo(t, h, "GET", "/api/status", "")); st["released_until"] != nil {
+		t.Errorf("released after bad input: %v", st)
+	}
+}
+
+func TestAPIReleaseStoreError(t *testing.T) {
+	s := startSim(t, powerSim(idleLines(20)))
+	st := openStore(t)
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), st))
+	waitActive(t, d)
+	h := NewHandler(d, nil)
+	_ = st.Close()
+	until := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	rec := apiDo(t, h, "POST", "/api/release", `{"until":"`+until+`"}`)
+	if rec.Code != 500 {
+		t.Fatalf("code = %d, body %s", rec.Code, rec.Body)
+	}
+	if got := decode[map[string]any](t, rec)["error"]; got != ErrReleaseStore.Error() {
+		t.Errorf("error = %v, want %q", got, ErrReleaseStore)
+	}
+	if got := d.Status(); got.ReleasedUntil != nil || !got.Connected {
+		t.Errorf("after a failed release: released_until = %v, connected = %v", got.ReleasedUntil, got.Connected)
+	}
+}
+
+// A store write that runs into its deadline is a store failure (500), not
+// a client that went away.
+func TestAPIReleaseStoreTimeout(t *testing.T) {
+	d, h, _ := apiSetup(t, powerSim(idleLines(20)))
+	shrink(t, &releaseStoreWrite, func(context.Context, func(context.Context) error) error {
+		return fmt.Errorf("sqlite: %w", context.DeadlineExceeded)
+	})
+	until := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	rec := apiDo(t, h, "POST", "/api/release", `{"until":"`+until+`"}`)
+	if rec.Code != 500 {
+		t.Fatalf("code = %d, body %q", rec.Code, rec.Body)
+	}
+	if got := decode[map[string]any](t, rec)["error"]; got != ErrReleaseStore.Error() {
+		t.Errorf("error = %v, want %q", got, ErrReleaseStore)
+	}
+	if got := d.Status(); got.ReleasedUntil != nil || !got.Connected {
+		t.Errorf("after a failed release: released_until = %v, connected = %v", got.ReleasedUntil, got.Connected)
+	}
+}
+
+func TestAPIReclaimNothingReleased(t *testing.T) {
+	d, h, _ := apiSetup(t, powerSim(idleLines(20)))
+	rec := apiDo(t, h, "POST", "/api/reclaim", `{}`)
+	if rec.Code != 200 || decode[map[string]any](t, rec)["ok"] != true {
+		t.Fatalf("code = %d, body %s", rec.Code, rec.Body)
+	}
+	if got := d.Status(); got.ReleasedUntil != nil || !got.Connected {
+		t.Errorf("released_until = %v, connected = %v", got.ReleasedUntil, got.Connected)
+	}
+}
+
+func TestAPIReclaimStoreError(t *testing.T) {
+	shrinkBannerTimeout(t)
+	s := startSim(t, powerSim(idleLines(20)))
+	st := openStore(t)
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), st))
+	waitActive(t, d)
+	h := NewHandler(d, nil)
+	until := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	if rec := apiDo(t, h, "POST", "/api/release", `{"until":"`+until+`"}`); rec.Code != 200 {
+		t.Fatalf("release: code = %d, body %s", rec.Code, rec.Body)
+	}
+	_ = st.Close()
+	rec := apiDo(t, h, "POST", "/api/reclaim", `{}`)
+	if rec.Code != 500 {
+		t.Fatalf("code = %d, body %s", rec.Code, rec.Body)
+	}
+	if got := decode[map[string]any](t, rec)["error"]; got != ErrReleaseStore.Error() {
+		t.Errorf("error = %v, want %q", got, ErrReleaseStore)
+	}
+	if got := d.Status(); got.ReleasedUntil == nil || got.Connected {
+		t.Errorf("after a failed reclaim: released_until = %v, connected = %v", got.ReleasedUntil, got.Connected)
 	}
 }

@@ -17,7 +17,7 @@ import (
 // ErrNotFound is returned for an unknown brew id.
 var ErrNotFound = errors.New("store: not found")
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 const schemaV1 = `
 CREATE TABLE IF NOT EXISTS brews (
@@ -42,6 +42,14 @@ CREATE TABLE IF NOT EXISTS brew_points (
 	PRIMARY KEY(brew_id, seq)
 );
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
+`
+
+// schemaV2 adds the single-row table holding the machine release end time.
+const schemaV2 = `
+CREATE TABLE IF NOT EXISTS machine_release (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	until TEXT NOT NULL
+);
 `
 
 // Store is the brew database.
@@ -97,8 +105,24 @@ func (s *Store) migrate() error {
 	}
 	switch {
 	case !version.Valid:
+		if _, err := tx.Exec(schemaV2); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, schemaVersion); err != nil {
 			return err
+		}
+	case version.Int64 == 1:
+		// Irreversible: brews of the removed kind "interrupted" are deleted
+		// with their curves.
+		for _, q := range []string{
+			`DELETE FROM brew_points WHERE brew_id IN (SELECT id FROM brews WHERE kind = 'interrupted')`,
+			`DELETE FROM brews WHERE kind = 'interrupted'`,
+			schemaV2,
+			`UPDATE schema_version SET version = 2`,
+		} {
+			if _, err := tx.Exec(q); err != nil {
+				return err
+			}
 		}
 	case version.Int64 != schemaVersion:
 		return fmt.Errorf("store: unsupported schema version %d (want %d)", version.Int64, schemaVersion)
@@ -172,15 +196,46 @@ func (s *Store) FinishBrew(ctx context.Context, id int64, sum brew.Summary) erro
 	return nil
 }
 
-// CloseDangling marks brews left open by a crash as interrupted and returns
+// CloseDangling marks brews left open by a crash as truncated-crash and returns
 // how many it changed.
 func (s *Store) CloseDangling(ctx context.Context) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE brews SET kind = ?, ended_at = started_at WHERE ended_at IS NULL`, string(brew.Interrupted))
+		`UPDATE brews SET kind = ?, ended_at = started_at WHERE ended_at IS NULL`, string(brew.TruncatedCrash))
 	if err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// Release returns the persisted end of a machine release; ok is false if
+// there is none. An expired end time is returned as stored.
+func (s *Store) Release(ctx context.Context) (until time.Time, ok bool, err error) {
+	var text string
+	err = s.db.QueryRowContext(ctx, `SELECT until FROM machine_release WHERE id = 1`).Scan(&text)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	until, err = time.Parse(time.RFC3339Nano, text)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	return until.UTC(), true, nil
+}
+
+// SetRelease persists the end of a machine release, replacing any earlier one.
+func (s *Store) SetRelease(ctx context.Context, until time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO machine_release (id, until) VALUES (1, ?)
+		ON CONFLICT(id) DO UPDATE SET until = excluded.until`, ts(until))
+	return err
+}
+
+// ClearRelease removes the persisted release; it is not an error if none exists.
+func (s *Store) ClearRelease(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM machine_release WHERE id = 1`)
+	return err
 }
 
 // Brews returns up to limit brews, newest first.

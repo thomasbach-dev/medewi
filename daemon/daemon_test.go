@@ -204,7 +204,7 @@ func TestReadyDropsInStandby(t *testing.T) {
 	}
 }
 
-func TestDisconnectMidShotInterrupted(t *testing.T) {
+func TestDisconnectMidShotTruncatedLost(t *testing.T) {
 	var pump [][]byte
 	for i := range 20 {
 		pump = append(pump, line('*', "PID", 93, 93, 9, 9, 120, float64(i+1)))
@@ -219,9 +219,9 @@ func TestDisconnectMidShotInterrupted(t *testing.T) {
 	if err := s.Stop(); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "interrupted brew stored", func() bool {
+	waitFor(t, "truncated brew stored", func() bool {
 		bs := brews(t, st)
-		return len(bs) == 1 && bs[0].Kind == string(brew.Interrupted) && bs[0].EndedAt != nil
+		return len(bs) == 1 && bs[0].Kind == string(brew.TruncatedLost) && bs[0].EndedAt != nil
 	})
 	waitFor(t, "disconnected", func() bool {
 		st := d.Status()
@@ -235,6 +235,23 @@ func TestDisconnectMidShotInterrupted(t *testing.T) {
 		st := d.Status()
 		return st.Connected && st.SpecOK && st.Power == PowerActive
 	})
+}
+
+func TestShutdownMidShotTruncatedShutdown(t *testing.T) {
+	var pump [][]byte
+	for i := range 20 {
+		pump = append(pump, line('*', "PID", 93, 93, 9, 9, 120, float64(i+1)))
+	}
+	s := startSim(t, simConfig(pump))
+	st := openStore(t)
+	d, stop := runDaemon(t, daemonConfig(s.Addr().String(), st))
+	waitFor(t, "brew open", func() bool { return d.Status().BrewOpen })
+
+	stop()
+	bs := brews(t, st)
+	if len(bs) != 1 || bs[0].Kind != string(brew.TruncatedShutdown) || bs[0].EndedAt == nil {
+		t.Fatalf("brews = %+v, want one truncated-shutdown with EndedAt", bs)
+	}
 }
 
 func TestEventExecRuns(t *testing.T) {
@@ -259,17 +276,17 @@ func TestDanglingClosedAtStartup(t *testing.T) {
 	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), st))
 	waitFor(t, "dangling brew closed", func() bool {
 		bs := brews(t, st)
-		return len(bs) == 1 && bs[0].Kind == string(brew.Interrupted)
+		return len(bs) == 1 && bs[0].Kind == string(brew.TruncatedCrash)
 	})
 	waitFor(t, "LastBrew loaded", func() bool {
 		lb := d.Status().LastBrew
-		return lb != nil && lb.ID == id && lb.Kind == string(brew.Interrupted)
+		return lb != nil && lb.ID == id && lb.Kind == string(brew.TruncatedCrash)
 	})
 }
 
 // TestStalledStreamReconnects: another client's "MC " stops the global
 // stream while TCP stays healthy. The daemon must notice the silence,
-// store the open brew as interrupted and reconnect.
+// store the open brew as truncated and reconnect.
 func TestStalledStreamReconnects(t *testing.T) {
 	old := reportStallTimeout
 	reportStallTimeout = 300 * time.Millisecond
@@ -297,9 +314,9 @@ func TestStalledStreamReconnects(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "disconnected", func() bool { return !d.Status().Connected })
-	waitFor(t, "interrupted brew stored", func() bool {
+	waitFor(t, "truncated brew stored", func() bool {
 		bs := brews(t, st)
-		return len(bs) >= 1 && bs[0].Kind == string(brew.Interrupted) && bs[0].EndedAt != nil
+		return len(bs) >= 1 && bs[0].Kind == string(brew.TruncatedLost) && bs[0].EndedAt != nil
 	})
 	waitFor(t, "reconnected with reports restarted", func() bool {
 		st := d.Status()

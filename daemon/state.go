@@ -51,6 +51,9 @@ type Status struct {
 	Setpoint     *float64
 	LastBrew     *store.Brew      // most recent stored brew
 	Display      *DisplaySnapshot // latest sampled LCD; nil without sampling
+	// ReleasedUntil is the end of a release (see Daemon.Release); nil when
+	// not released or the release has run out.
+	ReleasedUntil *time.Time
 }
 
 // DisplaySnapshot is the LCD content of the latest sampled frame.
@@ -77,6 +80,13 @@ func (d *Daemon) Status() Status {
 	if s.Display != nil {
 		ds := *s.Display
 		s.Display = &ds
+	}
+	if r := s.ReleasedUntil; r != nil {
+		s.ReleasedUntil = nil
+		if r.After(time.Now()) { // run out: the reconnect loop clears it soon
+			u := *r
+			s.ReleasedUntil = &u
+		}
 	}
 	return s
 }

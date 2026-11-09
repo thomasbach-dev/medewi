@@ -22,6 +22,7 @@ type metrics struct {
 	lines, decodeErrors, reconnects   prometheus.Counter
 	fragments                         prometheus.CounterFunc
 	frags                             fragmentCount
+	releasedUntil                     prometheus.Gauge
 }
 
 // fragmenter is the part of *leva.Conn the fragment count reads.
@@ -83,13 +84,15 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 		}, []string{"state"}),
 		shots:        c("medewi_shots_total", "Completed shots."),
 		flushes:      c("medewi_flushes_total", "Completed flushes."),
-		pumpSeconds:  c("medewi_pump_seconds_total", "Seconds of finished brews, interrupted ones included."),
+		pumpSeconds:  c("medewi_pump_seconds_total", "Seconds of finished brews, truncated ones included."),
 		volumeLiters: c("medewi_volume_liters_total", "Liters of finished brews and wand draws."),
 		waterDraws:   c("medewi_water_draws_total", "Wand water draws."),
 		waterL:       c("medewi_water_liters_total", "Liters drawn at the wand."),
 		lines:        c("medewi_report_lines_total", "Report lines received."),
 		decodeErrors: c("medewi_decode_errors_total", "Report lines skipped (checksum or decode error)."),
 		reconnects:   c("medewi_reconnects_total", "Connection attempts after the first, failed ones included."),
+		releasedUntil: g("medewi_machine_released_until_seconds",
+			"Unix time the machine release ends; 0 when not released."),
 	}
 	m.fragments = prometheus.NewCounterFunc(prometheus.CounterOpts{
 		Name: "medewi_fragments_total", Help: "Report or frame pieces cut off at a stream switch.",
@@ -101,7 +104,7 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 		for _, col := range []prometheus.Collector{
 			m.connected, m.specMismatch, m.ready, m.machineReady, m.boilerC, m.setpointC, m.heaterPercent, m.power,
 			m.shots, m.flushes, m.pumpSeconds, m.volumeLiters, m.waterDraws, m.waterL,
-			m.lines, m.decodeErrors, m.reconnects, m.fragments,
+			m.lines, m.decodeErrors, m.reconnects, m.fragments, m.releasedUntil,
 		} {
 			if err := reg.Register(col); err != nil {
 				slog.Error("registering metric", "err", err)
@@ -136,9 +139,14 @@ func (m *metrics) status(s Status) {
 	for _, p := range powerStates {
 		m.power.WithLabelValues(string(p)).Set(b2f(s.Power == p))
 	}
+	if s.ReleasedUntil != nil {
+		m.releasedUntil.Set(float64(s.ReleasedUntil.Unix()))
+	} else {
+		m.releasedUntil.Set(0)
+	}
 }
 
-// brewClosed counts a finished brew. Interrupted ones are no shot or
+// brewClosed counts a finished brew. Truncated ones are no shot or
 // flush but still add pump time and volume.
 func (m *metrics) brewClosed(s brew.Summary) {
 	switch s.Kind {
