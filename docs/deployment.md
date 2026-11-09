@@ -376,7 +376,7 @@ firmware flash, the vendor's Status Monitor), release it instead of
 stopping the service:
 
 ```sh
-medewictl release              # default +1h; units h, min, s: -until +90min
+medewictl release              # default +1h; units h, min, s: --until=+90min
 medewictl reclaim              # early, when you are done
 ```
 
@@ -416,6 +416,10 @@ sudo nix shell nixpkgs#sqlite --command sqlite3 -readonly -header -column "$DB" 
          b.ended_at = b.started_at AS crash
   FROM brews b WHERE b.kind = 'interrupted' ORDER BY b.id;"
 ```
+
+After the migration an older medewid refuses to start ("unsupported
+schema version 2"), so rolling back needs the database copy taken before
+the upgrade.
 
 ## Backups
 

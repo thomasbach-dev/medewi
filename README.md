@@ -137,7 +137,7 @@ medewictl status
 medewictl power eco            # active | eco | standby
 medewictl mark pre-infusion over
 medewictl backup -out DIR
-medewictl release -until +1h30min   # free the machine; units h, min, s; default +1h
+medewictl release --until=+1h30min  # free the machine; units h, min, s; default +1h
 medewictl reclaim                   # take it back early
 medewictl -insecure -url http://127.0.0.1:8080 status
 ```

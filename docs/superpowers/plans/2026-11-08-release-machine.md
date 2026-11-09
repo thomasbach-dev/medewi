@@ -191,4 +191,4 @@ Design decisions the implementer cannot make alone:
 
 ### Finish
 
-- [ ] Full gate `nix flake check -L`; then superpowers:finishing-a-development-branch — one PR against `main` titled `medewid: release and reclaim the machine (#11)`, body ending with the Claude Code line, `Closes #11`. Pushing needs the ssh-agent; ask Thomas to `ssh-add` if it fails.
+- [ ] Full gate `nix flake check -L`; then superpowers:finishing-a-development-branch — one PR against `main` titled `medewid: release and reclaim the machine (#11)`, body ending with the Claude Code line, `Closes #11`. Pushing needs the ssh-agent; ask the operator to run `ssh-add` if it fails.
