@@ -44,6 +44,8 @@ func usage(w io.Writer) {
   power active|eco|standby
   mark TEXT...              note TEXT in medewid's raw traffic log
   backup -out DIR|-
+  release [-until +DURATION]   free the machine (default +1h; units h, min, s)
+  reclaim                    take it back now
 
 Defaults come from $MEDEWID_URL (e.g. https://brewhost:8443),
 $MEDEWID_CTL_CERT, $MEDEWID_CTL_KEY and $MEDEWID_CTL_CA; unset cert,
@@ -83,8 +85,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if sub == "backup" {
 		sfs.StringVar(&outDir, "out", "", "output directory, or - for stdout")
 	}
+	untilArg := "+1h"
+	if sub == "release" {
+		sfs.StringVar(&untilArg, "until", untilArg, "release for this long, +DURATION (units h, min, s)")
+	}
 	switch sub {
-	case "status", "power", "mark", "backup":
+	case "status", "power", "mark", "backup", "release", "reclaim":
 	default:
 		_, _ = fmt.Fprintf(stderr, "medewictl: unknown subcommand %q\n", sub)
 		usage(stderr)
@@ -96,8 +102,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 	rest = sfs.Args()
 
 	var state, text string
+	var until time.Time
 	switch sub {
-	case "status":
+	case "release":
+		if len(rest) != 0 {
+			usage(stderr)
+			return 2
+		}
+		var err error
+		if until, err = parseUntil(untilArg, time.Now()); err != nil {
+			_, _ = fmt.Fprintf(stderr, "medewictl: %v\n", err)
+			return 2
+		}
+	case "status", "reclaim":
 		if len(rest) != 0 {
 			usage(stderr)
 			return 2
@@ -134,6 +151,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdPower(client, base, state, stdout, stderr)
 	case "mark":
 		return cmdMark(client, base, text, stderr)
+	case "release":
+		return cmdRelease(client, base, until, stdout, stderr)
+	case "reclaim":
+		return cmdReclaim(client, base, stdout, stderr)
 	default:
 		return cmdBackup(client, base, outDir, stdout, stderr)
 	}
@@ -247,16 +268,17 @@ func cmdStatus(client *http.Client, base string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	var s struct {
-		Connected    bool     `json:"connected"`
-		SpecOK       bool     `json:"spec_ok"`
-		Ready        bool     `json:"ready"`
-		MachineReady bool     `json:"machine_ready"`
-		BrewOpen     bool     `json:"brew_open"`
-		Power        string   `json:"power"`
-		Firmware     string   `json:"firmware"`
-		Temp         *float64 `json:"temp"`
-		Setpoint     *float64 `json:"setpoint"`
-		Display      *struct {
+		Connected     bool       `json:"connected"`
+		SpecOK        bool       `json:"spec_ok"`
+		Ready         bool       `json:"ready"`
+		MachineReady  bool       `json:"machine_ready"`
+		BrewOpen      bool       `json:"brew_open"`
+		ReleasedUntil *time.Time `json:"released_until"`
+		Power         string     `json:"power"`
+		Firmware      string     `json:"firmware"`
+		Temp          *float64   `json:"temp"`
+		Setpoint      *float64   `json:"setpoint"`
+		Display       *struct {
 			Rows []string `json:"rows"`
 		} `json:"display"`
 		LastBrew *struct {
@@ -284,13 +306,17 @@ func cmdStatus(client *http.Client, base string, stdout, stderr io.Writer) int {
 		}
 		return v
 	}
+	released := "none"
+	if s.ReleasedUntil != nil {
+		released = s.ReleasedUntil.Local().Format(time.DateTime)
+	}
 	last := "none"
 	if b := s.LastBrew; b != nil {
 		last = fmt.Sprintf("id=%d kind=%s started=%s duration_s=%g peak_bar=%g volume_ml=%g",
 			b.ID, b.Kind, b.StartedAt, b.DurationS, b.PeakBar, b.VolumeML)
 	}
-	_, _ = fmt.Fprintf(stdout, "connected: %t\nspec_ok: %t\nready: %t\nmachine_ready: %t\nbrew_open: %t\npower: %s\nfirmware: %s\ntemp: %s\nsetpoint: %s\nlast_brew: %s\n",
-		s.Connected, s.SpecOK, s.Ready, s.MachineReady, s.BrewOpen, str(s.Power), str(s.Firmware), num(s.Temp), num(s.Setpoint), last)
+	_, _ = fmt.Fprintf(stdout, "connected: %t\nspec_ok: %t\nready: %t\nmachine_ready: %t\nbrew_open: %t\npower: %s\nfirmware: %s\ntemp: %s\nsetpoint: %s\nreleased_until: %s\nlast_brew: %s\n",
+		s.Connected, s.SpecOK, s.Ready, s.MachineReady, s.BrewOpen, str(s.Power), str(s.Firmware), num(s.Temp), num(s.Setpoint), released, last)
 	if s.Display == nil {
 		_, _ = fmt.Fprintln(stdout, "display: none")
 	} else {
@@ -348,6 +374,55 @@ func cmdPower(client *http.Client, base, state string, stdout, stderr io.Writer)
 	}
 	_, _ = fmt.Fprintln(stderr, msg)
 	return 1
+}
+
+func cmdRelease(client *http.Client, base string, until time.Time, stdout, stderr io.Writer) int {
+	resp, body, err := postJSON(client, base+"/api/release", map[string]string{"until": until.UTC().Format(time.RFC3339)})
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "medewictl: %v\n", err)
+		return 1
+	}
+	var r struct {
+		OK     bool       `json:"ok"`
+		Until  *time.Time `json:"until"`
+		Banner *bool      `json:"banner"`
+		Error  string     `json:"error"`
+	}
+	if jerr := json.Unmarshal(body, &r); jerr != nil {
+		_, _ = fmt.Fprintf(stderr, "medewictl: release: %s: %s\n", resp.Status, bytes.TrimSpace(body))
+		return 1
+	}
+	if resp.StatusCode != http.StatusOK || !r.OK || r.Until == nil {
+		_, _ = fmt.Fprintf(stderr, "medewictl: release failed (%s): %s\n", resp.Status, r.Error)
+		return 1
+	}
+	_, _ = fmt.Fprintf(stdout, "released until %s (local time)\n", r.Until.Local().Format(time.DateTime))
+	if r.Banner != nil && !*r.Banner {
+		_, _ = fmt.Fprintln(stderr, "medewictl: warning: the idle banner did not return before the port was freed; the machine is released anyway")
+	}
+	return 0
+}
+
+func cmdReclaim(client *http.Client, base string, stdout, stderr io.Writer) int {
+	resp, body, err := postJSON(client, base+"/api/reclaim", struct{}{})
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "medewictl: %v\n", err)
+		return 1
+	}
+	var r struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if jerr := json.Unmarshal(body, &r); jerr != nil {
+		_, _ = fmt.Fprintf(stderr, "medewictl: reclaim: %s: %s\n", resp.Status, bytes.TrimSpace(body))
+		return 1
+	}
+	if resp.StatusCode != http.StatusOK || !r.OK {
+		_, _ = fmt.Fprintf(stderr, "medewictl: reclaim failed (%s): %s\n", resp.Status, r.Error)
+		return 1
+	}
+	_, _ = fmt.Fprintln(stdout, "reclaimed")
+	return 0
 }
 
 // backupKinds lists the dumps in fetch order.
