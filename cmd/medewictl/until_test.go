@@ -25,7 +25,10 @@ func TestParseUntil(t *testing.T) {
 			t.Errorf("parseUntil(%q) = %v, %v; want %v", c.in, got, err, now.Add(c.want))
 		}
 	}
-	for _, in := range []string{"", "+", "30min", "-5min", "+0s", "+5m", "+1d", "+1h 30min", "+1.5h", "+h"} {
+	for _, in := range []string{
+		"", "+", "30min", "-5min", "+0s", "+5m", "+1d", "+1h 30min", "+1.5h", "+h",
+		"+9999999999h", "+6000000h", "+2000000h2000000h2000000h",
+	} {
 		if got, err := parseUntil(in, now); err == nil {
 			t.Errorf("parseUntil(%q) = %v, want error", in, got)
 		}

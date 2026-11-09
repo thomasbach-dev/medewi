@@ -44,7 +44,7 @@ async function refresh() {
     $("machine-ready").className = "badge" + (s.machine_ready ? " on" : "");
     if (s.released_until) {
       const t = new Date(s.released_until).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
-      $("conn").textContent = "released until " + t;
+      $("conn").textContent = "Machine released until " + t;
     } else {
       $("conn").textContent = (s.connected ? "connected" : "disconnected") +
         (s.brew_open ? ", brewing" : "");

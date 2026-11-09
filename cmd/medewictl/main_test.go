@@ -449,7 +449,7 @@ func TestReleaseBadUntilSendsNothing(t *testing.T) {
 	called := false
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
 	defer srv.Close()
-	for _, a := range []string{"30min", "+0s", "-5min"} {
+	for _, a := range []string{"30min", "+0s", "-5min", "+6000000h"} {
 		if code, _, _ := exec(t, srv, "release", "-until", a); code != 2 {
 			t.Errorf("-until %s: exit %d, want 2", a, code)
 		}

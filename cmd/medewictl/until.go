@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"time"
@@ -30,7 +31,11 @@ func parseUntil(s string, now time.Time) (time.Time, error) {
 		if err != nil {
 			return time.Time{}, fmt.Errorf("bad -until %q: number too large", s)
 		}
-		total += time.Duration(n) * untilUnits[m[2]]
+		unit := untilUnits[m[2]]
+		if time.Duration(n) > (math.MaxInt64-total)/unit {
+			return time.Time{}, fmt.Errorf("bad -until %q: duration too long", s)
+		}
+		total += time.Duration(n) * unit
 		rest = rest[len(m[0]):]
 	}
 	if total == 0 {

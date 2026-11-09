@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -483,4 +484,63 @@ func countingProxy(t *testing.T, target string) (addr string, down func() int) {
 		}
 	}()
 	return l.Addr().String(), func() int { return int(n.Load()) }
+}
+
+// A release that lands after reports started but once the loop has already
+// ended (here: a stalled stream) sends no "MC " and checks no banner, so it
+// must not report one, although banners came before the reports.
+func TestReleaseAfterStallReportsNoBanner(t *testing.T) {
+	shrinkBannerTimeout(t)
+	shrink(t, &reportStallTimeout, 300*time.Millisecond)
+	type result struct {
+		res ReleaseResult
+		err error
+	}
+	got := make(chan result, 1)
+	daemon := make(chan *Daemon, 1)
+	var once sync.Once
+	shrink(t, &sessionEnding, func() {
+		once.Do(func() {
+			d := <-daemon
+			go func() {
+				res, err := d.Release(context.Background(), time.Now().Add(time.Hour))
+				got <- result{res, err}
+			}()
+			for d.Status().ReleasedUntil == nil {
+				time.Sleep(time.Millisecond)
+			}
+		})
+	})
+	s := startSim(t, simConfig(idleLines(20)))
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
+	daemon <- d
+	waitActive(t, d)
+
+	// A second client stops the stream for everyone; TCP stays up.
+	c, err := net.Dial("tcp", s.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	if _, err := c.Write([]byte("MC \r\n")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case r := <-got:
+		if r.err != nil {
+			t.Fatalf("Release: %v", r.err)
+		}
+		if r.res.Banner == nil || *r.res.Banner {
+			t.Errorf("Banner = %s, want false", fmtBanner(r.res.Banner))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Release did not return")
+	}
+}
+
+func fmtBanner(b *bool) string {
+	if b == nil {
+		return "nil"
+	}
+	return strconv.FormatBool(*b)
 }

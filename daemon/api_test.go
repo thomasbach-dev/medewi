@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -444,7 +445,7 @@ func TestAPIMiscRoutes(t *testing.T) {
 func TestPanelHasReclaim(t *testing.T) {
 	_, h, _ := apiSetup(t, powerSim(idleLines(20)))
 	body := apiDo(t, h, "GET", "/", "").Body.String()
-	for _, want := range []string{`id="reclaim"`, "/api/reclaim", "released_until"} {
+	for _, want := range []string{`id="reclaim"`, "/api/reclaim", "released_until", `"Machine released until "`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("panel lacks %q", want)
 		}
@@ -529,5 +530,63 @@ func TestAPIReleaseStoreError(t *testing.T) {
 	}
 	if got := decode[map[string]any](t, rec)["error"]; got != ErrReleaseStore.Error() {
 		t.Errorf("error = %v, want %q", got, ErrReleaseStore)
+	}
+	if got := d.Status(); got.ReleasedUntil != nil || !got.Connected {
+		t.Errorf("after a failed release: released_until = %v, connected = %v", got.ReleasedUntil, got.Connected)
+	}
+}
+
+// A store write that runs into its deadline is a store failure (500), not
+// a client that went away.
+func TestAPIReleaseStoreTimeout(t *testing.T) {
+	d, h, _ := apiSetup(t, powerSim(idleLines(20)))
+	shrink(t, &releaseStoreWrite, func(context.Context, func(context.Context) error) error {
+		return fmt.Errorf("sqlite: %w", context.DeadlineExceeded)
+	})
+	until := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	rec := apiDo(t, h, "POST", "/api/release", `{"until":"`+until+`"}`)
+	if rec.Code != 500 {
+		t.Fatalf("code = %d, body %q", rec.Code, rec.Body)
+	}
+	if got := decode[map[string]any](t, rec)["error"]; got != ErrReleaseStore.Error() {
+		t.Errorf("error = %v, want %q", got, ErrReleaseStore)
+	}
+	if got := d.Status(); got.ReleasedUntil != nil || !got.Connected {
+		t.Errorf("after a failed release: released_until = %v, connected = %v", got.ReleasedUntil, got.Connected)
+	}
+}
+
+func TestAPIReclaimNothingReleased(t *testing.T) {
+	d, h, _ := apiSetup(t, powerSim(idleLines(20)))
+	rec := apiDo(t, h, "POST", "/api/reclaim", `{}`)
+	if rec.Code != 200 || decode[map[string]any](t, rec)["ok"] != true {
+		t.Fatalf("code = %d, body %s", rec.Code, rec.Body)
+	}
+	if got := d.Status(); got.ReleasedUntil != nil || !got.Connected {
+		t.Errorf("released_until = %v, connected = %v", got.ReleasedUntil, got.Connected)
+	}
+}
+
+func TestAPIReclaimStoreError(t *testing.T) {
+	shrinkBannerTimeout(t)
+	s := startSim(t, powerSim(idleLines(20)))
+	st := openStore(t)
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), st))
+	waitActive(t, d)
+	h := NewHandler(d, nil)
+	until := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	if rec := apiDo(t, h, "POST", "/api/release", `{"until":"`+until+`"}`); rec.Code != 200 {
+		t.Fatalf("release: code = %d, body %s", rec.Code, rec.Body)
+	}
+	_ = st.Close()
+	rec := apiDo(t, h, "POST", "/api/reclaim", `{}`)
+	if rec.Code != 500 {
+		t.Fatalf("code = %d, body %s", rec.Code, rec.Body)
+	}
+	if got := decode[map[string]any](t, rec)["error"]; got != ErrReleaseStore.Error() {
+		t.Errorf("error = %v, want %q", got, ErrReleaseStore)
+	}
+	if got := d.Status(); got.ReleasedUntil == nil || got.Connected {
+		t.Errorf("after a failed reclaim: released_until = %v, connected = %v", got.ReleasedUntil, got.Connected)
 	}
 }

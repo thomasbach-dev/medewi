@@ -73,6 +73,10 @@ var (
 // global). A variable so tests can shrink it.
 var reportStallTimeout = 10 * time.Second
 
+// sessionEnding runs as a session's end is derived; tests land a release
+// there.
+var sessionEnding = func() {}
+
 // Config configures a Daemon. Zero durations and zero Brew/Watch configs
 // select the defaults.
 type Config struct {
@@ -271,6 +275,7 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	// Deferred in reverse: disconnected (and its conn.Close) runs first, the
 	// tap is removed next, the raw session closes last. The final "MC " is
 	// sent in the loop body before any of them runs, so it is logged.
+	reporting := false // set once StartReports succeeded
 	rs := d.cfg.Raw.Session()
 	defer rs.Close()
 	if d.cfg.Raw != nil {
@@ -284,12 +289,15 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	// clean shutdown ended the session. Derived at the end, so a shutdown
 	// racing a lost connection still counts as a shutdown.
 	defer func() {
+		sessionEnding()
 		cut := brew.TruncatedLost
 		switch {
 		case released():
 			cut = brew.TruncatedReleased
-			if h.banner == nil { // reports never started: nothing was sent
-				b := conn.Banners() > 0
+			if h.banner == nil { // no banner check ran
+				// Before the reports nothing was sent and the banners
+				// tell; after them no "MC " went out, so none is claimed.
+				b := !reporting && conn.Banners() > 0
 				h.banner = &b
 			}
 		case ctx.Err() != nil:
@@ -341,6 +349,7 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 		}
 		return false
 	}
+	reporting = true
 	slog.Info("reports started")
 	samplerDone := make(chan struct{})
 	if d.cfg.DisplayEvery > 0 {

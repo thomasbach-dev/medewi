@@ -191,12 +191,13 @@ func (a *api) release(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "until": res.Until, "banner": res.Banner})
+	case errors.Is(err, ErrReleaseStore):
+		// First: a store write that ran into its deadline wraps a ctx error.
+		slog.Warn("api: release", "err", err)
+		writeErr(w, http.StatusInternalServerError, ErrReleaseStore)
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		// The release was persisted and is in effect; only the wait ended.
 		slog.Info("api: release in effect; client went away", "until", body.Until)
-	case errors.Is(err, ErrReleaseStore):
-		slog.Warn("api: release", "err", err)
-		writeErr(w, http.StatusInternalServerError, ErrReleaseStore)
 	default:
 		writeErr(w, statusFor(err), err)
 	}

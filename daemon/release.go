@@ -27,6 +27,9 @@ var releaseBannerTimeout = 3 * time.Second
 // state update; tests widen that window with it.
 var afterReleaseWrite = func() {}
 
+// releaseStoreWrite runs a release store write; tests make it fail.
+var releaseStoreWrite = func(ctx context.Context, write func(context.Context) error) error { return write(ctx) }
+
 // errReleased is the cancel cause of a session ended by Release.
 var errReleased = errors.New("daemon: session ended by a release")
 
@@ -101,7 +104,8 @@ func (d *Daemon) Release(ctx context.Context, until time.Time) (ReleaseResult, e
 }
 
 // Reclaim ends a release early and wakes the reconnect loop; it does not
-// wait for the reconnect. It is no error when nothing is released. If the
+// wait for the reconnect. It is no error when nothing is released (the wake
+// it leaves buffered then just skips one backoff, which is harmless). If the
 // persisted release cannot be cleared the daemon stays released and the
 // error wraps ErrReleaseStore.
 func (d *Daemon) Reclaim(ctx context.Context) error {
@@ -127,7 +131,7 @@ func (d *Daemon) storeRelease(ctx context.Context, write func(context.Context) e
 	}
 	sctx, cancel := storeCtx(ctx)
 	defer cancel()
-	if err := write(sctx); err != nil {
+	if err := releaseStoreWrite(sctx, write); err != nil {
 		slog.Error("storing the machine release", "err", err)
 		return fmt.Errorf("%w: %w", ErrReleaseStore, err)
 	}

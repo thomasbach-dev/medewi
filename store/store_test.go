@@ -300,8 +300,8 @@ func TestReleaseRoundTrip(t *testing.T) {
 	if err := s.SetRelease(ctx, t2.In(time.FixedZone("x", 3600))); err != nil {
 		t.Fatal(err)
 	}
-	if got, ok, _ := s.Release(ctx); !ok || !got.Equal(t2) {
-		t.Fatalf("Release after replace = %v, %v; want %v", got, ok, t2)
+	if got, ok, err := s.Release(ctx); err != nil || !ok || !got.Equal(t2) {
+		t.Fatalf("Release after replace = %v, %v, %v; want %v", got, ok, err, t2)
 	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
@@ -311,8 +311,8 @@ func TestReleaseRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	if got, ok, _ := s.Release(ctx); !ok || !got.Equal(t2) {
-		t.Fatalf("Release after reopen = %v, %v; want %v", got, ok, t2)
+	if got, ok, err := s.Release(ctx); err != nil || !ok || !got.Equal(t2) {
+		t.Fatalf("Release after reopen = %v, %v, %v; want %v", got, ok, err, t2)
 	}
 	for range 2 {
 		if err := s.ClearRelease(ctx); err != nil {
