@@ -83,13 +83,17 @@ func (d *Daemon) sampleDisplay(ctx context.Context, conn *leva.Conn) {
 
 // Mark writes text as a "mark: …" note into the current session's raw
 // traffic log, so a moment noticed at the machine can be found again.
+// While released it fails with ErrReleased.
 func (d *Daemon) Mark(text string) error {
 	if text == "" || len(text) > maxMark || strings.ContainsAny(text, "\r\n") {
 		return ErrInvalidMark
 	}
 	d.mu.RLock()
-	rs := d.rs
+	rs, released, until := d.rs, d.releasedNow(), d.st.ReleasedUntil
 	d.mu.RUnlock()
+	if released {
+		return releasedErr(*until)
+	}
 	if rs == nil {
 		return ErrNoRawLog
 	}

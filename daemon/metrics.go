@@ -22,6 +22,7 @@ type metrics struct {
 	lines, decodeErrors, reconnects   prometheus.Counter
 	fragments                         prometheus.CounterFunc
 	frags                             fragmentCount
+	releasedUntil                     prometheus.Gauge
 }
 
 // fragmenter is the part of *leva.Conn the fragment count reads.
@@ -90,6 +91,8 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 		lines:        c("medewi_report_lines_total", "Report lines received."),
 		decodeErrors: c("medewi_decode_errors_total", "Report lines skipped (checksum or decode error)."),
 		reconnects:   c("medewi_reconnects_total", "Connection attempts after the first, failed ones included."),
+		releasedUntil: g("medewi_machine_released_until_seconds",
+			"Unix time the machine release ends; 0 when not released."),
 	}
 	m.fragments = prometheus.NewCounterFunc(prometheus.CounterOpts{
 		Name: "medewi_fragments_total", Help: "Report or frame pieces cut off at a stream switch.",
@@ -101,7 +104,7 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 		for _, col := range []prometheus.Collector{
 			m.connected, m.specMismatch, m.ready, m.machineReady, m.boilerC, m.setpointC, m.heaterPercent, m.power,
 			m.shots, m.flushes, m.pumpSeconds, m.volumeLiters, m.waterDraws, m.waterL,
-			m.lines, m.decodeErrors, m.reconnects, m.fragments,
+			m.lines, m.decodeErrors, m.reconnects, m.fragments, m.releasedUntil,
 		} {
 			if err := reg.Register(col); err != nil {
 				slog.Error("registering metric", "err", err)
@@ -135,6 +138,11 @@ func (m *metrics) status(s Status) {
 	}
 	for _, p := range powerStates {
 		m.power.WithLabelValues(string(p)).Set(b2f(s.Power == p))
+	}
+	if s.ReleasedUntil != nil {
+		m.releasedUntil.Set(float64(s.ReleasedUntil.Unix()))
+	} else {
+		m.releasedUntil.Set(0)
 	}
 }
 

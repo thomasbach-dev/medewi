@@ -11,8 +11,8 @@ import (
 	"github.com/thomasbach-dev/medewi/leva"
 )
 
-// Request refusals and failures. A refusal (ErrDisconnected, ErrBrewOpen,
-// ErrSpecMismatch, ErrInvalidPower) means nothing was sent.
+// Request refusals and failures. A refusal (ErrReleased, ErrDisconnected,
+// ErrBrewOpen, ErrSpecMismatch, ErrInvalidPower) means nothing was sent.
 // ErrDisconnected also covers a connection on which no report line has been
 // observed yet (just connected, or a spec mismatch, which never starts
 // reports): until then nothing is known about a running brew.
@@ -97,10 +97,12 @@ func (d *Daemon) do(ctx context.Context, run func(context.Context, *leva.Conn)) 
 }
 
 // refuse runs the checks a request makes before sending anything, in this
-// order: disconnected, (power only) spec mismatch, no report observed yet on
+// order: released (ErrReleased), disconnected, (power only) spec mismatch, no report observed yet on
 // this connection (power unknown), brew open.
 func (d *Daemon) refuse(conn *leva.Conn, st Status, power bool) error {
 	switch {
+	case st.ReleasedUntil != nil:
+		return releasedErr(*st.ReleasedUntil)
 	case conn == nil || !st.Connected:
 		return ErrDisconnected
 	case power && !st.SpecOK:
@@ -116,7 +118,7 @@ func (d *Daemon) refuse(conn *leva.Conn, st Status, power bool) error {
 // SetPower switches the machine to want (active, eco or standby) and
 // verifies the switch from the report stream. It returns the observed state,
 // also on failure. It refuses without sending anything on an invalid want
-// (ErrInvalidPower), when disconnected or before the first report line on
+// (ErrInvalidPower), while released (ErrReleased), when disconnected or before the first report line on
 // this connection (ErrDisconnected), on a spec mismatch (ErrSpecMismatch) or
 // while a brew is open, pumping or coasting (ErrBrewOpen); it succeeds
 // without sending anything when the machine is already in want.
@@ -182,8 +184,8 @@ func (d *Daemon) DumpMCu(ctx context.Context) (Dump, error) { return d.dump(ctx,
 // whose last non-empty line is not the EOF record gives ErrIncompleteDump.
 func (d *Daemon) DumpMCm(ctx context.Context) (Dump, error) { return d.dump(ctx, "MCm") }
 
-// dump runs cmd with the dump timings. It refuses, sending nothing, when
-// disconnected or before the first report line on this connection (so also
+// dump runs cmd with the dump timings. It refuses, sending nothing, while
+// released with ErrReleased, when disconnected or before the first report line on this connection (so also
 // on a spec mismatch, where reports never start) with ErrDisconnected, and
 // while a brew is open with ErrBrewOpen. An empty reply is incomplete.
 func (d *Daemon) dump(ctx context.Context, cmd string) (Dump, error) {

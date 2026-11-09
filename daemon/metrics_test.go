@@ -4,6 +4,7 @@ import (
 	"math"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -223,5 +224,19 @@ func TestFragmentCountSumsSessions(t *testing.T) {
 	fc.detach(nil) // no live session: nothing changes
 	if got := fc.value(); got != 4 {
 		t.Errorf("detach(nil) = %v, want 4", got)
+	}
+}
+
+func TestMetricsReleasedUntil(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := newMetrics(reg)
+	until := time.Date(2026, 11, 8, 11, 42, 0, 0, time.UTC)
+	m.status(Status{ReleasedUntil: &until})
+	if got := val(t, reg, "medewi_machine_released_until_seconds"); got != float64(until.Unix()) {
+		t.Errorf("released_until = %v, want %d", got, until.Unix())
+	}
+	m.status(Status{})
+	if got := val(t, reg, "medewi_machine_released_until_seconds"); got != 0 {
+		t.Errorf("released_until = %v when not released, want 0", got)
 	}
 }
