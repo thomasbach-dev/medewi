@@ -36,6 +36,8 @@ func NewHandler(d *Daemon, metrics http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/status", a.status)
 	mux.HandleFunc("POST /api/power", a.power)
+	mux.HandleFunc("POST /api/release", a.release)
+	mux.HandleFunc("POST /api/reclaim", a.reclaim)
 	mux.HandleFunc("POST /api/mark", a.mark)
 	mux.HandleFunc("GET /api/brews", a.brews)
 	mux.HandleFunc("GET /api/brews/{id}/points", a.points)
@@ -105,18 +107,19 @@ func (a *api) status(w http.ResponseWriter, _ *http.Request) {
 		display = &displayJSON{s.Display.Rows, s.Display.At}
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Connected    bool         `json:"connected"`
-		SpecOK       bool         `json:"spec_ok"`
-		Ready        bool         `json:"ready"`
-		MachineReady bool         `json:"machine_ready"`
-		BrewOpen     bool         `json:"brew_open"`
-		Power        PowerState   `json:"power"`
-		Firmware     string       `json:"firmware"`
-		Temp         *float64     `json:"temp"`
-		Setpoint     *float64     `json:"setpoint"`
-		LastBrew     *brewJSON    `json:"last_brew"`
-		Display      *displayJSON `json:"display"`
-	}{s.Connected, s.SpecOK, s.Ready, s.MachineReady, s.BrewOpen, s.Power, s.Firmware, s.Temp, s.Setpoint, last, display})
+		Connected     bool         `json:"connected"`
+		SpecOK        bool         `json:"spec_ok"`
+		Ready         bool         `json:"ready"`
+		MachineReady  bool         `json:"machine_ready"`
+		BrewOpen      bool         `json:"brew_open"`
+		Power         PowerState   `json:"power"`
+		Firmware      string       `json:"firmware"`
+		Temp          *float64     `json:"temp"`
+		Setpoint      *float64     `json:"setpoint"`
+		LastBrew      *brewJSON    `json:"last_brew"`
+		Display       *displayJSON `json:"display"`
+		ReleasedUntil *time.Time   `json:"released_until"`
+	}{s.Connected, s.SpecOK, s.Ready, s.MachineReady, s.BrewOpen, s.Power, s.Firmware, s.Temp, s.Setpoint, last, display, s.ReleasedUntil})
 }
 
 type displayJSON struct {
@@ -173,12 +176,55 @@ func (a *api) power(w http.ResponseWriter, r *http.Request) {
 	writeErr(w, statusFor(err), err)
 }
 
+func (a *api) release(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Until time.Time `json:"until"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.Until.IsZero() {
+		writeErr(w, http.StatusBadRequest, errors.New("until is required"))
+		return
+	}
+	res, err := a.d.Release(r.Context(), body.Until)
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "until": res.Until, "banner": res.Banner})
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		// The release was persisted and is in effect; only the wait ended.
+		slog.Info("api: release in effect; client went away", "until", body.Until)
+	case errors.Is(err, ErrReleaseStore):
+		slog.Warn("api: release", "err", err)
+		writeErr(w, http.StatusInternalServerError, ErrReleaseStore)
+	default:
+		writeErr(w, statusFor(err), err)
+	}
+}
+
+func (a *api) reclaim(w http.ResponseWriter, r *http.Request) {
+	var body struct{}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	err := a.d.Reclaim(r.Context())
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	case errors.Is(err, ErrReleaseStore):
+		slog.Warn("api: reclaim", "err", err)
+		writeErr(w, http.StatusInternalServerError, ErrReleaseStore)
+	default:
+		writeErr(w, statusFor(err), err)
+	}
+}
+
 // statusFor maps a daemon refusal or failure to its HTTP status.
 func statusFor(err error) int {
 	switch {
-	case errors.Is(err, ErrInvalidPower), errors.Is(err, ErrInvalidMark):
+	case errors.Is(err, ErrInvalidPower), errors.Is(err, ErrInvalidMark), errors.Is(err, ErrInvalidRelease):
 		return http.StatusBadRequest
-	case errors.Is(err, ErrBrewOpen), errors.Is(err, ErrSpecMismatch), errors.Is(err, ErrNoRawLog):
+	case errors.Is(err, ErrBrewOpen), errors.Is(err, ErrSpecMismatch), errors.Is(err, ErrNoRawLog), errors.Is(err, ErrReleased):
 		return http.StatusConflict
 	case errors.Is(err, ErrDisconnected):
 		return http.StatusServiceUnavailable
