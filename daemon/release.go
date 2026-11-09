@@ -23,6 +23,10 @@ var (
 // can shrink it.
 var releaseBannerTimeout = 3 * time.Second
 
+// afterReleaseWrite runs between a release store write and the matching
+// state update; tests widen that window with it.
+var afterReleaseWrite = func() {}
+
 // errReleased is the cancel cause of a session ended by Release.
 var errReleased = errors.New("daemon: session ended by a release")
 
@@ -59,9 +63,13 @@ func (d *Daemon) Release(ctx context.Context, until time.Time) (ReleaseResult, e
 		return ReleaseResult{}, ErrInvalidRelease
 	}
 	until = until.UTC()
+	// releaseMu keeps the store and the state in step against a concurrent
+	// Release or Reclaim; it is not held while waiting for the session.
+	d.releaseMu.Lock()
 	if err := d.storeRelease(ctx, func(ctx context.Context) error {
 		return d.cfg.Store.SetRelease(ctx, until)
 	}); err != nil {
+		d.releaseMu.Unlock()
 		return ReleaseResult{}, err
 	}
 	// Setting the state and taking d.sess under one lock: a session either
@@ -76,6 +84,7 @@ func (d *Daemon) Release(ctx context.Context, until time.Time) (ReleaseResult, e
 		h.cancel(errReleased)
 	}
 	d.mu.Unlock()
+	d.releaseMu.Unlock()
 	d.signalWake()
 	slog.Info("machine released", "until", until.Local().Format(time.DateTime), "session", h != nil)
 	res := ReleaseResult{Until: until}
@@ -96,11 +105,14 @@ func (d *Daemon) Release(ctx context.Context, until time.Time) (ReleaseResult, e
 // persisted release cannot be cleared the daemon stays released and the
 // error wraps ErrReleaseStore.
 func (d *Daemon) Reclaim(ctx context.Context) error {
+	d.releaseMu.Lock()
 	if err := d.storeRelease(ctx, d.cfg.Store.ClearRelease); err != nil {
+		d.releaseMu.Unlock()
 		return err
 	}
 	var was *time.Time
 	d.update(func(s *Status) { was, s.ReleasedUntil = s.ReleasedUntil, nil })
+	d.releaseMu.Unlock()
 	d.signalWake()
 	if was != nil {
 		slog.Info("machine reclaimed")
@@ -119,6 +131,7 @@ func (d *Daemon) storeRelease(ctx context.Context, write func(context.Context) e
 		slog.Error("storing the machine release", "err", err)
 		return fmt.Errorf("%w: %w", ErrReleaseStore, err)
 	}
+	afterReleaseWrite()
 	return nil
 }
 

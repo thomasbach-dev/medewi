@@ -3,9 +3,11 @@ package daemon
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -296,10 +298,13 @@ func TestReleaseDuringConnect(t *testing.T) {
 	cfg := simConfig(idleLines(20))
 	cfg.BannerInterval = 0 // one banner on connect: WaitReady waits out Settle
 	s := startSim(t, cfg)
-	dcfg := daemonConfig(s.Addr().String(), openStore(t))
+	addr, down := countingProxy(t, s.Addr().String())
+	dcfg := daemonConfig(addr, openStore(t))
 	dcfg.Settle = 5 * time.Second
 	d, _ := runDaemon(t, dcfg)
-	time.Sleep(300 * time.Millisecond) // dialled and holding in WaitReady
+	// Dialled, the banner delivered: the session holds in WaitReady.
+	waitFor(t, "the banner sent to the daemon", func() bool { return down() > 0 })
+	time.Sleep(50 * time.Millisecond) // let the conn's reader count it
 	if d.Status().Connected {
 		t.Fatal("connected before Settle")
 	}
@@ -391,4 +396,91 @@ func TestReleaseWhileDisconnected(t *testing.T) {
 	if d.Status().ReleasedUntil == nil {
 		t.Error("ReleasedUntil not set")
 	}
+}
+
+// Concurrent releases and reclaims must leave the store and the status in
+// agreement: a restart has to come back exactly as released as the daemon was.
+func TestReleaseReclaimConcurrentAgree(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+	// Widen the window between each store write and its state update.
+	shrink(t, &afterReleaseWrite, func() { time.Sleep(time.Millisecond) })
+	st := openStore(t)
+	d, _ := runDaemon(t, daemonConfig(addr, st))
+
+	for round := range 20 {
+		var wg sync.WaitGroup
+		for g := range 8 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := range 5 {
+					if (g+i)%2 == 0 {
+						until := time.Now().Add(time.Hour + time.Duration(g*10+i)*time.Second)
+						if _, err := d.Release(reqCtx(t), until); err != nil {
+							t.Errorf("Release: %v", err)
+						}
+					} else if err := d.Reclaim(reqCtx(t)); err != nil {
+						t.Errorf("Reclaim: %v", err)
+					}
+				}
+			}()
+		}
+		wg.Wait()
+		stored, ok, err := st.Release(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		mem := d.Status().ReleasedUntil
+		if ok != (mem != nil) || (ok && !stored.Equal(*mem)) {
+			t.Fatalf("round %d: store %v (ok %v), status %v; want them equal", round, stored, ok, mem)
+		}
+	}
+}
+
+// countingProxy forwards connections to target and counts the bytes sent
+// from target to the client, so a test can see the banner has gone out.
+func countingProxy(t *testing.T, target string) (addr string, down func() int) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	var n atomic.Int64
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			u, err := net.Dial("tcp", target)
+			if err != nil {
+				_ = c.Close()
+				continue
+			}
+			go func() { _, _ = io.Copy(u, c); _ = u.Close() }()
+			go func() {
+				buf := make([]byte, 4096)
+				for {
+					k, err := u.Read(buf)
+					if k > 0 {
+						n.Add(int64(k))
+						if _, werr := c.Write(buf[:k]); werr != nil {
+							break
+						}
+					}
+					if err != nil {
+						break
+					}
+				}
+				_ = c.Close()
+			}()
+		}
+	}()
+	return l.Addr().String(), func() int { return int(n.Load()) }
 }

@@ -109,6 +109,9 @@ type Daemon struct {
 	sess *sessionHandle  // the running session, from before Dial to its end; nil if none
 
 	wake chan struct{} // buffer 1: a release or reclaim nudges the reconnect loop
+	// releaseMu serialises each release store access with its state update
+	// (Release, Reclaim, Run's startup read), so the two never diverge.
+	releaseMu sync.Mutex
 
 	reqs       chan request  // to the command worker
 	workerDone chan struct{} // closed when the worker has exited
@@ -179,9 +182,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	} else if n > 0 {
 		slog.Warn("marked brews left open by a crash as truncated-crash", "count", n)
 	}
+	d.releaseMu.Lock()
 	until, released, err := d.cfg.Store.Release(sctx)
 	cancel()
 	if err != nil {
+		d.releaseMu.Unlock()
 		close(d.workerDone)
 		return fmt.Errorf("daemon: reading the machine release: %w", err)
 	}
@@ -189,6 +194,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		slog.Info("machine released", "until", until.Local().Format(time.DateTime))
 		d.update(func(s *Status) { s.ReleasedUntil = &until })
 	}
+	d.releaseMu.Unlock()
 	go d.worker(ctx)
 	defer func() { <-d.workerDone }()
 	d.refreshLastBrew(ctx)
