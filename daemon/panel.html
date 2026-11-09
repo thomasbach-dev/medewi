@@ -22,6 +22,7 @@
   <span id="machine-ready" class="badge" title="the machine's own READY">READY</span></div>
 <div class="big"><span id="temp">?</span> / <span id="setpoint">?</span> &deg;C</div>
 <div id="conn"></div>
+<p><button id="reclaim" hidden>Reclaim</button></p>
 <pre id="lcd" hidden></pre>
 <p>
   <button data-state="active">Wake</button>
@@ -41,8 +42,14 @@ async function refresh() {
     $("setpoint").textContent = num(s.setpoint);
     $("ready").className = "badge" + (s.ready ? " on" : "");
     $("machine-ready").className = "badge" + (s.machine_ready ? " on" : "");
-    $("conn").textContent = (s.connected ? "connected" : "disconnected") +
-      (s.brew_open ? ", brewing" : "");
+    if (s.released_until) {
+      const t = new Date(s.released_until).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+      $("conn").textContent = "released until " + t;
+    } else {
+      $("conn").textContent = (s.connected ? "connected" : "disconnected") +
+        (s.brew_open ? ", brewing" : "");
+    }
+    $("reclaim").hidden = !s.released_until;
     $("lcd").hidden = !s.display;
     if (s.display) $("lcd").textContent = s.display.rows.join("\n");
   } catch (e) {
@@ -68,6 +75,7 @@ async function post(path, body) {
 }
 document.querySelectorAll("button[data-state]").forEach(b =>
   b.addEventListener("click", async () => { await post("/api/power", {state: b.dataset.state}); refresh(); }));
+$("reclaim").addEventListener("click", async () => { await post("/api/reclaim", {}); refresh(); });
 async function mark() {
   const text = $("mark").value.trim() || "mark";
   if (await post("/api/mark", {text: text})) $("mark").value = "";

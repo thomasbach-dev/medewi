@@ -36,8 +36,10 @@ Below, `levacap ...` means `go run ./cmd/levacap ...`.
 
 - Machine on, warm or cold as the scenario needs, idle.
 - Status Monitor closed on every computer.
-- medewid stopped on the host that runs it: `systemctl stop medewid`
-  (start it again afterwards with `systemctl start medewid`). Only one
+- medewid released: `medewictl release --until=+1h` from your laptop
+  (pick a duration that covers the session; `medewictl reclaim` afterwards
+  hands the machine back early). Fallback: `systemctl stop medewid` on the
+  host that runs it, then `systemctl start medewid`. Only one
   client may talk to the machine, and stream toggles are global: a capture's
   `MC ` stops medewid's stream too (it then reconnects after its stall
   timeout and restarts the stream with `MCr` mid-capture).
@@ -194,7 +196,9 @@ Record the answer in the manifest notes and fix code/simulator if wrong.
 Some firmware upgrades reset ALL settings, hence the backup first. After
 every firmware flash, before anything else talks to the machine:
 
-1. Stop the medewi daemon (from phase 2 on; today: nothing running).
+1. Release the machine from the medewi daemon: `medewictl release --until=+1h`
+   (long enough for the flash and the gate; `medewictl reclaim` when done;
+   fallback: `systemctl stop medewid`).
 2. **Before** flashing, back up the settings and record the pre-flash state
    (nothing from here is committed):
    ```sh

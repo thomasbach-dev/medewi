@@ -441,6 +441,19 @@ func TestAPIMiscRoutes(t *testing.T) {
 	}
 }
 
+func TestPanelHasReclaim(t *testing.T) {
+	_, h, _ := apiSetup(t, powerSim(idleLines(20)))
+	body := apiDo(t, h, "GET", "/", "").Body.String()
+	for _, want := range []string{`id="reclaim"`, "/api/reclaim", "released_until"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("panel lacks %q", want)
+		}
+	}
+	if strings.Contains(body, "/api/release\"") {
+		t.Error("panel must not offer a release button")
+	}
+}
+
 func TestAPIRelease(t *testing.T) {
 	_, h, _ := apiSetup(t, powerSim(idleLines(20)))
 	until := time.Now().Add(time.Hour).UTC().Truncate(time.Second)

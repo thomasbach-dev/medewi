@@ -309,6 +309,7 @@ services.prometheus.checkConfig = "syntax-only";
 | Metric | Type | Meaning | Machine off / standby |
 | --- | --- | --- | --- |
 | `medewi_machine_connected` | gauge | 1 while a machine connection is up | 0 when off |
+| `medewi_machine_released_until_seconds` | gauge | Unix time the release ends, 0 when not released | 0 |
 | `medewi_spec_mismatch` | gauge | 1 while the machine's XML name differs from the loaded spec | 0 |
 | `medewi_power_state{state}` | gauge | 1 for the current state: `active`, `eco`, `standby`, `unknown` | `unknown` when off, `standby` in standby |
 | `medewi_ready` | gauge | boiler settled on the setpoint, machine active | 0 |
@@ -318,7 +319,7 @@ services.prometheus.checkConfig = "syntax-only";
 | `medewi_heater_percent` | gauge | heater output | **keeps its last value** |
 | `medewi_shots_total` | counter | completed shots | — |
 | `medewi_flushes_total` | counter | completed flushes | — |
-| `medewi_pump_seconds_total` | counter | seconds of finished brews, interrupted ones included | — |
+| `medewi_pump_seconds_total` | counter | seconds of finished brews, truncated ones included | — |
 | `medewi_volume_liters_total` | counter | liters of finished brews and wand draws | — |
 | `medewi_water_draws_total` | counter | wand water draws | — |
 | `medewi_water_liters_total` | counter | liters drawn at the wand | — |
@@ -341,6 +342,13 @@ ended ones. All counters restart at 0 with the daemon:
 and `increase()` already handle the resets. Because switching the machine off disconnects
 it, a disconnect alone is not alertable.
 
+A release closes the connection, so panels gated on
+`medewi_machine_connected == 1` go blank while the machine is released;
+`medewi_machine_released_until_seconds > 0` tells that apart from a
+failure. The `MedewidConnectionFlapping` alert below counts a release as
+two changes (down on release, up on reclaim), so a few releases within an
+hour can trip it.
+
 ### Suggested alerts
 
 ```yaml
@@ -359,6 +367,54 @@ groups:
         expr: changes(medewi_machine_connected[1h]) > 6
       - alert: MedewidRawLogFailing
         expr: increase(medewi_rawlog_write_errors_total[1h]) > 0 or increase(medewi_rawlog_dropped_total[1h]) > 0
+```
+
+## Releasing the machine
+
+To run something else against the machine (a conformance run, a
+firmware flash, the vendor's Status Monitor), release it instead of
+stopping the service:
+
+```sh
+medewictl release              # default +1h; units h, min, s: -until +90min
+medewictl reclaim              # early, when you are done
+```
+
+`medewictl release` returns only after medewid has closed its
+connection, so `medewictl release && levacap …` is safe. While released,
+medewid sends nothing to the machine, not even at startup or shutdown,
+and refuses power, backup and mark requests with 409. The release is
+stored in the database, so it survives a restart of medewid and ends at
+the given time by itself. A brew open at the moment of the release is
+kept as `truncated-released`. If medewid cannot read the stored release
+at startup, it refuses to start rather than risk grabbing the machine
+(fail closed); fix or restore the database first.
+
+| Endpoint | Body | Reply |
+| --- | --- | --- |
+| `POST /api/release` | `{"until": "<RFC 3339>"}` | `{"ok", "until", "banner"}`; `banner` is whether the machine's banner returned once freed (`null` if unknown) |
+| `POST /api/reclaim` | `{}` | `{"ok"}` |
+
+`GET /api/status` carries `released_until`. Both endpoints use the same
+mTLS client-CA protection as `POST /api/power`, and answer 500 when the
+release state cannot be stored (the connection then stays as it was).
+
+### Upgrading to schema v2
+
+The first start of a release containing this feature migrates the
+database to schema v2. It **deletes all brews of the removed kind
+`interrupted` together with their curve points**; this cannot be undone
+(back up first). Brew kinds `truncated-lost`, `truncated-released`,
+`truncated-shutdown` and `truncated-crash` replace it. To inspect or
+copy the rows beforehand:
+
+```sh
+DB=/var/lib/medewid/medewi.db
+sudo nix shell nixpkgs#sqlite --command sqlite3 -readonly -header -column "$DB" "
+  SELECT b.id, b.started_at, b.ended_at, b.duration_s, b.peak_bar, b.volume_ml,
+         (SELECT COUNT(*) FROM brew_points p WHERE p.brew_id = b.id) AS points,
+         b.ended_at = b.started_at AS crash
+  FROM brews b WHERE b.kind = 'interrupted' ORDER BY b.id;"
 ```
 
 ## Backups

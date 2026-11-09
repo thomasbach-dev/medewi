@@ -9,7 +9,7 @@ controller firmware. Phase 1 (complete): protocol library (`leva/`),
 machine simulator (`sim/`, `cmd/levasim`), conformance suite
 (`conformance/`), capture tooling (`cmd/levacap`). Phase 2 (implemented):
 the always-on daemon `medewid` (`daemon/`, `watch/`, `brew/`, `store/`, `rawlog/`:
-exporter, brew DB, power control, ops panel, raw traffic log), the client `cmd/medewictl`
+exporter, brew DB, power control, release/reclaim of the machine, ops panel, raw traffic log), the client `cmd/medewictl`
 and the NixOS module `nix/module.nix`; recipe execution is still to come.
 Start with
 [docs/architecture.md](docs/architecture.md); decisions live in
