@@ -482,6 +482,19 @@ func TestSingleDashLongFlagRejected(t *testing.T) {
 	}
 }
 
+func TestSubcommandHelpExitsZero(t *testing.T) {
+	t.Setenv(envAddr, "")
+	for _, sub := range []string{"conform", "capture", "session-reset"} {
+		for _, h := range []string{"--help", "-h"} {
+			var out, errb bytes.Buffer
+			code := run([]string{sub, h}, strings.NewReader(""), &out, &errb)
+			if code != 0 || strings.Contains(errb.String(), "help requested") || !strings.Contains(errb.String(), "--addr") {
+				t.Errorf("%s %s: exit %d, stderr %q; want 0 and the flag list", sub, h, code, errb.String())
+			}
+		}
+	}
+}
+
 func TestDisplayFlagsAreSpans(t *testing.T) {
 	var out, errb bytes.Buffer
 	// Parses (then fails on the missing target), not on the flag values.

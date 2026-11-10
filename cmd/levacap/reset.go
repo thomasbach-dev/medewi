@@ -19,9 +19,8 @@ import (
 // devices: the protocol has no way to list clients.
 func runSessionReset(args []string, stdout, stderr io.Writer) int {
 	fs, addr := newFlagSet("session-reset", stderr)
-	if err := fs.Parse(args); err != nil {
-		_, _ = fmt.Fprintf(stderr, "levacap: %v\n", err)
-		return 2
+	if code, ok := parseFlags(fs, args, stderr); !ok {
+		return code
 	}
 	if *addr == "" {
 		_, _ = fmt.Fprintf(stderr, "levacap: no target: set $%s or pass --addr\n", envAddr)

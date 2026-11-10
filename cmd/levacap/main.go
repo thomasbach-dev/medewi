@@ -93,13 +93,27 @@ func newFlagSet(name string, stderr io.Writer) (*pflag.FlagSet, *string) {
 	return fs, addr
 }
 
+// parseFlags parses args into fs. When it returns false the caller exits
+// with code: 0 after --help (pflag printed the flags), 2 on a usage error.
+func parseFlags(fs *pflag.FlagSet, args []string, stderr io.Writer) (code int, ok bool) {
+	err := fs.Parse(args)
+	switch {
+	case err == nil:
+		return 0, true
+	case errors.Is(err, pflag.ErrHelp):
+		return 0, false
+	default:
+		_, _ = fmt.Fprintf(stderr, "levacap: %v\n", err)
+		return 2, false
+	}
+}
+
 func runConform(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs, addr := newFlagSet("conform", stderr)
 	maxFlag := fs.String("max", "readonly", "highest check class: readonly|stream")
 	yes := fs.Bool("yes", false, "skip the interactive confirmation")
-	if err := fs.Parse(args); err != nil {
-		_, _ = fmt.Fprintf(stderr, "levacap: %v\n", err)
-		return 2
+	if code, ok := parseFlags(fs, args, stderr); !ok {
+		return code
 	}
 	var maxClass conformance.Class
 	switch *maxFlag {
@@ -195,9 +209,8 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	sample := displaySample{every: 10 * time.Second, dur: 500 * time.Millisecond}
 	fs.Var(systime.NewSpan(&sample.every), "display-every", "display scenario: switch to the LCD mirror this often")
 	fs.Var(systime.NewSpan(&sample.dur), "display-for", "display scenario: stay on the LCD mirror this long per sample")
-	if err := fs.Parse(args); err != nil {
-		_, _ = fmt.Fprintf(stderr, "levacap: %v\n", err)
-		return 2
+	if code, ok := parseFlags(fs, args, stderr); !ok {
+		return code
 	}
 	switch *scenario {
 	case "commands", "stream", "shot", "display":
