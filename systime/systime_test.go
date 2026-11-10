@@ -93,6 +93,10 @@ func TestParseTimestamp(t *testing.T) {
 		{"2026-11-10 10:42:05", d(2026, 11, 10, 10, 42, 5)},
 		{"2026-11-10", d(2026, 11, 10, 0, 0, 0)},
 		{"10:42", d(2026, 11, 10, 10, 42, 0)},
+		{"10:42:05", d(2026, 11, 10, 10, 42, 5)},
+		{"9:05", d(2026, 11, 10, 9, 5, 0)},
+		{"10:42:05.5", d(2026, 11, 10, 10, 42, 5).Add(500 * time.Millisecond)},
+		{"2026-11-10 10:42:05.5", d(2026, 11, 10, 10, 42, 5).Add(500 * time.Millisecond)},
 		{"+1h", d(2026, 11, 10, 15, 0, 0)},
 		{"-10min", d(2026, 11, 10, 13, 50, 0)},
 		{"10min ago", d(2026, 11, 10, 13, 50, 0)},
@@ -112,7 +116,7 @@ func TestParseTimestamp(t *testing.T) {
 	if err1 != nil || err2 != nil || noon.Sub(mid) != 13*time.Hour {
 		t.Errorf("DST day: noon-midnight = %v (%v, %v), want 13h", noon.Sub(mid), err1, err2)
 	}
-	for _, in := range []string{"", "10:61", "2026-13-01", "next week", "1h", "@"} {
+	for _, in := range []string{"", "10:61", "2026-13-01", "next week", "1h", "@", "10:42:05,5", "2026-11-10 10:42:05,5"} {
 		if got, err := ParseTimestamp(in, now, loc); err == nil {
 			t.Errorf("ParseTimestamp(%q) = %v, want error", in, got)
 		}
@@ -144,6 +148,14 @@ func TestFlagValues(t *testing.T) {
 	}
 	if NewSpan(&d).Type() != "span" || ts.Type() != "timestamp" {
 		t.Error("wrong Type()")
+	}
+	for _, args := range [][]string{{"--since=-10min"}, {"-s", "-10min"}} {
+		if err := fs.Parse(args); err != nil {
+			t.Fatal(err)
+		}
+		if want := now.Add(-10 * time.Minute); !ts.T.Equal(want) {
+			t.Errorf("%v: timestamp = %v, want %v", args, ts.T, want)
+		}
 	}
 	if err := fs.Parse([]string{"--every", "bogus"}); err == nil {
 		t.Error("want error for bogus span")

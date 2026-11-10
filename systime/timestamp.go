@@ -22,6 +22,10 @@ func ParseTimestamp(s string, now time.Time, loc *time.Location) (time.Time, err
 	if cut, ok := strings.CutSuffix(s, " UTC"); ok {
 		s, loc = strings.TrimSpace(cut), time.UTC
 	}
+	if strings.Contains(s, ",") {
+		// Go accepts a comma fraction separator; systemd does not.
+		return time.Time{}, fmt.Errorf("invalid timestamp %q", orig)
+	}
 	local := now.In(loc)
 	midnight := func(offsetDays int) time.Time {
 		y, m, d := local.Date()
@@ -45,7 +49,7 @@ func ParseTimestamp(s string, now time.Time, loc *time.Location) (time.Time, err
 	for _, layout := range []string{"15:04:05", "15:04"} {
 		if t, err := time.ParseInLocation(layout, s, loc); err == nil {
 			y, m, d := local.Date()
-			return time.Date(y, m, d, t.Hour(), t.Minute(), t.Second(), 0, loc), nil
+			return time.Date(y, m, d, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), loc), nil
 		}
 	}
 	var span string
