@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -176,6 +179,49 @@ func TestDecodeCmdCapture(t *testing.T) {
 	_, out, _ = runCmd(t, "--xml", synth, "decode", "../../testdata/fixtures/warmup-stream")
 	if !strings.Contains(out, "\n# notes: MC? returned no XML= line\n") {
 		t.Errorf("no notes header: %q", out[:min(len(out), 300)])
+	}
+}
+
+// dumpCapture writes a capture directory whose log.jsonl holds an MCu dump
+// with "secret" in every reply line, then a report after the quiet period.
+func dumpCapture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	var b strings.Builder
+	add := func(ms int64, d, data string) {
+		fmt.Fprintf(&b, "{\"t\":%d,\"dir\":%q,\"data\":%q}\n", ms, d, base64.StdEncoding.EncodeToString([]byte(data)))
+	}
+	add(0, "tx", "MCu\r\n")
+	add(10, "rx", "|0001 secret one\r\n")
+	add(20, "rx", "|0002 secret two\r\n")
+	add(30, "rx", ":abc secret three\r\n")
+	add(70_000, "rx", string(testReport())+"\r\n")
+	if err := os.WriteFile(filepath.Join(dir, "log.jsonl"), []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestDecodeCmdRedactsDumps(t *testing.T) {
+	noEnv(t)
+	dir := dumpCapture(t)
+	code, out, errs := runCmd(t, "--xml", synth, "decode", dir)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	if strings.Contains(out, "secret") || strings.Contains(errs, "secret") {
+		t.Errorf("dump bytes leaked:\n%s%s", out, errs)
+	}
+	if !strings.Contains(out, "dump redacted (") || !strings.Contains(out, " report ") {
+		t.Errorf("want a redaction line and the report:\n%s", out)
+	}
+
+	code, out, errs = runCmd(t, "--xml", synth, "decode", "--show-dumps", dir)
+	if code != 0 {
+		t.Fatalf("--show-dumps: exit %d, stderr %q", code, errs)
+	}
+	if strings.Count(out, "secret") != 3 {
+		t.Errorf("--show-dumps: want all 3 dump lines:\n%s", out)
 	}
 }
 
