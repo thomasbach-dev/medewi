@@ -54,10 +54,11 @@ sudo levalog decode -s "$SINCE" -u "$UNTIL"
 
 `sudo` is needed because the raw-log directory (`/var/lib/medewid/raw`) is
 `0700` under `DynamicUser`. The wrapper the module installs already passes
-the vendor XML, so reports are decoded. Each connection session is a file
-of its own; levalog prints a `# <path>` header before each, and the file
-name is the session start in UTC. Columns: seconds since the file start,
-wall time, direction (`tx`, `rx`, `note`), kind, text. The full syntax and
+the vendor XML, so reports are decoded. Each connection session starts a
+new file, and files also rotate hourly, so one session can span several
+files: a file boundary is not by itself a disconnect. levalog prints a
+`# <path>` header before each file, and the file name is the file's start
+time in UTC. Columns: seconds since the file start, wall time, direction (`tx`, `rx`, `note`), kind, text. The full syntax and
 time forms are in [docs/cli-conventions.md](../cli-conventions.md).
 
 What to look for at the end of the last good session and in the next ones:

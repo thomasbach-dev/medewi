@@ -112,7 +112,7 @@ given.
 levalog [--xml F] decode [--dir D] [-s|--since T] [-u|--until T] [--show-dumps] [FILE|DIR ...]
 
 sudo levalog decode -s '10:40' -u '10:45'          # brewhost: the raw logs in that window
-levalog decode --since=-10min                      # relative times need the = form
+levalog decode --since=-10min                      # = recommended for readability; -s -10min works too
 levalog decode captures/shot2                      # a capture directory (or its log.jsonl)
 levalog decode /var/lib/medewid/raw/20261110T094200.000Z.jsonl.gz
 ```
