@@ -9,7 +9,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -28,12 +27,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/spf13/pflag"
 
 	"github.com/thomasbach-dev/medewi/brew"
 	"github.com/thomasbach-dev/medewi/daemon"
 	"github.com/thomasbach-dev/medewi/leva"
 	"github.com/thomasbach-dev/medewi/rawlog"
 	"github.com/thomasbach-dev/medewi/store"
+	"github.com/thomasbach-dev/medewi/systime"
 	"github.com/thomasbach-dev/medewi/watch"
 )
 
@@ -93,7 +94,7 @@ func envOr(name, def string) string {
 // main listener's bound address once it serves; it must be buffered or read
 // promptly. done must be non-nil. Flags override environment variables.
 func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struct{}) int {
-	fset := flag.NewFlagSet("medewid", flag.ContinueOnError)
+	fset := pflag.NewFlagSet("medewid", pflag.ContinueOnError)
 	fset.SetOutput(stderr)
 	machine := fset.String("machine", firstEnv("MEDEWID_MACHINE_ADDR", "MEDEWI_MACHINE_ADDR"), "machine command address host:port (env MEDEWID_MACHINE_ADDR, MEDEWI_MACHINE_ADDR)")
 	xmlPath := fset.String("xml", firstEnv("MEDEWID_XML_PATH", "MEDEWI_XML_PATH"), "vendor status-monitor XML path (env MEDEWID_XML_PATH, MEDEWI_XML_PATH)")
@@ -106,10 +107,13 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 	health := fset.String("health-addr", envOr("MEDEWID_HEALTH_ADDR", defaultHealth), "plaintext /healthz listen address (env MEDEWID_HEALTH_ADDR)")
 	eventExec := fset.String("event-exec", os.Getenv("MEDEWID_EVENT_EXEC"), "shell command run per detector event (env MEDEWID_EVENT_EXEC)")
 	rawDir := fset.String("raw-dir", envOr("MEDEWID_RAW_DIR", rawDefault), "raw traffic log directory (env MEDEWID_RAW_DIR)")
-	rawRetention := fset.Duration("raw-retention", defaultRawRetention, "raw traffic log retention, 0 disables it (env MEDEWID_RAW_RETENTION)")
+	rawRetention := defaultRawRetention
+	fset.Var(systime.NewSpan(&rawRetention), "raw-retention", "raw traffic log retention, 0 disables it (env MEDEWID_RAW_RETENTION)")
 	rawMaxMB := fset.Int64("raw-max-mb", defaultRawMaxMB, "raw traffic log size cap in MiB (env MEDEWID_RAW_MAX_MB)")
-	displayEvery := fset.Duration("display-every", defaultDisplayEvery, "sample the machine's display this often, 0 disables it (env MEDEWID_DISPLAY_EVERY)")
-	displayFor := fset.Duration("display-for", defaultDisplayFor, "length of one display sample (env MEDEWID_DISPLAY_FOR)")
+	displayEvery := defaultDisplayEvery
+	fset.Var(systime.NewSpan(&displayEvery), "display-every", "sample the machine's display this often, 0 disables it (env MEDEWID_DISPLAY_EVERY)")
+	displayFor := defaultDisplayFor
+	fset.Var(systime.NewSpan(&displayFor), "display-for", "length of one display sample (env MEDEWID_DISPLAY_FOR)")
 	logFlavour := fset.String("log-flavour", envOr("MEDEWID_LOG_FLAVOUR", "text"), "log format: text, or systemd (no timestamps, syslog priority prefixes) (env MEDEWID_LOG_FLAVOUR)")
 	insecure := fset.Bool("insecure-http", false, "serve the API without TLS")
 	exit := func(code int, format string, a ...any) int {
@@ -119,12 +123,12 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 	// Environment defaults for the numbers; a bad value is a usage error
 	// like a bad flag. Flags parsed below override them.
 	for name, d := range map[string]*time.Duration{
-		"MEDEWID_RAW_RETENTION": rawRetention,
-		"MEDEWID_DISPLAY_EVERY": displayEvery,
-		"MEDEWID_DISPLAY_FOR":   displayFor,
+		"MEDEWID_RAW_RETENTION": &rawRetention,
+		"MEDEWID_DISPLAY_EVERY": &displayEvery,
+		"MEDEWID_DISPLAY_FOR":   &displayFor,
 	} {
 		if v := os.Getenv(name); v != "" {
-			p, err := time.ParseDuration(v)
+			p, err := systime.ParseSpan(v)
 			if err != nil {
 				return exit(2, "%s: %v", name, err)
 			}
@@ -139,34 +143,34 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 		*rawMaxMB = n
 	}
 	if err := fset.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
+		if errors.Is(err, pflag.ErrHelp) {
 			return 0
 		}
-		return 2
+		return exit(2, "%v", err)
 	}
 	rawExplicit := os.Getenv("MEDEWID_RAW_DIR") != ""
-	fset.Visit(func(f *flag.Flag) {
+	fset.Visit(func(f *pflag.Flag) {
 		if f.Name == "raw-dir" {
 			rawExplicit = true
 		}
 	})
 	if *machine == "" {
-		return exit(2, "-machine (or MEDEWID_MACHINE_ADDR / MEDEWI_MACHINE_ADDR) is required")
+		return exit(2, "--machine (or MEDEWID_MACHINE_ADDR / MEDEWI_MACHINE_ADDR) is required")
 	}
 	if *xmlPath == "" {
-		return exit(2, "-xml (or MEDEWID_XML_PATH / MEDEWI_XML_PATH) is required")
+		return exit(2, "--xml (or MEDEWID_XML_PATH / MEDEWI_XML_PATH) is required")
 	}
 	if !logFlavours[*logFlavour] {
-		return exit(2, "-log-flavour must be text or systemd, not %q", *logFlavour)
+		return exit(2, "--log-flavour must be text or systemd, not %q", *logFlavour)
 	}
-	if *rawRetention < 0 {
-		return exit(2, "-raw-retention must not be negative")
+	if rawRetention < 0 {
+		return exit(2, "--raw-retention must not be negative")
 	}
 	if *rawMaxMB <= 0 || *rawMaxMB > maxRawMaxMB {
-		return exit(2, "-raw-max-mb must be between 1 and 1048576 (1 TiB)")
+		return exit(2, "--raw-max-mb must be between 1 and 1048576 (1 TiB)")
 	}
-	if *displayEvery < 0 || (*displayEvery > 0 && (*displayFor <= 0 || *displayFor >= *displayEvery || *displayFor > maxDisplayFor)) {
-		return exit(2, "need -display-every 0 (off), or 0 < -display-for < -display-every and -display-for at most %v", maxDisplayFor)
+	if displayEvery < 0 || (displayEvery > 0 && (displayFor <= 0 || displayFor >= displayEvery || displayFor > maxDisplayFor)) {
+		return exit(2, "need --display-every 0 (off), or 0 < --display-for < --display-every and --display-for at most %v", maxDisplayFor)
 	}
 	nTLS := 0
 	for _, s := range []string{*certFile, *keyFile, *caFile} {
@@ -176,13 +180,13 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 	}
 	switch {
 	case nTLS != 0 && nTLS != 3:
-		return exit(2, "-tls-cert, -tls-key and -tls-client-ca must be set together")
+		return exit(2, "--tls-cert, --tls-key and --tls-client-ca must be set together")
 	case nTLS == 0 && !*insecure:
-		return exit(2, "refusing to serve without TLS (pass -insecure-http to override)")
+		return exit(2, "refusing to serve without TLS (pass --insecure-http to override)")
 	case nTLS == 3 && *insecure:
-		return exit(2, "-insecure-http conflicts with the TLS settings")
+		return exit(2, "--insecure-http conflicts with the TLS settings")
 	case nTLS == 0 && *metricsCAFile != "":
-		return exit(2, "-tls-metrics-ca needs the TLS settings")
+		return exit(2, "--tls-metrics-ca needs the TLS settings")
 	}
 
 	var tlsCfg *tls.Config
@@ -217,10 +221,10 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 	// stopped (defers run last-in first-out), so its sessions' partial lines
 	// are flushed before the log shuts down.
 	var raw *rawlog.Log
-	if *rawRetention > 0 {
+	if rawRetention > 0 {
 		raw, err = rawlog.Open(rawlog.Config{
 			Dir:       *rawDir,
-			Retention: *rawRetention,
+			Retention: rawRetention,
 			MaxBytes:  *rawMaxMB << 20,
 		})
 		switch {
@@ -282,8 +286,8 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 		EventExec:    *eventExec,
 		Registry:     reg,
 		Raw:          raw,
-		DisplayEvery: *displayEvery,
-		DisplayFor:   *displayFor,
+		DisplayEvery: displayEvery,
+		DisplayFor:   displayFor,
 	})
 
 	handler := daemon.NewHandler(d, promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))

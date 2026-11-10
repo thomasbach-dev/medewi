@@ -15,7 +15,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -63,10 +62,10 @@ func (c *Config) defaults() {
 		c.FlushEvery = 5 * time.Second
 	}
 	if c.ReplyWindow <= 0 {
-		c.ReplyWindow = 5 * time.Second
+		c.ReplyWindow = DefaultReplyWindow
 	}
 	if c.DumpQuiet <= 0 {
-		c.DumpQuiet = 60 * time.Second
+		c.DumpQuiet = DefaultDumpQuiet
 	}
 	if c.Buffer <= 0 {
 		c.Buffer = 4096
@@ -303,9 +302,9 @@ func (s *Session) tx(now time.Time, p []byte) {
 	cfg := &s.l.cfg
 	for _, cmd := range bytes.FieldsFunc(p, func(r rune) bool { return r == '\r' || r == '\n' }) {
 		switch {
-		case bytes.HasPrefix(cmd, []byte("MCu")), bytes.HasPrefix(cmd, []byte("MCm")):
+		case IsDumpCommand(cmd):
 			s.dump(now)
-		case bytes.Equal(cmd, []byte("MCr")), bytes.Equal(cmd, []byte("MC ")), bytes.Equal(cmd, []byte("MC@")):
+		case IsStreamToggle(cmd):
 		case now.Sub(s.l.lastDumpAt()) < cfg.DumpQuiet:
 			// quiet: a dump is recent, no window
 		default:
@@ -383,15 +382,12 @@ func (s *Session) piece(now time.Time, data []byte, complete bool) {
 // no dump happened since its first byte.
 func (s *Session) judge(now time.Time, data []byte) bool {
 	line := bytes.TrimRight(data, "\r\n")
-	if len(line) > 0 && (line[0] == '|' || line[0] == ':') {
+	if IsDumpLine(line) {
 		s.dump(now)
 		return false
 	}
-	if len(line) > 0 && (line[0] == '{' || line[0] == '<') || bytes.HasPrefix(line, []byte("$id:")) {
+	if IsStreamLine(line) {
 		return true
-	}
-	if len(line) > 0 && line[0] == '[' && len(line) <= maxNoticeLine {
-		return true // a machine notice such as "[READY]"
 	}
 	return s.lineWin && s.lineSeq == s.l.dumpSeqNow()
 }
@@ -569,12 +565,8 @@ func (w *writer) prune(open string) {
 	defer func() { w.l.bytes.Store(uint64(max(0, total+kept))) }()
 	now := cfg.Now()
 	for _, e := range entries {
-		name, ok := strings.CutSuffix(e.Name(), nameSuffix)
+		at, ok := FileStart(e.Name())
 		if !ok || e.IsDir() {
-			continue
-		}
-		at, err := time.Parse(nameLayout, name)
-		if err != nil {
 			continue
 		}
 		path := filepath.Join(cfg.Dir, e.Name())

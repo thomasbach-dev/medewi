@@ -27,7 +27,7 @@ type running struct {
 }
 
 // start runs levasim with args, waiting until it reports its listen address.
-// Tests must pass -tripwire "" unless they want the default 2323 bound.
+// Tests must pass --tripwire "" unless they want the default 2323 bound.
 func start(t *testing.T, args ...string) *running {
 	t.Helper()
 	r := &running{done: make(chan struct{}), exit: make(chan int, 1)}
@@ -81,7 +81,7 @@ func readLines(t *testing.T, r *bufio.Reader, n int) []string {
 }
 
 func TestServesOnFlagAddr(t *testing.T) {
-	r := start(t, "-addr", "127.0.0.1:0", "-tripwire", "")
+	r := start(t, "--addr", "127.0.0.1:0", "--tripwire", "")
 	c, rd := dialLines(t, r.addr)
 
 	if got := readLines(t, rd, 1)[0]; got != "$id: leva! (3.2)" {
@@ -123,7 +123,7 @@ func TestFixturesDirServesResponsesAndReplaysLog(t *testing.T) {
 	}
 	_ = logf.Close()
 
-	r := start(t, "-addr", "127.0.0.1:0", "-tripwire", "", "-fixtures", dir)
+	r := start(t, "--addr", "127.0.0.1:0", "--tripwire", "", "--fixtures", dir)
 	c, rd := dialLines(t, r.addr)
 	readLines(t, rd, 1)
 
@@ -163,7 +163,7 @@ func TestBadFixturesExitOne(t *testing.T) {
 			done := make(chan struct{})
 			close(done) // if run serves anyway, it returns at once
 			var out, errb bytes.Buffer
-			code := run([]string{"-addr", "127.0.0.1:0", "-tripwire", "", "-fixtures", dir}, &out, &errb, nil, done)
+			code := run([]string{"--addr", "127.0.0.1:0", "--tripwire", "", "--fixtures", dir}, &out, &errb, nil, done)
 			if code != 1 {
 				t.Fatalf("exit %d, want 1; stderr: %s", code, errb.String())
 			}
@@ -178,5 +178,15 @@ func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSingleDashLongFlagRejected(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run([]string{"-addr", "127.0.0.1:0"}, &out, &errb, nil, make(chan struct{})); code != 2 {
+		t.Fatalf("exit %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), "unknown shorthand flag") {
+		t.Errorf("stderr %q", errb.String())
 	}
 }

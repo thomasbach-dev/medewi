@@ -9,7 +9,8 @@ controller firmware. Phase 1 (complete): protocol library (`leva/`),
 machine simulator (`sim/`, `cmd/levasim`), conformance suite
 (`conformance/`), capture tooling (`cmd/levacap`). Phase 2 (implemented):
 the always-on daemon `medewid` (`daemon/`, `watch/`, `brew/`, `store/`, `rawlog/`:
-exporter, brew DB, power control, release/reclaim of the machine, ops panel, raw traffic log), the client `cmd/medewictl`
+exporter, brew DB, power control, release/reclaim of the machine, ops panel, raw traffic log), the client `cmd/medewictl`,
+the log decoder `cmd/levalog` (`logview/`, `systime/`)
 and the NixOS module `nix/module.nix`; recipe execution is still to come.
 Start with
 [docs/architecture.md](docs/architecture.md); decisions live in
@@ -23,8 +24,12 @@ operator procedures in [docs/runbooks/](docs/runbooks/),
 ```sh
 nix develop                       # toolchain (go, gopls, golangci-lint, gofumpt)
 nix develop --command go test -race ./leva/ -run TestName -v   # one test
-go run ./cmd/levasim -fixtures testdata/fixtures/shot-genlever # replay a real shot
+go run ./cmd/levasim --fixtures testdata/fixtures/shot-genlever # replay a real shot
 ```
+
+Every command follows [docs/cli-conventions.md](docs/cli-conventions.md):
+pflag `--long` options, `--since/-s`/`--until/-u`, `systemd.time(7)` forms
+via `systime`, env vars as defaults, exit codes 0/1/2.
 
 The full gate — run it before EVERY commit (CI runs the same):
 

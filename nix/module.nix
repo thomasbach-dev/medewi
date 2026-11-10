@@ -46,7 +46,7 @@ in
         `/var/lib/medewid` (the only writable path), as must
         `MEDEWID_RAW_DIR`. The XML and TLS files
         are not read from here; see `xmlFile` and the `tls*` options. The
-        service never passes `-insecure-http`.
+        service never passes `--insecure-http`.
       '';
     };
 
@@ -145,15 +145,15 @@ in
       serviceConfig = {
         ExecStart = lib.concatStringsSep " " [
           "${cfg.package}/bin/medewid"
-          "-log-flavour systemd"
-          "-listen ${lib.escapeShellArg cfg.listen}"
-          "-health-addr ${lib.escapeShellArg cfg.healthAddr}"
-          "-xml ${credArg xmlName}"
-          "-tls-cert ${credArg "tls-cert"}"
-          "-tls-key ${credArg "tls-key"}"
-          "-tls-client-ca ${credArg "tls-client-ca"}"
+          "--log-flavour systemd"
+          "--listen ${lib.escapeShellArg cfg.listen}"
+          "--health-addr ${lib.escapeShellArg cfg.healthAddr}"
+          "--xml ${credArg xmlName}"
+          "--tls-cert ${credArg "tls-cert"}"
+          "--tls-key ${credArg "tls-key"}"
+          "--tls-client-ca ${credArg "tls-client-ca"}"
         ]
-        + lib.optionalString (cfg.tlsMetricsCA != null) " -tls-metrics-ca ${credArg "tls-metrics-ca"}";
+        + lib.optionalString (cfg.tlsMetricsCA != null) " --tls-metrics-ca ${credArg "tls-metrics-ca"}";
         EnvironmentFile = cfg.environmentFile;
         LoadCredential = [
           "${xmlName}:${cfg.xmlFile}"
@@ -205,6 +205,16 @@ in
         IPAddressAllow = [ "localhost" ] ++ cfg.ipAddressAllow;
       };
     };
+
+    # The raw-log decoder for troubleshooting (`sudo levalog decode -s …`),
+    # with the vendor XML built in: sudo drops MEDEWI_XML_PATH.
+    environment.systemPackages = [
+      (pkgs.writeShellScriptBin "levalog" ''
+        exec ${
+          self.packages.${pkgs.stdenv.hostPlatform.system}.levalog
+        }/bin/levalog --xml ${lib.escapeShellArg cfg.xmlFile} "$@"
+      '')
+    ];
 
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ listenPort ];
   };

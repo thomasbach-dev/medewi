@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -21,9 +20,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/spf13/pflag"
+
 	"github.com/thomasbach-dev/medewi/conformance"
 	"github.com/thomasbach-dev/medewi/fixture"
 	"github.com/thomasbach-dev/medewi/leva"
+	"github.com/thomasbach-dev/medewi/systime"
 )
 
 const (
@@ -77,26 +79,41 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 func usage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, `usage: levacap <subcommand> [flags]
 
-  conform [-addr host:port] [-max readonly|stream] [-yes]
-  capture -scenario commands|stream|shot|display [-addr host:port] [-out captures/]
-  session-reset [-addr host:port]   stop a stream another client left on
+  conform [--addr host:port] [--max readonly|stream] [--yes]
+  capture --scenario commands|stream|shot|display [--addr host:port] [--out captures/]
+  session-reset [--addr host:port]   stop a stream another client left on
 
 Target defaults to $MEDEWI_MACHINE_ADDR; decode spec from $MEDEWI_XML_PATH.`)
 }
 
-func newFlagSet(name string, stderr io.Writer) (*flag.FlagSet, *string) {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+func newFlagSet(name string, stderr io.Writer) (*pflag.FlagSet, *string) {
+	fs := pflag.NewFlagSet(name, pflag.ContinueOnError)
 	fs.SetOutput(stderr)
 	addr := fs.String("addr", os.Getenv(envAddr), "target host:port (default $"+envAddr+")")
 	return fs, addr
+}
+
+// parseFlags parses args into fs. When it returns false the caller exits
+// with code: 0 after --help (pflag printed the flags), 2 on a usage error.
+func parseFlags(fs *pflag.FlagSet, args []string, stderr io.Writer) (code int, ok bool) {
+	err := fs.Parse(args)
+	switch {
+	case err == nil:
+		return 0, true
+	case errors.Is(err, pflag.ErrHelp):
+		return 0, false
+	default:
+		_, _ = fmt.Fprintf(stderr, "levacap: %v\n", err)
+		return 2, false
+	}
 }
 
 func runConform(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs, addr := newFlagSet("conform", stderr)
 	maxFlag := fs.String("max", "readonly", "highest check class: readonly|stream")
 	yes := fs.Bool("yes", false, "skip the interactive confirmation")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if code, ok := parseFlags(fs, args, stderr); !ok {
+		return code
 	}
 	var maxClass conformance.Class
 	switch *maxFlag {
@@ -105,11 +122,11 @@ func runConform(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "stream":
 		maxClass = conformance.StreamState
 	default:
-		_, _ = fmt.Fprintf(stderr, "levacap: invalid -max %q (want readonly|stream)\n", *maxFlag)
+		_, _ = fmt.Fprintf(stderr, "levacap: invalid --max %q (want readonly|stream)\n", *maxFlag)
 		return 2
 	}
 	if *addr == "" {
-		_, _ = fmt.Fprintf(stderr, "levacap: no target: set $%s or pass -addr\n", envAddr)
+		_, _ = fmt.Fprintf(stderr, "levacap: no target: set $%s or pass --addr\n", envAddr)
 		return 2
 	}
 
@@ -189,24 +206,24 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	scenario := fs.String("scenario", "", "scenario: commands|stream|shot|display (required)")
 	out := fs.String("out", "captures", "output directory")
 	force := fs.Bool("force", false, "overwrite an existing complete capture")
-	sample := displaySample{}
-	fs.DurationVar(&sample.every, "display-every", 10*time.Second, "display scenario: switch to the LCD mirror this often")
-	fs.DurationVar(&sample.dur, "display-for", 500*time.Millisecond, "display scenario: stay on the LCD mirror this long per sample")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	sample := displaySample{every: 10 * time.Second, dur: 500 * time.Millisecond}
+	fs.Var(systime.NewSpan(&sample.every), "display-every", "display scenario: switch to the LCD mirror this often")
+	fs.Var(systime.NewSpan(&sample.dur), "display-for", "display scenario: stay on the LCD mirror this long per sample")
+	if code, ok := parseFlags(fs, args, stderr); !ok {
+		return code
 	}
 	switch *scenario {
 	case "commands", "stream", "shot", "display":
 	default:
-		_, _ = fmt.Fprintf(stderr, "levacap: -scenario must be one of commands, stream, shot, display (got %q)\n", *scenario)
+		_, _ = fmt.Fprintf(stderr, "levacap: --scenario must be one of commands, stream, shot, display (got %q)\n", *scenario)
 		return 2
 	}
 	if sample.every <= 0 || sample.dur <= 0 || sample.dur >= sample.every {
-		_, _ = fmt.Fprintln(stderr, "levacap: need 0 < -display-for < -display-every")
+		_, _ = fmt.Fprintln(stderr, "levacap: need 0 < --display-for < --display-every")
 		return 2
 	}
 	if *addr == "" {
-		_, _ = fmt.Fprintf(stderr, "levacap: no target: set $%s or pass -addr\n", envAddr)
+		_, _ = fmt.Fprintf(stderr, "levacap: no target: set $%s or pass --addr\n", envAddr)
 		return 2
 	}
 
@@ -215,7 +232,7 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		for _, n := range []string{"log.jsonl", "manifest.json"} {
 			// Any stat result other than "does not exist" counts as exists.
 			if _, err := os.Stat(filepath.Join(outDir, n)); !errors.Is(err, os.ErrNotExist) {
-				_, _ = fmt.Fprintf(stderr, "levacap: %s already exists; refusing to overwrite (use -force)\n", filepath.Join(outDir, n))
+				_, _ = fmt.Fprintf(stderr, "levacap: %s already exists; refusing to overwrite (use --force)\n", filepath.Join(outDir, n))
 				return 1
 			}
 		}

@@ -54,7 +54,7 @@ func tlsArgs(t *testing.T, srv *httptest.Server) []string {
 	}
 	cert := write("cert.pem", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 	keyf := write("key.pem", pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: kb}))
-	return []string{"-url", srv.URL, "-cert", cert, "-key", keyf, "-ca", ca}
+	return []string{"--url", srv.URL, "--cert", cert, "--key", keyf, "--ca", ca}
 }
 
 func exec(t *testing.T, srv *httptest.Server, args ...string) (int, string, string) {
@@ -94,7 +94,7 @@ func TestBackupFileNames(t *testing.T) {
 	srv := backupServer(http.StatusOK)
 	defer srv.Close()
 	out := t.TempDir()
-	code, _, stderr := exec(t, srv, "backup", "-out", out)
+	code, _, stderr := exec(t, srv, "backup", "--out", out)
 	if code != 0 {
 		t.Fatalf("exit %d, stderr: %s", code, stderr)
 	}
@@ -139,7 +139,7 @@ func TestBackupFileNames(t *testing.T) {
 func TestBackupStdout(t *testing.T) {
 	srv := backupServer(http.StatusOK)
 	defer srv.Close()
-	code, stdout, stderr := exec(t, srv, "backup", "-out", "-")
+	code, stdout, stderr := exec(t, srv, "backup", "--out", "-")
 	if code != 0 {
 		t.Fatalf("exit %d, stderr: %s", code, stderr)
 	}
@@ -155,7 +155,7 @@ func TestBackupMCmFailureWritesNothing(t *testing.T) {
 	srv := backupServer(http.StatusBadGateway)
 	defer srv.Close()
 	out := t.TempDir()
-	code, _, _ := exec(t, srv, "backup", "-out", out)
+	code, _, _ := exec(t, srv, "backup", "--out", out)
 	if code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
@@ -271,8 +271,8 @@ func TestInsecurePlainHTTP(t *testing.T) {
 	t.Setenv("MEDEWID_CTL_KEY", "")
 	t.Setenv("MEDEWID_CTL_CA", "")
 	for _, args := range [][]string{
-		{"-insecure", "-url", srv.URL, "status"},
-		{"status", "-insecure", "-url", srv.URL},
+		{"--insecure", "--url", srv.URL, "status"},
+		{"status", "--insecure", "--url", srv.URL},
 	} {
 		var out, errb bytes.Buffer
 		if code := run(args, &out, &errb); code != 0 || !strings.Contains(out.String(), "power: active\n") {
@@ -286,19 +286,19 @@ func TestInsecureNeedsHTTPURL(t *testing.T) {
 		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer srv.Close()
-	// -insecure never means "skip certificate checks over https".
+	// --insecure never means "skip certificate checks over https".
 	var out, errb bytes.Buffer
-	if code := run([]string{"-insecure", "-url", srv.URL, "status"}, &out, &errb); code != 2 {
-		t.Fatalf("-insecure with https: exit %d, want 2", code)
+	if code := run([]string{"--insecure", "--url", srv.URL, "status"}, &out, &errb); code != 2 {
+		t.Fatalf("--insecure with https: exit %d, want 2", code)
 	}
-	// An http:// URL without -insecure must not silently send plaintext.
+	// An http:// URL without --insecure must not silently send plaintext.
 	plain := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("plaintext request reached the server")
 	}))
 	defer plain.Close()
-	args := append(tlsArgs(t, srv), "-url", plain.URL, "status")
+	args := append(tlsArgs(t, srv), "--url", plain.URL, "status")
 	if code := run(args, &out, &errb); code != 2 {
-		t.Fatalf("http URL without -insecure: exit %d, want 2", code)
+		t.Fatalf("http URL without --insecure: exit %d, want 2", code)
 	}
 }
 
@@ -334,13 +334,13 @@ func TestDefaultCredentialFiles(t *testing.T) {
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for flag, name := range map[string]string{"-cert": "client.crt", "-key": "client.key", "-ca": "ca.crt"} {
+	for flag, name := range map[string]string{"--cert": "client.crt", "--key": "client.key", "--ca": "ca.crt"} {
 		if err := os.Rename(argVal(t, args, flag), filepath.Join(dir, name)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	var out, errb bytes.Buffer
-	if code := run([]string{"-url", srv.URL, "status"}, &out, &errb); code != 0 {
+	if code := run([]string{"--url", srv.URL, "status"}, &out, &errb); code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, errb.String())
 	}
 	if !strings.Contains(out.String(), "connected: true") {
@@ -353,7 +353,7 @@ func TestMissingDefaultCredentialNamesPath(t *testing.T) {
 	cfgHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfgHome)
 	var out, errb bytes.Buffer
-	if code := run([]string{"-url", "https://127.0.0.1:1", "status"}, &out, &errb); code != 2 {
+	if code := run([]string{"--url", "https://127.0.0.1:1", "status"}, &out, &errb); code != 2 {
 		t.Fatalf("exit %d, want 2; stderr %q", code, errb.String())
 	}
 	if want := filepath.Join(cfgHome, "medewi", "client.crt"); !strings.Contains(errb.String(), want) {
@@ -379,8 +379,8 @@ func TestRelease(t *testing.T) {
 		args []string
 		want time.Duration
 	}{
-		{"explicit", []string{"release", "-until", "+30min"}, 30 * time.Minute},
-		{"double dash", []string{"release", "--until=+30min"}, 30 * time.Minute},
+		{"explicit", []string{"release", "--until", "+30min"}, 30 * time.Minute},
+		{"equals form", []string{"release", "--until=+30min"}, 30 * time.Minute},
 		{"default", []string{"release"}, time.Hour},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -450,8 +450,8 @@ func TestReleaseBadUntilSendsNothing(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
 	defer srv.Close()
 	for _, a := range []string{"30min", "+0s", "-5min", "+6000000h"} {
-		if code, _, _ := exec(t, srv, "release", "-until", a); code != 2 {
-			t.Errorf("-until %s: exit %d, want 2", a, code)
+		if code, _, _ := exec(t, srv, "release", "--until", a); code != 2 {
+			t.Errorf("--until %s: exit %d, want 2", a, code)
 		}
 	}
 	if code, _, _ := exec(t, srv, "release", "extra"); code != 2 {
@@ -505,6 +505,47 @@ func TestStatusReleasedUntil(t *testing.T) {
 		srv.Close()
 		if code != 0 || !strings.Contains(stdout, tc.want) {
 			t.Errorf("%s: exit %d out %q err %q", tc.json, code, stdout, stderr)
+		}
+	}
+}
+
+func TestSingleDashLongFlagRejected(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run([]string{"-ca", "x", "status"}, &out, &errb); code != 2 {
+		t.Fatalf("exit %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), "unknown shorthand flag") {
+		t.Errorf("stderr %q does not say unknown shorthand flag", errb.String())
+	}
+}
+
+func TestReleaseUntil(t *testing.T) {
+	now := time.Date(2026, 11, 10, 14, 0, 0, 0, time.Local)
+	ok := []struct {
+		in   string
+		want time.Time
+	}{
+		{"+1h", now.Add(time.Hour)},
+		{"+1h30min", now.Add(90 * time.Minute)},
+		{"2026-11-10 15:00", time.Date(2026, 11, 10, 15, 0, 0, 0, time.Local)},
+	}
+	for _, c := range ok {
+		got, err := releaseUntil(c.in, now)
+		if err != nil || !got.Equal(c.want) {
+			t.Errorf("releaseUntil(%q) = %v, %v; want %v", c.in, got, err, c.want)
+		}
+	}
+	for _, c := range []struct{ in, want string }{
+		{"1h30min", "+1h30min"},
+		{"", "--until"},
+		{"-1h", "--until must be in the future"},
+		{"2026-11-10 14:00", "--until must be in the future"},
+		{"2026-11-10 13:00", "--until must be in the future"},
+		{"bogus", "--until"},
+	} {
+		got, err := releaseUntil(c.in, now)
+		if err == nil || !strings.Contains(err.Error(), c.want) || strings.Contains(err.Error(), " -until") {
+			t.Errorf("releaseUntil(%q) = %v, %v; want error containing %q", c.in, got, err, c.want)
 		}
 	}
 }

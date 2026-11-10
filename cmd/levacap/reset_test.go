@@ -42,7 +42,7 @@ func TestCaptureStreamOnExitsWithHint(t *testing.T) {
 	s := startSim(t, sim.Config{})
 	leaveStreamOn(t, s)
 	var out, errb bytes.Buffer
-	code := run([]string{"capture", "-scenario", "commands", "-addr", s.Addr().String(), "-out", t.TempDir()},
+	code := run([]string{"capture", "--scenario", "commands", "--addr", s.Addr().String(), "--out", t.TempDir()},
 		strings.NewReader(""), &out, &errb)
 	if code != 1 {
 		t.Fatalf("exit %d, want 1", code)
@@ -61,7 +61,7 @@ func TestSessionResetStopsLeftoverStream(t *testing.T) {
 	s := startSim(t, sim.Config{})
 	leaveStreamOn(t, s)
 	var out, errb bytes.Buffer
-	if code := run([]string{"session-reset", "-addr", s.Addr().String()}, nil, &out, &errb); code != 0 {
+	if code := run([]string{"session-reset", "--addr", s.Addr().String()}, nil, &out, &errb); code != 0 {
 		t.Fatalf("exit %d, stderr %s", code, errb.String())
 	}
 	if got := s.Received(); !slices.Equal(got, []string{"MCr", "MC "}) {
@@ -75,7 +75,7 @@ func TestSessionResetStopsLeftoverStream(t *testing.T) {
 func TestSessionResetIdleSendsNothing(t *testing.T) {
 	s := startSim(t, sim.Config{})
 	var out, errb bytes.Buffer
-	if code := run([]string{"session-reset", "-addr", s.Addr().String()}, nil, &out, &errb); code != 0 {
+	if code := run([]string{"session-reset", "--addr", s.Addr().String()}, nil, &out, &errb); code != 0 {
 		t.Fatalf("exit %d, stderr %s", code, errb.String())
 	}
 	if got := s.Received(); len(got) != 0 {
@@ -150,7 +150,7 @@ func (f *fakeMachine) received() string {
 func TestSessionResetStreamKeepsRunning(t *testing.T) {
 	f := startFake(t, true)
 	var out, errb bytes.Buffer
-	if code := run([]string{"session-reset", "-addr", f.ln.Addr().String()}, nil, &out, &errb); code != 1 {
+	if code := run([]string{"session-reset", "--addr", f.ln.Addr().String()}, nil, &out, &errb); code != 1 {
 		t.Fatalf("exit %d, want 1; stdout %s", code, out.String())
 	}
 	if got := f.received(); got != "MC \r\n" {
@@ -164,7 +164,7 @@ func TestSessionResetStreamKeepsRunning(t *testing.T) {
 func TestSessionResetSilentMachineSendsNothing(t *testing.T) {
 	f := startFake(t, false)
 	var out, errb bytes.Buffer
-	if code := run([]string{"session-reset", "-addr", f.ln.Addr().String()}, nil, &out, &errb); code != 1 {
+	if code := run([]string{"session-reset", "--addr", f.ln.Addr().String()}, nil, &out, &errb); code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
 	if got := f.received(); got != "" {

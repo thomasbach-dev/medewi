@@ -72,7 +72,7 @@ pkgs.testers.runNixOSTest {
       serviceConfig = {
         ExecStart = "${
           self.packages.${system}.levasim
-        }/bin/levasim -addr 127.0.0.1:2300 -tripwire 127.0.0.1:2323 -fixtures ${fixtures}";
+        }/bin/levasim --addr 127.0.0.1:2300 --tripwire 127.0.0.1:2323 --fixtures ${fixtures}";
         DynamicUser = true;
       };
     };
@@ -100,6 +100,12 @@ pkgs.testers.runNixOSTest {
     brewhost.wait_for_unit("medewid.service")
     brewhost.wait_until_succeeds("journalctl -u medewid | grep -q 'reports started'", timeout=timedelta(seconds=60))
     brewhost.succeed("curl -sf http://127.0.0.1:9114/healthz")
+
+    # levalog decodes the raw log the levasim traffic produced; the log
+    # flushes every 5 s. A decoded field name proves the spec was applied;
+    # `=` before a leading `-` is recommended for readability (docs/cli-conventions.md).
+    brewhost.wait_until_succeeds(
+      "levalog decode --since=-5min | grep -q 'Temperature PID1='", timeout=timedelta(seconds=30))
 
     curl = "curl -sf --cacert ${pki}/ca.crt "
     mtls = curl + "--cert ${pki}/client.crt --key ${pki}/client.key "
