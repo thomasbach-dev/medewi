@@ -129,10 +129,43 @@ func (d *decoder) hide(t int64, line []byte) bool {
 		d.lastDump, d.hasDump = t, true
 		return true
 	}
+	quiet := d.hasDump && time.Duration(t-d.lastDump)*time.Millisecond < rawlog.DefaultDumpQuiet
 	if rawlog.IsStreamLine(line) {
+		// A stream switch can glue a dump reply behind a cut-off record;
+		// inside the quiet period only whole records may be shown.
+		if quiet && !allWhole(line) {
+			d.lastDump = t
+			return true
+		}
 		return false
 	}
-	return d.hasDump && time.Duration(t-d.lastDump)*time.Millisecond < rawlog.DefaultDumpQuiet
+	return quiet
+}
+
+// allWhole reports whether every piece of line is a whole record: an intact
+// frame, a report from { to }, a banner or a short notice.
+func allWhole(line []byte) bool {
+	for _, p := range leva.SplitLine(line) {
+		d := p.Data
+		switch {
+		case p.Fragment || len(d) == 0:
+			return false
+		case d[0] == '{':
+			if d[len(d)-1] != '}' {
+				return false
+			}
+		case bytes.HasPrefix(d, []byte("$id:")):
+		case d[0] == '[':
+			if len(d) > maxNotice {
+				return false
+			}
+		default:
+			if _, err := leva.ParseFrame(d); err != nil {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (d *decoder) line(t int64, line []byte) {
