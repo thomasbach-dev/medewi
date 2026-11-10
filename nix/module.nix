@@ -46,7 +46,7 @@ in
         `/var/lib/medewid` (the only writable path), as must
         `MEDEWID_RAW_DIR`. The XML and TLS files
         are not read from here; see `xmlFile` and the `tls*` options. The
-        service never passes `-insecure-http`.
+        service never passes `--insecure-http`.
       '';
     };
 
@@ -205,6 +205,16 @@ in
         IPAddressAllow = [ "localhost" ] ++ cfg.ipAddressAllow;
       };
     };
+
+    # The raw-log decoder for troubleshooting (`sudo levalog decode -s …`),
+    # with the vendor XML built in: sudo drops MEDEWI_XML_PATH.
+    environment.systemPackages = [
+      (pkgs.writeShellScriptBin "levalog" ''
+        exec ${
+          self.packages.${pkgs.stdenv.hostPlatform.system}.levalog
+        }/bin/levalog --xml ${lib.escapeShellArg cfg.xmlFile} "$@"
+      '')
+    ];
 
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ listenPort ];
   };

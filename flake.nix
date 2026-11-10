@@ -73,6 +73,7 @@
         levasim = build "levasim";
         medewid = build "medewid";
         medewictl = build "medewictl";
+        levalog = build "levalog";
       };
 
       nixosModules.medewid = import ./nix/module.nix self;
