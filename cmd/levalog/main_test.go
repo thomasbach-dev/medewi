@@ -280,7 +280,7 @@ func TestHelp(t *testing.T) {
 		if code != 0 {
 			t.Errorf("%q: exit %d", args, code)
 		}
-		for _, w := range []string{"MEDEWI_XML_PATH", "MEDEWID_RAW_DIR"} {
+		for _, w := range []string{"MEDEWI_XML_PATH", "MEDEWID_RAW_DIR", "capture directory", "raw-log directory"} {
 			if !strings.Contains(errs, w) {
 				t.Errorf("%q: help does not name %s:\n%s", args, w, errs)
 			}

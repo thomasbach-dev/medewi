@@ -32,7 +32,8 @@ func usage(w io.Writer) {
 
   decode [--dir D] [-s|--since T] [-u|--until T] [--show-dumps] [FILE|DIR ...]
       print one line per event of raw logs (*.jsonl.gz) or captures
-      (log.jsonl, plain or gzip, or a capture directory). Without FILE,
+      (log.jsonl, plain or gzip). A DIR is either a capture directory
+      (containing log.jsonl) or a raw-log directory. Without FILE or DIR,
       the raw logs in --dir that overlap the window. T is a systemd.time(7)
       timestamp in local time: "2026-11-10 10:40", "10:40", "-5min",
       "yesterday", with an optional " UTC". --since/--until need raw logs.
@@ -142,6 +143,7 @@ func decode(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		}
 		for _, e := range logview.Decode(src, opt) {
 			if err := logview.Format(w, e, time.Local); err != nil {
+				_ = w.Flush()
 				_, _ = fmt.Fprintf(stderr, "levalog: %v\n", err)
 				return 1
 			}
