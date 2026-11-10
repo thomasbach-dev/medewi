@@ -142,8 +142,9 @@ func (d *decoder) hide(t int64, line []byte) bool {
 	return quiet
 }
 
-// allWhole reports whether every piece of line is a whole record: an intact
-// frame, a report from { to }, a banner or a short notice.
+// allWhole reports whether every piece of line is a whole record in its
+// strict shape: an intact frame, a report whose trailing checksum verifies,
+// an exact "$id: leva! (N.N)" banner or a short notice without '|' or ':'.
 func allWhole(line []byte) bool {
 	for _, p := range leva.SplitLine(line) {
 		d := p.Data
@@ -151,12 +152,15 @@ func allWhole(line []byte) bool {
 		case p.Fragment || len(d) == 0:
 			return false
 		case d[0] == '{':
-			if d[len(d)-1] != '}' {
+			if !reportSumOK(d) {
 				return false
 			}
-		case bytes.HasPrefix(d, []byte("$id:")):
+		case d[0] == '$':
+			if !isWholeBanner(d) {
+				return false
+			}
 		case d[0] == '[':
-			if len(d) > maxNotice {
+			if !isWholeNotice(d) {
 				return false
 			}
 		default:

@@ -147,7 +147,7 @@ func dumpSource() Source {
 		ev(20, fixture.RX, "|0002 secret\r\n"),
 		ev(30, fixture.RX, "|0003 secret\r\n"),
 		ev(40, fixture.RX, "some reply\r\n"),
-		ev(1040, fixture.RX, string(testReport())+"\r\n"),
+		ev(1040, fixture.RX, string(sumReport())+"\r\n"),
 	}}
 }
 
