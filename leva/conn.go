@@ -537,35 +537,15 @@ func (c *Conn) dispatch(raw []byte) {
 	c.split(line)
 }
 
-// split undoes what a stream switch (MCr/MC@) does on the real machine: it
-// can cut a report or display frame off without its CRLF and glue the next
-// record onto it. A report or frame line is split at the next record start;
-// the part before it is delivered if it is a whole frame or report and
-// dropped as a fragment otherwise. Other lines (command replies) are never
-// split: help text may contain "<100" and the like.
+// split routes the pieces of line (see SplitLine) and counts the fragments.
 func (c *Conn) split(line []byte) {
-	if isFrame(line) {
-		c.route(line) // intact; its text may contain "<100" and the like
-		return
-	}
-	for len(line) > 0 && (line[0] == '{' || line[0] == '<') {
-		i := nextRecord(line)
-		if i < 0 {
-			break
-		}
-		head := line[:i]
-		if isFrame(head) || (head[0] == '{' && head[i-1] == '}') {
-			c.route(head)
-		} else {
+	for _, p := range SplitLine(line) {
+		if p.Fragment {
 			c.fragments.Add(1)
+			continue
 		}
-		line = line[i:]
+		c.route(p.Data)
 	}
-	if len(line) > 0 && line[0] == '<' && !isFrame(line) {
-		c.fragments.Add(1) // a frame cut off by "MC " or MCr, nothing glued on
-		return
-	}
-	c.route(line)
 }
 
 // nextRecord returns the index after 0 where a report ("{ " and a pump
