@@ -262,6 +262,17 @@ machine with the right spec. `spec_ok: false` while connected means the
 XML's name does not match the firmware (see [Files](#2-files)); the
 daemon holds the connection without starting reports until you fix it.
 
+The module also installs `levalog`, a wrapper that decodes the raw
+traffic log with the module's `xmlFile` built in (root only: the
+directory is `0700`):
+
+```sh
+sudo levalog decode --since=-5min   # the last five minutes on the wire
+```
+
+When the connection drops later, follow
+[runbooks/troubleshoot-connection.md](runbooks/troubleshoot-connection.md).
+
 ## Metrics
 
 `/metrics` is served on the mTLS listener only, so Prometheus needs a
@@ -445,7 +456,7 @@ real directory; `/var/lib/medewid` is only a symlink) and snapshot
 `medewi.db` and `medewi.db-wal` together. The raw traffic log under
 `raw/` is a seven-day troubleshooting buffer and needs no backup.
 
-**Controller settings.** `medewictl backup -out DIR` dumps the machine's
+**Controller settings.** `medewictl backup --out DIR` dumps the machine's
 settings (license key inside; files `0600`). They change only when
 someone edits them on the machine, so run it after such changes and
 before every firmware flash. A schedule is optional; the daemon refuses

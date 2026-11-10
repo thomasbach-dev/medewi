@@ -325,7 +325,7 @@ func TestDisplayFlagsValidated(t *testing.T) {
 	if code, _ := runExit(t, append(baseArgs(t, machine, xml), "--insecure-http")...); code != 2 {
 		t.Errorf("bad env: exit %d, want 2", code)
 	}
-	// 0 disables sampling, whatever -display-for says.
+	// 0 disables sampling, whatever --display-for says.
 	t.Setenv("MEDEWID_DISPLAY_EVERY", "0")
 	r := start(t, append(baseArgs(t, machine, xml), "--insecure-http")...)
 	if code := r.shutdown(); code != 0 {
@@ -376,7 +376,7 @@ func TestHealthPlaintext(t *testing.T) {
 	clearEnv(t)
 	machine, xml := startSim(t)
 	args := append(baseArgs(t, machine, xml), "--insecure-http")
-	health := args[len(args)-2] // -health-addr value, set by baseArgs
+	health := args[len(args)-2] // --health-addr value, set by baseArgs
 	start(t, args...)
 
 	resp, err := http.Get("http://" + health + "/healthz")

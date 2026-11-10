@@ -70,6 +70,6 @@ func TestLogFlavourInvalid(t *testing.T) {
 	addr, xml := startSim(t)
 	code, stderr := runExit(t, append(baseArgs(t, addr, xml), "--insecure-http", "--log-flavour", "json")...)
 	if code != 2 || !strings.Contains(stderr, "--log-flavour") {
-		t.Errorf("exit %d, stderr %q; want 2 naming -log-flavour", code, stderr)
+		t.Errorf("exit %d, stderr %q; want 2 naming --log-flavour", code, stderr)
 	}
 }

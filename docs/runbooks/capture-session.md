@@ -77,17 +77,17 @@ Below, `levacap ...` means `go run ./cmd/levacap ...`.
 ## 1. Conformance run (quick, read-only)
 
 ```sh
-go run ./cmd/levacap conform -max readonly      # banner, MCh, MC?
-go run ./cmd/levacap conform -max stream        # additionally MCr, 3 reports, MC<space>
+go run ./cmd/levacap conform --max readonly      # banner, MCh, MC?
+go run ./cmd/levacap conform --max stream        # additionally MCr, 3 reports, MC<space>
 ```
 
-Both prompt "machine idle, nobody brewing? [y/N]" (skip with `-yes` only if
+Both prompt "machine idle, nobody brewing? [y/N]" (skip with `--yes` only if
 you checked). With `MEDEWI_XML_PATH` set, reports are also decoded against
 the spec; without it a notice says decode assertions are skipped. Output is
 one line per check: `ok`, `failed: <reason>`, `skipped` or `not-run` (the
 banner gate failed). Exit code 0 only if everything passed.
 
-`-max stream` leaves the machine as found: it always sends `MC ` at the
+`--max stream` leaves the machine as found: it always sends `MC ` at the
 end. (`MC ` also resets current machine state; that is accepted.)
 
 ## 2. Capture scenarios, in order
@@ -97,12 +97,12 @@ Each scenario is written to `<out>/<scenario>/` (default `captures/<scenario>/`)
 (firmware banner, XML name, XML sha256, address, notes).
 
 ```sh
-go run ./cmd/levacap capture -scenario commands        # 1. each whitelist command once
-go run ./cmd/levacap capture -scenario stream          # 2. idle report stream
-go run ./cmd/levacap capture -scenario stream -out captures/warmup   # 3. warmup
-go run ./cmd/levacap capture -scenario shot            # 4. a real shot
-go run ./cmd/levacap capture -scenario shot -out captures/shot2      # 5. second shot
-go run ./cmd/levacap capture -scenario display -out captures/warmup-display  # 6. warm-up to READY
+go run ./cmd/levacap capture --scenario commands        # 1. each whitelist command once
+go run ./cmd/levacap capture --scenario stream          # 2. idle report stream
+go run ./cmd/levacap capture --scenario stream --out captures/warmup   # 3. warmup
+go run ./cmd/levacap capture --scenario shot            # 4. a real shot
+go run ./cmd/levacap capture --scenario shot --out captures/shot2      # 5. second shot
+go run ./cmd/levacap capture --scenario display --out captures/warmup-display  # 6. warm-up to READY
 ```
 
 1. **commands** — sends `MCh MC? MCu MCm MCb MCf` with a 1 s pause between
@@ -112,7 +112,7 @@ go run ./cmd/levacap capture -scenario display -out captures/warmup-display  # 6
    prints "press Enter to stop"; wait about 60 s, press Enter. It then sends
    `MC `.
 3. **warmup, a few minutes** — switch the machine on from cold and record
-   while it heats; Enter when settled. (Use a different `-out` per run,
+   while it heats; Enter when settled. (Use a different `--out` per run,
    because the scenario name decides the subdirectory.)
 4. **shots, 1 or 2** — scenario `shot` prints "pull the shot now, press Enter
    when done". Start recording, pull a real shot, press Enter afterwards.
@@ -120,7 +120,7 @@ go run ./cmd/levacap capture -scenario display -out captures/warmup-display  # 6
    records the report stream (`MCr`) and samples the LCD mirror (`MC@`, 10
    frames/s): the machine sends only one of the two at a time, so `levacap`
    switches to `MC@` for 500 ms every 10 s and back to `MCr` (tune with
-   `-display-every`, `-display-for`). About 1.2 KB/s. Start it while the
+   `--display-every`, `--display-for`). About 1.2 KB/s. Start it while the
    machine is in standby or eco (cold is best), then wake the machine. Type `m` + Enter when you hear the
    three READY beeps (and at anything else worth finding again); the marks
    land in the manifest notes as milliseconds since start. An empty line
@@ -136,7 +136,7 @@ Behavior of the tool you need to know:
 
 - **Refuses to overwrite.** If `log.jsonl` or `manifest.json` already exists
   in the target directory, `levacap` exits 1 with "refusing to overwrite";
-  use a different `-out` or `-force` (only when you meant to replace a
+  use a different `--out` or `--force` (only when you meant to replace a
   *complete* capture).
 - **Ctrl-C is a clean stop for `stream`, `shot` and `display`.** Once recording has
   started, Ctrl-C does exactly what Enter does: `levacap` sends `MC `, writes a
@@ -155,7 +155,7 @@ Behavior of the tool you need to know:
   `.partial` files, so move them aside first (into a dated subdirectory such as
   `captures/commands/failed-<date>/`) if you want to keep them for diagnosis.
 - Files are written under temp names and renamed only after both succeeded.
-- Port 2323 as `-addr` is refused.
+- Port 2323 as `--addr` is refused.
 
 ## 3. Sanitization gate
 
@@ -171,8 +171,8 @@ Behavior of the tool you need to know:
    `testdata/fixtures/synthetic/responses.json`).
 4. Dry-run any fixture first, in two terminals:
    ```sh
-   go run ./cmd/levasim -fixtures testdata/fixtures/synthetic -addr 127.0.0.1:2300
-   MEDEWI_XML_PATH=testdata/spec/synthetic.xml go run ./cmd/levacap conform -addr 127.0.0.1:2300 -max stream -yes
+   go run ./cmd/levasim --fixtures testdata/fixtures/synthetic --addr 127.0.0.1:2300
+   MEDEWI_XML_PATH=testdata/spec/synthetic.xml go run ./cmd/levacap conform --addr 127.0.0.1:2300 --max stream --yes
    ```
    (For a new fixture directory, substitute it and its matching XML.)
 
@@ -203,17 +203,17 @@ every firmware flash, before anything else talks to the machine:
    (nothing from here is committed):
    ```sh
    PREFLASH_DIR="private/preflash-$(date +%F)"
-   go run ./cmd/levacap capture -scenario commands -out "$PREFLASH_DIR"
+   go run ./cmd/levacap capture --scenario commands --out "$PREFLASH_DIR"
    ```
    Then flash per the vendor procedure (`rancilio.org`, "Update").
    `levacap` never goes near port 2323.
 3. Copy the new release's XML into Status Monitor's `config/` directory
    AND update the local copy behind `MEDEWI_XML_PATH` (new file, then
    update `.envrc`).
-4. Run `go run ./cmd/levacap conform -max readonly`; compare its output and
+4. Run `go run ./cmd/levacap conform --max readonly`; compare its output and
    the `MC?` name against the pre-flash capture by hand. A name that does
    not match the XML file means: fix the XML copy first.
-5. Re-run `go run ./cmd/levacap conform -max stream` so reports are decoded
+5. Re-run `go run ./cmd/levacap conform --max stream` so reports are decoded
    against the new XML layout. If settings were reset, restore them from the
    `MCu` backup (vendor procedure).
 6. When both runs pass, restart the daemon (its startup handshake re-checks

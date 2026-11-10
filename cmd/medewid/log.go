@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-// logFlavours are the accepted -log-flavour values: "text" is slog's text
+// logFlavours are the accepted --log-flavour values: "text" is slog's text
 // format with timestamps; "systemd" drops the timestamp (the journal adds
 // one) and the level field, and prefixes each line with its syslog
 // priority, "<N>", which journald reads as the line's level.

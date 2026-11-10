@@ -66,6 +66,8 @@ flowchart LR
   edit history. Exports to LLM-friendly text.
 - **Raw traffic log** — the daemon also keeps the last days of machine
   traffic as gzip JSON-lines files (`rawlog/`), minus license-key replies.
+  `levalog decode` turns them (and levacap captures) back into readable
+  lines for troubleshooting.
 
 ## Deployment modes
 
@@ -108,6 +110,17 @@ a truncated kind naming the cause (`truncated-lost`, `truncated-released`,
   display sampling and marks.
 - `cmd/medewid` — the daemon binary (mTLS API, plaintext health listener).
 - `cmd/medewictl` — client for status, power, release/reclaim, marks and backups.
+- `logview/` — offline decoding of raw logs and captures: opens files
+  (also a cut or still-written gzip), selects raw logs for a time window,
+  reassembles and classifies lines (reports via the vendor XML, display
+  frames, banners, glued records) and redacts `MCu`/`MCm` dumps with the
+  same rules as `rawlog`. Kept out of `main` so a later remote reader
+  (#30) can reuse it.
+- `systime/` — the `systemd.time(7)` subset every command accepts for
+  timestamps and spans, plus pflag values for them
+  ([CLI conventions](cli-conventions.md)).
+- `cmd/levalog` — `levalog decode` over `logview`, installed on brewhost
+  by the module.
 - `nix/module.nix` — the `nixosModules.medewid` service.
 
 ## Build order

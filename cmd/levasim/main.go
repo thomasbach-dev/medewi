@@ -27,7 +27,7 @@ const (
 	responsesFile = "responses.json"
 )
 
-// defaultResponses are served when -fixtures does not supply responses.json.
+// defaultResponses are served when --fixtures does not supply responses.json.
 var defaultResponses = map[string][]string{
 	"MCh": {"MCh  this help", "MCu  complete setup dump", "MCr  start reports", "MC<space>  stop reports"},
 	"MC?": {"XML=synthetic"},

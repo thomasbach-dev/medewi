@@ -286,7 +286,7 @@ func TestInsecureNeedsHTTPURL(t *testing.T) {
 		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer srv.Close()
-	// -insecure never means "skip certificate checks over https".
+	// --insecure never means "skip certificate checks over https".
 	var out, errb bytes.Buffer
 	if code := run([]string{"--insecure", "--url", srv.URL, "status"}, &out, &errb); code != 2 {
 		t.Fatalf("--insecure with https: exit %d, want 2", code)
