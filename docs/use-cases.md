@@ -79,6 +79,56 @@ left on" alerts), shot counter and water throughput (descaling and
 flow-meter-recalibration reminders). The same plumbing captures shot
 telemetry — the exporter is on the critical path for UC5.
 
+## UC8: Shot visualization & notes
+
+Watch the running shot live on a phone — pressure (and its setpoint), flow,
+volume, temperature — then browse the history and the finished shot's
+curves afterwards. Right after tasting, an optional one-line note/verdict
+can be attached to the shot: the lightweight end of UC3's journal.
+Observation only; never required (UC2's anti-goal holds).
+
+## UC9: Maintenance tracking
+
+"When did I last backflush / descale / deep-clean?" answered without a
+notebook. Detected program runs (backflush, descale) timestamp themselves;
+manual entries cover what the stream cannot tell (detergent vs plain-water
+backflush) or the machine cannot see (group gasket, shower screen, water
+filter). Reminders derive from UC7's throughput counters; the panel shows
+last-done/due per kind.
+
+## UC10: Coffee inventory
+
+The coffees in the house are entities (name, roaster, roast date); since
+beans are portioned into single frozen doses, the inventory unit is the
+dose. A "current coffee" is selected once; every shot links to it and
+consumes a dose, so "how much is left" is an exact count, not an estimate.
+First slice of the recipe schema behind UC2/UC3.
+
+## UC11: Machine settings visibility
+
+Decode the firmware's settings backups (MCu/MCm) and list the machine's
+current configuration as readable name/value pairs; diff two backups to
+see what changed. Feeds UC6 (an AI cannot discuss settings it cannot see)
+and provides the read-back half of verify-after-write for any future
+settings push. The license key inside the dumps is always redacted and
+dumps are never committed.
+
+## UC12: Machine tuning
+
+Shorten the warm-up ("time to first good shot") and tune the heating
+algorithm — leva!'s PID parameters — by measure-and-compare: capture a
+baseline, change one variable via the machine's menu, compare the
+transients. The software provides evidence and comparisons; until a
+guarded write path exists, hands stay on the machine's own menu.
+
+## UC13: Firmware updates
+
+The rare firmware update gets an orchestrated procedure, not ad-hoc
+bravery: release the machine, take a settings backup, let the **vendor's
+flasher** do the flashing, then run the conformance suite as the
+post-flash gate and diff the settings backups (UC11). The flashing itself
+stays outside medewi — see the bootloader constraint below.
+
 ## Constraints
 
 - Live in-shot control stays on the machine (rotary encoder = pressure,
