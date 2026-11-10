@@ -21,9 +21,9 @@ func TestMachineSmoke(t *testing.T) {
 		t.Skip("MEDEWI_XML_PATH not set")
 	}
 	clearEnv(t)
-	r := start(t, "-machine", machine, "-xml", xml,
-		"-db", filepath.Join(t.TempDir(), "m.db"),
-		"-listen", "127.0.0.1:0", "-health-addr", freeAddr(t), "-insecure-http")
+	r := start(t, "--machine", machine, "--xml", xml,
+		"--db", filepath.Join(t.TempDir(), "m.db"),
+		"--listen", "127.0.0.1:0", "--health-addr", freeAddr(t), "--insecure-http")
 	waitStatus(t, "http://"+r.addr, http.DefaultClient, func(m map[string]any) bool {
 		return m["connected"] == true && m["spec_ok"] == true
 	})

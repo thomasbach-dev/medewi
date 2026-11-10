@@ -121,11 +121,11 @@ func startSim(t *testing.T) (addr, xml string) {
 func baseArgs(t *testing.T, machine, xml string) []string {
 	t.Helper()
 	return []string{
-		"-machine", machine, "-xml", xml,
-		"-db", filepath.Join(t.TempDir(), "m.db"),
-		"-listen", "127.0.0.1:0",
-		"-raw-dir", filepath.Join(t.TempDir(), "raw"),
-		"-health-addr", freeAddr(t),
+		"--machine", machine, "--xml", xml,
+		"--db", filepath.Join(t.TempDir(), "m.db"),
+		"--listen", "127.0.0.1:0",
+		"--raw-dir", filepath.Join(t.TempDir(), "raw"),
+		"--health-addr", freeAddr(t),
 	}
 }
 
@@ -169,7 +169,7 @@ func blockedDir(t *testing.T) string {
 func TestRawLogFlags(t *testing.T) {
 	clearEnv(t)
 	machine, xml := startSim(t)
-	args := append(baseArgs(t, machine, xml), "-insecure-http")
+	args := append(baseArgs(t, machine, xml), "--insecure-http")
 	r := start(t, args...)
 	waitStatus(t, "http://"+r.addr, http.DefaultClient, func(m map[string]any) bool {
 		return m["connected"] == true && m["spec_ok"] == true
@@ -186,7 +186,7 @@ func TestRawLogFlags(t *testing.T) {
 	if code := r.shutdown(); code != 0 {
 		t.Fatalf("exit %d\n%s", code, r.stderr.String())
 	}
-	files, err := filepath.Glob(filepath.Join(argVal(t, args, "-raw-dir"), "*.jsonl.gz"))
+	files, err := filepath.Glob(filepath.Join(argVal(t, args, "--raw-dir"), "*.jsonl.gz"))
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no raw log file (err %v)\n%s", err, r.stderr.String())
 	}
@@ -200,8 +200,8 @@ func TestRawLogEnv(t *testing.T) {
 	t.Setenv("MEDEWID_RAW_RETENTION", "24h")
 	t.Setenv("MEDEWID_RAW_MAX_MB", "1")
 	args := []string{
-		"-machine", machine, "-xml", xml, "-insecure-http", "-listen", "127.0.0.1:0",
-		"-health-addr", freeAddr(t), "-db", filepath.Join(t.TempDir(), "m.db"),
+		"--machine", machine, "--xml", xml, "--insecure-http", "--listen", "127.0.0.1:0",
+		"--health-addr", freeAddr(t), "--db", filepath.Join(t.TempDir(), "m.db"),
 	}
 	r := start(t, args...)
 	if code := r.shutdown(); code != 0 {
@@ -219,7 +219,7 @@ func TestRawLogEnv(t *testing.T) {
 func TestRawLogDisabled(t *testing.T) {
 	clearEnv(t)
 	machine, xml := startSim(t)
-	args := append(baseArgs(t, machine, xml), "-insecure-http", "-raw-retention", "0")
+	args := append(baseArgs(t, machine, xml), "--insecure-http", "--raw-retention", "0")
 	r := start(t, args...)
 	waitStatus(t, "http://"+r.addr, http.DefaultClient, func(m map[string]any) bool {
 		return m["connected"] == true
@@ -232,7 +232,7 @@ func TestRawLogDisabled(t *testing.T) {
 		t.Error("process metrics missing without a raw log")
 	}
 	r.shutdown()
-	if es, _ := os.ReadDir(argVal(t, args, "-raw-dir")); len(es) != 0 {
+	if es, _ := os.ReadDir(argVal(t, args, "--raw-dir")); len(es) != 0 {
 		t.Errorf("raw dir not empty: %v", es)
 	}
 }
@@ -240,7 +240,7 @@ func TestRawLogDisabled(t *testing.T) {
 func TestRawLogExplicitDirUnusable(t *testing.T) {
 	clearEnv(t)
 	machine, xml := startSim(t)
-	args := append(baseArgs(t, machine, xml), "-insecure-http", "-raw-dir", blockedDir(t))
+	args := append(baseArgs(t, machine, xml), "--insecure-http", "--raw-dir", blockedDir(t))
 	if code, se := runExit(t, args...); code != 1 {
 		t.Fatalf("exit %d, want 1\n%s", code, se)
 	}
@@ -255,13 +255,13 @@ func TestRawLogDefaultDirUnusableWarns(t *testing.T) {
 	var args []string
 	base := baseArgs(t, machine, xml)
 	for i := 0; i < len(base); i++ {
-		if base[i] == "-raw-dir" {
+		if base[i] == "--raw-dir" {
 			i++ // skip its value
 			continue
 		}
 		args = append(args, base[i])
 	}
-	args = append(args, "-insecure-http")
+	args = append(args, "--insecure-http")
 	r := start(t, args...)
 	if code := r.shutdown(); code != 0 {
 		t.Fatalf("exit %d", code)
@@ -274,8 +274,8 @@ func TestRawLogDefaultDirUnusableWarns(t *testing.T) {
 func TestRawLogBadFlags(t *testing.T) {
 	clearEnv(t)
 	machine, xml := startSim(t)
-	for _, extra := range [][]string{{"-raw-retention", "-1h"}, {"-raw-max-mb", "0"}, {"-raw-max-mb", "1048577"}, {"-raw-max-mb", "9223372036854775807"}, {"-raw-retention", "x"}} {
-		args := append(append(baseArgs(t, machine, xml), "-insecure-http"), extra...)
+	for _, extra := range [][]string{{"--raw-retention", "-1h"}, {"--raw-max-mb", "0"}, {"--raw-max-mb", "1048577"}, {"--raw-max-mb", "9223372036854775807"}, {"--raw-retention", "x"}} {
+		args := append(append(baseArgs(t, machine, xml), "--insecure-http"), extra...)
 		if code, se := runExit(t, args...); code != 2 {
 			t.Errorf("%v: exit %d, want 2\n%s", extra, code, se)
 		}
@@ -297,7 +297,7 @@ func TestDisplaySampling(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = s.Stop() })
 	xml := filepath.Join("..", "..", "testdata", "spec", "synthetic.xml")
-	r := start(t, append(baseArgs(t, s.Addr().String(), xml), "-insecure-http", "-display-every", "100ms", "-display-for", "20ms")...)
+	r := start(t, append(baseArgs(t, s.Addr().String(), xml), "--insecure-http", "--display-every", "100ms", "--display-for", "20ms")...)
 	waitStatus(t, "http://"+r.addr, http.DefaultClient, func(m map[string]any) bool {
 		return m["display"] != nil
 	})
@@ -310,24 +310,24 @@ func TestDisplayFlagsValidated(t *testing.T) {
 	clearEnv(t)
 	machine, xml := startSim(t)
 	for _, extra := range [][]string{
-		{"-display-every", "-1s"},
-		{"-display-for", "0s"},
-		{"-display-every", "1s", "-display-for", "1s"},
-		{"-display-every", "x"},
-		{"-display-every", "30s", "-display-for", "3s"}, // a long sample stalls the report stream
+		{"--display-every", "-1s"},
+		{"--display-for", "0s"},
+		{"--display-every", "1s", "--display-for", "1s"},
+		{"--display-every", "x"},
+		{"--display-every", "30s", "--display-for", "3s"}, // a long sample stalls the report stream
 	} {
-		args := append(append(baseArgs(t, machine, xml), "-insecure-http"), extra...)
+		args := append(append(baseArgs(t, machine, xml), "--insecure-http"), extra...)
 		if code, se := runExit(t, args...); code != 2 {
 			t.Errorf("%v: exit %d, want 2\n%s", extra, code, se)
 		}
 	}
 	t.Setenv("MEDEWID_DISPLAY_EVERY", "bogus")
-	if code, _ := runExit(t, append(baseArgs(t, machine, xml), "-insecure-http")...); code != 2 {
+	if code, _ := runExit(t, append(baseArgs(t, machine, xml), "--insecure-http")...); code != 2 {
 		t.Errorf("bad env: exit %d, want 2", code)
 	}
 	// 0 disables sampling, whatever -display-for says.
 	t.Setenv("MEDEWID_DISPLAY_EVERY", "0")
-	r := start(t, append(baseArgs(t, machine, xml), "-insecure-http")...)
+	r := start(t, append(baseArgs(t, machine, xml), "--insecure-http")...)
 	if code := r.shutdown(); code != 0 {
 		t.Fatalf("display disabled: exit %d\n%s", code, r.stderr.String())
 	}
@@ -352,14 +352,14 @@ func TestRefusesWithoutTLS(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("exit = %d, want 2", code)
 	}
-	if !strings.Contains(stderr, "refusing to serve without TLS (pass -insecure-http to override)") {
+	if !strings.Contains(stderr, "refusing to serve without TLS (pass --insecure-http to override)") {
 		t.Fatalf("stderr = %q", stderr)
 	}
 }
 
 func TestPartialTLSConfig(t *testing.T) {
 	clearEnv(t)
-	args := append(baseArgs(t, "127.0.0.1:1", filepath.Join("..", "..", "testdata", "spec", "synthetic.xml")), "-tls-cert", "x.pem")
+	args := append(baseArgs(t, "127.0.0.1:1", filepath.Join("..", "..", "testdata", "spec", "synthetic.xml")), "--tls-cert", "x.pem")
 	if code, stderr := runExit(t, args...); code != 2 {
 		t.Fatalf("exit = %d, want 2; stderr %s", code, stderr)
 	}
@@ -367,7 +367,7 @@ func TestPartialTLSConfig(t *testing.T) {
 
 func TestMissingRequired(t *testing.T) {
 	clearEnv(t)
-	if code, _ := runExit(t, "-insecure-http"); code != 2 {
+	if code, _ := runExit(t, "--insecure-http"); code != 2 {
 		t.Fatalf("exit = %d, want 2", code)
 	}
 }
@@ -375,7 +375,7 @@ func TestMissingRequired(t *testing.T) {
 func TestHealthPlaintext(t *testing.T) {
 	clearEnv(t)
 	machine, xml := startSim(t)
-	args := append(baseArgs(t, machine, xml), "-insecure-http")
+	args := append(baseArgs(t, machine, xml), "--insecure-http")
 	health := args[len(args)-2] // -health-addr value, set by baseArgs
 	start(t, args...)
 
@@ -403,8 +403,8 @@ func TestEnvFallback(t *testing.T) {
 	t.Setenv("MEDEWI_MACHINE_ADDR", machine)
 	t.Setenv("MEDEWI_XML_PATH", xml)
 	args := []string{
-		"-insecure-http", "-listen", "127.0.0.1:0", "-health-addr", freeAddr(t),
-		"-db", filepath.Join(t.TempDir(), "m.db"),
+		"--insecure-http", "--listen", "127.0.0.1:0", "--health-addr", freeAddr(t),
+		"--db", filepath.Join(t.TempDir(), "m.db"),
 	}
 	r := start(t, args...)
 	waitStatus(t, "http://"+r.addr, http.DefaultClient, func(m map[string]any) bool {
@@ -520,9 +520,9 @@ func TestMTLSRequiresClientCert(t *testing.T) {
 	srvCert, srvKey := p.issue(t, 2, x509.ExtKeyUsageServerAuth)
 	cliCert, cliKey := p.issue(t, 3, x509.ExtKeyUsageClientAuth)
 	args := append(baseArgs(t, machine, xml),
-		"-tls-cert", writeFile(t, dir, "srv.pem", srvCert),
-		"-tls-key", writeFile(t, dir, "srv.key", srvKey),
-		"-tls-client-ca", writeFile(t, dir, "ca.pem", p.caPEM))
+		"--tls-cert", writeFile(t, dir, "srv.pem", srvCert),
+		"--tls-key", writeFile(t, dir, "srv.key", srvKey),
+		"--tls-client-ca", writeFile(t, dir, "ca.pem", p.caPEM))
 	r := start(t, args...)
 
 	pool := x509.NewCertPool()
@@ -586,7 +586,7 @@ func statusOf(t *testing.T, c *http.Client, method, url string) int {
 }
 
 // startMetricsCA starts medewid with the server certificate from admin and
-// clientCA and metricsCA as -tls-client-ca and -tls-metrics-ca.
+// clientCA and metricsCA as --tls-client-ca and --tls-metrics-ca.
 func startMetricsCA(t *testing.T, admin *pki, clientCA, metricsCA []byte) *running {
 	t.Helper()
 	machine, xml := startSim(t)
@@ -648,27 +648,27 @@ func TestMetricsCASameAsClientCA(t *testing.T) {
 func TestMetricsCANeedsTLS(t *testing.T) {
 	clearEnv(t)
 	args := append(baseArgs(t, "127.0.0.1:1", filepath.Join("..", "..", "testdata", "spec", "synthetic.xml")),
-		"-insecure-http", "-tls-metrics-ca", "x.pem")
+		"--insecure-http", "--tls-metrics-ca", "x.pem")
 	code, stderr := runExit(t, args...)
 	if code != 2 {
 		t.Fatalf("exit = %d, want 2", code)
 	}
-	if !strings.Contains(stderr, "-tls-metrics-ca needs the TLS settings") {
+	if !strings.Contains(stderr, "--tls-metrics-ca needs the TLS settings") {
 		t.Fatalf("stderr = %q", stderr)
 	}
 }
 
 // tlsArgs returns the TLS flags for a server certificate from admin with
-// clientCA and metricsCA as -tls-client-ca and -tls-metrics-ca.
+// clientCA and metricsCA as --tls-client-ca and --tls-metrics-ca.
 func tlsArgs(t *testing.T, admin *pki, clientCA, metricsCA []byte) []string {
 	t.Helper()
 	dir := t.TempDir()
 	srvCert, srvKey := admin.issue(t, 2, x509.ExtKeyUsageServerAuth)
 	return []string{
-		"-tls-cert", writeFile(t, dir, "srv.pem", srvCert),
-		"-tls-key", writeFile(t, dir, "srv.key", srvKey),
-		"-tls-client-ca", writeFile(t, dir, "ca.pem", clientCA),
-		"-tls-metrics-ca", writeFile(t, dir, "metrics-ca.pem", metricsCA),
+		"--tls-cert", writeFile(t, dir, "srv.pem", srvCert),
+		"--tls-key", writeFile(t, dir, "srv.key", srvKey),
+		"--tls-client-ca", writeFile(t, dir, "ca.pem", clientCA),
+		"--tls-metrics-ca", writeFile(t, dir, "metrics-ca.pem", metricsCA),
 	}
 }
 
@@ -692,5 +692,38 @@ func TestMetricsCARefusesNesting(t *testing.T) {
 				t.Fatalf("stderr = %q", stderr)
 			}
 		})
+	}
+}
+
+func TestDurationEnvSpan(t *testing.T) {
+	clearEnv(t)
+	machine, xml := startSim(t)
+	for _, v := range []string{"720h", "30d"} {
+		t.Setenv("MEDEWID_RAW_RETENTION", v)
+		r := start(t, append(baseArgs(t, machine, xml), "--insecure-http")...)
+		if code := r.shutdown(); code != 0 {
+			t.Errorf("MEDEWID_RAW_RETENTION=%s: exit %d\n%s", v, code, r.stderr.String())
+		}
+	}
+	t.Setenv("MEDEWID_RAW_RETENTION", "1M")
+	code, se := runExit(t, append(baseArgs(t, machine, xml), "--insecure-http")...)
+	if code != 2 || !strings.Contains(se, "MEDEWID_RAW_RETENTION") {
+		t.Errorf("=1M: exit %d, stderr %q; want 2 naming the variable", code, se)
+	}
+}
+
+func TestSingleDashLongFlagRejected(t *testing.T) {
+	clearEnv(t)
+	code, se := runExit(t, "-machine", "h:1")
+	if code != 2 || !strings.Contains(se, "unknown shorthand flag") {
+		t.Errorf("exit %d, stderr %q; want 2 and unknown shorthand flag", code, se)
+	}
+}
+
+func TestHelpShowsSpanDefaults(t *testing.T) {
+	clearEnv(t)
+	code, se := runExit(t, "--help")
+	if code != 0 || !strings.Contains(se, "(default 7d)") || strings.Contains(se, "000000000") {
+		t.Errorf("exit %d; help:\n%s", code, se)
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +14,10 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/spf13/pflag"
+
+	"github.com/thomasbach-dev/medewi/systime"
 )
 
 const requestTimeout = 60 * time.Second
@@ -29,30 +32,30 @@ type config struct {
 	insecure           bool
 }
 
-func (c *config) register(fs *flag.FlagSet) {
+func (c *config) register(fs *pflag.FlagSet) {
 	fs.StringVar(&c.url, "url", c.url, "medewid base URL (env MEDEWID_URL)")
 	fs.StringVar(&c.cert, "cert", c.cert, "client certificate (env MEDEWID_CTL_CERT)")
 	fs.StringVar(&c.key, "key", c.key, "client key (env MEDEWID_CTL_KEY)")
 	fs.StringVar(&c.ca, "ca", c.ca, "CA file trusted for the server (env MEDEWID_CTL_CA)")
-	fs.BoolVar(&c.insecure, "insecure", c.insecure, "plain HTTP without certificates, for a medewid run with -insecure-http (needs an http:// URL)")
+	fs.BoolVar(&c.insecure, "insecure", c.insecure, "plain HTTP without certificates, for a medewid run with --insecure-http (needs an http:// URL)")
 }
 
 func usage(w io.Writer) {
-	_, _ = fmt.Fprintln(w, `usage: medewictl [-url U] [-cert F] [-key F] [-ca F] [-insecure] <subcommand>
+	_, _ = fmt.Fprintln(w, `usage: medewictl [--url U] [--cert F] [--key F] [--ca F] [--insecure] <subcommand>
 
   status
   power active|eco|standby
   mark TEXT...              note TEXT in medewid's raw traffic log
-  backup -out DIR|-
-  release [-until +DURATION]   free the machine (default +1h; units h, min, s)
+  backup --out DIR|-
+  release [--until TIME]     free the machine (default +1h; e.g. +1h30min, 15:00)
   reclaim                    take it back now
 
 Defaults come from $MEDEWID_URL (e.g. https://brewhost:8443),
 $MEDEWID_CTL_CERT, $MEDEWID_CTL_KEY and $MEDEWID_CTL_CA; unset cert,
 key and ca fall back to client.crt, client.key and ca.crt in
 $XDG_CONFIG_HOME/medewi (~/.config/medewi).
--insecure talks plain HTTP to a medewid started with -insecure-http
-(e.g. -url http://127.0.0.1:8080); it never skips certificate checks.`)
+--insecure talks plain HTTP to a medewid started with --insecure-http
+(e.g. --url http://127.0.0.1:8080); it never skips certificate checks.`)
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -62,14 +65,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 		key:  os.Getenv("MEDEWID_CTL_KEY"),
 		ca:   os.Getenv("MEDEWID_CTL_CA"),
 	}
-	fs := flag.NewFlagSet("medewictl", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("medewictl", pflag.ContinueOnError)
 	fs.SetOutput(stderr)
+	fs.SetInterspersed(false) // "medewictl --url U status" stops at the subcommand
 	fs.Usage = func() { usage(stderr) }
 	cfg.register(fs)
 	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
+		if errors.Is(err, pflag.ErrHelp) {
 			return 0
 		}
+		_, _ = fmt.Fprintf(stderr, "medewictl: %v\n", err)
 		return 2
 	}
 	rest := fs.Args()
@@ -78,8 +83,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	sub, rest := rest[0], rest[1:]
-	sfs := flag.NewFlagSet(sub, flag.ContinueOnError)
+	sfs := pflag.NewFlagSet(sub, pflag.ContinueOnError)
 	sfs.SetOutput(stderr)
+	sfs.SetInterspersed(false) // mark TEXT... keeps dashes in its text
 	cfg.register(sfs)
 	var outDir string
 	if sub == "backup" {
@@ -87,7 +93,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	untilArg := "+1h"
 	if sub == "release" {
-		sfs.StringVar(&untilArg, "until", untilArg, "release for this long, +DURATION (units h, min, s)")
+		sfs.StringVar(&untilArg, "until", untilArg, "release until this time: +SPAN (e.g. +1h30min), HH:MM or a date")
 	}
 	switch sub {
 	case "status", "power", "mark", "backup", "release", "reclaim":
@@ -97,6 +103,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if err := sfs.Parse(rest); err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			return 0
+		}
+		_, _ = fmt.Fprintf(stderr, "medewictl: %v\n", err)
 		return 2
 	}
 	rest = sfs.Args()
@@ -110,7 +120,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		var err error
-		if until, err = parseUntil(untilArg, time.Now()); err != nil {
+		if until, err = releaseUntil(untilArg, time.Now()); err != nil {
 			_, _ = fmt.Fprintf(stderr, "medewictl: %v\n", err)
 			return 2
 		}
@@ -132,7 +142,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 	case "backup":
 		if len(rest) != 0 || outDir == "" {
-			_, _ = fmt.Fprintln(stderr, "medewictl: backup needs -out DIR (or -out -)")
+			_, _ = fmt.Fprintln(stderr, "medewictl: backup needs --out DIR (or --out -)")
 			return 2
 		}
 	}
@@ -164,14 +174,14 @@ func (c *config) client() (*http.Client, error) {
 	plain := strings.HasPrefix(c.url, "http://")
 	switch {
 	case c.insecure && !plain:
-		return nil, errors.New("-insecure needs an http:// URL")
+		return nil, errors.New("--insecure needs an http:// URL")
 	case c.insecure:
 		return &http.Client{Timeout: requestTimeout}, nil
 	case plain:
-		return nil, errors.New("an http:// URL needs -insecure (medewid serves mTLS unless run with -insecure-http)")
+		return nil, errors.New("an http:// URL needs --insecure (medewid serves mTLS unless run with --insecure-http)")
 	}
 	if c.url == "" {
-		return nil, errors.New("url is required (-url or MEDEWID_URL)")
+		return nil, errors.New("url is required (--url or MEDEWID_URL)")
 	}
 	if err := c.defaultFiles(); err != nil {
 		return nil, err
@@ -501,4 +511,17 @@ func writeAtomic(path string, data []byte) (err error) {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// releaseUntil resolves the --until argument to an absolute time in the
+// future. Spans need a sign ("+1h30min"): a bare span is not a timestamp.
+func releaseUntil(s string, now time.Time) (time.Time, error) {
+	t, err := systime.ParseTimestamp(s, now, time.Local)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("bad --until %q: want a time such as +1h30min, 15:00 or 2026-11-10 15:00 (%v)", s, err)
+	}
+	if !t.After(now) {
+		return time.Time{}, fmt.Errorf("--until must be in the future, %q is %s", s, t.Format(time.DateTime))
+	}
+	return t, nil
 }

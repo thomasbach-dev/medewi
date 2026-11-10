@@ -60,7 +60,7 @@ func TestConformAgainstSim(t *testing.T) {
 	s := startSim(t, sim.Config{})
 	t.Setenv("MEDEWI_XML_PATH", "../../testdata/spec/synthetic.xml")
 	var out, errb bytes.Buffer
-	code := run([]string{"conform", "-addr", s.Addr().String(), "-yes", "-max", "stream"}, strings.NewReader(""), &out, &errb)
+	code := run([]string{"conform", "--addr", s.Addr().String(), "--yes", "--max", "stream"}, strings.NewReader(""), &out, &errb)
 	if code != 0 {
 		t.Fatalf("exit %d\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
 	}
@@ -79,7 +79,7 @@ func TestConformRefuses2323(t *testing.T) {
 		t.Skip("tripwire not bound")
 	}
 	var out, errb bytes.Buffer
-	code := run([]string{"conform", "-addr", "127.0.0.1:2323", "-yes"}, strings.NewReader(""), &out, &errb)
+	code := run([]string{"conform", "--addr", "127.0.0.1:2323", "--yes"}, strings.NewReader(""), &out, &errb)
 	if code != 1 {
 		t.Errorf("exit %d, want 1", code)
 	}
@@ -94,7 +94,7 @@ func TestConformRefuses2323(t *testing.T) {
 
 func TestCaptureRefuses2323(t *testing.T) {
 	var out, errb bytes.Buffer
-	code := run([]string{"capture", "-scenario", "commands", "-addr", "127.0.0.1:2323", "-out", t.TempDir()}, strings.NewReader(""), &out, &errb)
+	code := run([]string{"capture", "--scenario", "commands", "--addr", "127.0.0.1:2323", "--out", t.TempDir()}, strings.NewReader(""), &out, &errb)
 	if code != 1 || !strings.Contains(errb.String(), "2323") {
 		t.Errorf("exit %d stderr %q", code, errb.String())
 	}
@@ -109,7 +109,7 @@ func TestCaptureWritesLogAndManifest(t *testing.T) {
 	t.Setenv("MEDEWI_XML_PATH", xml)
 	dir := t.TempDir()
 	var out, errb bytes.Buffer
-	code := run([]string{"capture", "-scenario", "commands", "-addr", s.Addr().String(), "-out", dir}, strings.NewReader(""), &out, &errb)
+	code := run([]string{"capture", "--scenario", "commands", "--addr", s.Addr().String(), "--out", dir}, strings.NewReader(""), &out, &errb)
 	if code != 0 {
 		t.Fatalf("exit %d stderr %s", code, errb.String())
 	}
@@ -155,7 +155,7 @@ func TestCaptureStreamStopsOnEnter(t *testing.T) {
 	s := startSim(t, sim.Config{})
 	dir := t.TempDir()
 	var out, errb bytes.Buffer
-	code := run([]string{"capture", "-scenario", "stream", "-addr", s.Addr().String(), "-out", dir}, strings.NewReader("\n"), &out, &errb)
+	code := run([]string{"capture", "--scenario", "stream", "--addr", s.Addr().String(), "--out", dir}, strings.NewReader("\n"), &out, &errb)
 	if code != 0 {
 		t.Fatalf("exit %d stderr %s", code, errb.String())
 	}
@@ -190,7 +190,7 @@ func TestUsage(t *testing.T) {
 	if run(nil, strings.NewReader(""), &out, &errb) != 2 {
 		t.Error("want exit 2")
 	}
-	if run([]string{"capture", "-scenario", "bogus"}, strings.NewReader(""), &out, &errb) != 2 {
+	if run([]string{"capture", "--scenario", "bogus"}, strings.NewReader(""), &out, &errb) != 2 {
 		t.Error("bogus scenario want exit 2")
 	}
 }
@@ -201,17 +201,17 @@ func TestCaptureRefusesOverwriteAndForce(t *testing.T) {
 	t.Cleanup(func() { cmdWait = old })
 	s := startSim(t, sim.Config{})
 	dir := t.TempDir()
-	args := []string{"capture", "-scenario", "commands", "-addr", s.Addr().String(), "-out", dir}
+	args := []string{"capture", "--scenario", "commands", "--addr", s.Addr().String(), "--out", dir}
 	var out, errb bytes.Buffer
 	if code := run(args, strings.NewReader(""), &out, &errb); code != 0 {
 		t.Fatalf("first run exit %d: %s", code, errb.String())
 	}
 	errb.Reset()
-	if code := run(args, strings.NewReader(""), &out, &errb); code != 1 || !strings.Contains(errb.String(), "-force") {
+	if code := run(args, strings.NewReader(""), &out, &errb); code != 1 || !strings.Contains(errb.String(), "--force") {
 		t.Errorf("second run exit %d stderr %q", code, errb.String())
 	}
-	if code := run(append(args, "-force"), strings.NewReader(""), &out, &errb); code != 0 {
-		t.Errorf("-force run exit %d: %s", code, errb.String())
+	if code := run(append(args, "--force"), strings.NewReader(""), &out, &errb); code != 0 {
+		t.Errorf("--force run exit %d: %s", code, errb.String())
 	}
 }
 
@@ -242,7 +242,7 @@ func TestFailedCaptureWritesPartialAndKeepsGood(t *testing.T) {
 		_ = s2.Stop() // connection dies mid-scenario
 	}()
 	var out, errb bytes.Buffer
-	code := run([]string{"capture", "-scenario", "commands", "-addr", s2.Addr().String(), "-out", dir, "-force"}, strings.NewReader(""), &out, &errb)
+	code := run([]string{"capture", "--scenario", "commands", "--addr", s2.Addr().String(), "--out", dir, "--force"}, strings.NewReader(""), &out, &errb)
 	if code != 1 {
 		t.Fatalf("exit %d, want 1; stderr %s", code, errb.String())
 	}
@@ -270,7 +270,7 @@ func TestCaptureMissingXMLWarns(t *testing.T) {
 	s := startSimResponses(t, map[string][]string{"MCh": {"h"}, "MC?": {"nothing"}, "MCu": {"u"}, "MCm": {"m"}, "MCb": {"b"}, "MCf": {"f"}})
 	dir := t.TempDir()
 	var out, errb bytes.Buffer
-	if code := run([]string{"capture", "-scenario", "commands", "-addr", s.Addr().String(), "-out", dir}, strings.NewReader(""), &out, &errb); code != 0 {
+	if code := run([]string{"capture", "--scenario", "commands", "--addr", s.Addr().String(), "--out", dir}, strings.NewReader(""), &out, &errb); code != 0 {
 		t.Fatalf("exit %d: %s", code, errb.String())
 	}
 	if !strings.Contains(errb.String(), "no XML=") {
@@ -300,7 +300,7 @@ func TestWriteOutputFailureLeavesGoodFilesUntouched(t *testing.T) {
 		}
 	}
 	var out, errb bytes.Buffer
-	code := run([]string{"capture", "-scenario", "commands", "-addr", s.Addr().String(), "-out", dir, "-force"}, strings.NewReader(""), &out, &errb)
+	code := run([]string{"capture", "--scenario", "commands", "--addr", s.Addr().String(), "--out", dir, "--force"}, strings.NewReader(""), &out, &errb)
 	if code != 1 {
 		t.Errorf("exit %d, want 1", code)
 	}
@@ -316,7 +316,7 @@ func TestCaptureBadXMLPathFailsBeforeDial(t *testing.T) {
 	s := startSim(t, sim.Config{TripwireAddr: "127.0.0.1:0"})
 	t.Setenv("MEDEWI_XML_PATH", filepath.Join(t.TempDir(), "missing.xml"))
 	var out, errb bytes.Buffer
-	code := run([]string{"capture", "-scenario", "commands", "-addr", s.Addr().String(), "-out", t.TempDir()}, strings.NewReader(""), &out, &errb)
+	code := run([]string{"capture", "--scenario", "commands", "--addr", s.Addr().String(), "--out", t.TempDir()}, strings.NewReader(""), &out, &errb)
 	if code != 1 {
 		t.Errorf("exit %d, want 1", code)
 	}
@@ -332,7 +332,7 @@ func TestConformXMLMismatchFails(t *testing.T) {
 	})
 	t.Setenv("MEDEWI_XML_PATH", "../../testdata/spec/synthetic.xml")
 	var out, errb strings.Builder
-	code := run([]string{"conform", "-addr", s.Addr().String(), "-max", "readonly", "-yes"},
+	code := run([]string{"conform", "--addr", s.Addr().String(), "--max", "readonly", "--yes"},
 		strings.NewReader(""), &out, &errb)
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1; out=%q err=%q", code, out.String(), errb.String())
@@ -363,8 +363,8 @@ func TestCaptureDisplayRecordsFramesAndMarks(t *testing.T) {
 	// One mark; a mistyped line must not stop; an empty line does.
 	in := &slowReader{lines: []string{"m\n", "M\n", "\n"}, gap: 250 * time.Millisecond}
 	code := run([]string{
-		"capture", "-scenario", "display", "-addr", s.Addr().String(), "-out", dir,
-		"-display-every", "200ms", "-display-for", "50ms",
+		"capture", "--scenario", "display", "--addr", s.Addr().String(), "--out", dir,
+		"--display-every", "200ms", "--display-for", "50ms",
 	}, in, &out, &errb)
 	if code != 0 {
 		t.Fatalf("exit %d stderr %s", code, errb.String())
@@ -430,8 +430,8 @@ func TestCaptureStreamLostConnectionStopsAtOnce(t *testing.T) {
 			done := make(chan int, 1)
 			go func() {
 				done <- run([]string{
-					"capture", "-scenario", scenario, "-addr", s.Addr().String(), "-out", dir,
-					"-display-every", "100ms", "-display-for", "30ms",
+					"capture", "--scenario", scenario, "--addr", s.Addr().String(), "--out", dir,
+					"--display-every", "100ms", "--display-for", "30ms",
 				}, stdin, &out, &errb)
 			}()
 			select {
@@ -467,4 +467,27 @@ func (r *slowReader) Read(p []byte) (int, error) {
 	n := copy(p, r.lines[0])
 	r.lines = r.lines[1:]
 	return n, nil
+}
+
+func TestSingleDashLongFlagRejected(t *testing.T) {
+	for _, args := range [][]string{
+		{"conform", "-addr", "127.0.0.1:1"},
+		{"capture", "--scenario", "commands", "-addr", "127.0.0.1:1"},
+		{"session-reset", "-addr", "127.0.0.1:1"},
+	} {
+		var out, errb bytes.Buffer
+		if code := run(args, strings.NewReader(""), &out, &errb); code != 2 || !strings.Contains(errb.String(), "unknown shorthand flag") {
+			t.Errorf("%v: exit %d, stderr %q", args, code, errb.String())
+		}
+	}
+}
+
+func TestDisplayFlagsAreSpans(t *testing.T) {
+	var out, errb bytes.Buffer
+	// Parses (then fails on the missing target), not on the flag values.
+	t.Setenv(envAddr, "")
+	code := run([]string{"capture", "--scenario", "display", "--display-every", "10s", "--display-for", "500ms"}, strings.NewReader(""), &out, &errb)
+	if code != 2 || !strings.Contains(errb.String(), "no target") {
+		t.Errorf("exit %d, stderr %q; want no target", code, errb.String())
+	}
 }

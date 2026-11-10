@@ -49,7 +49,7 @@ func TestTextHandlerHasTime(t *testing.T) {
 
 func TestLogFlavourFlag(t *testing.T) {
 	addr, xml := startSim(t)
-	r := start(t, append(baseArgs(t, addr, xml), "-insecure-http", "-log-flavour", "systemd")...)
+	r := start(t, append(baseArgs(t, addr, xml), "--insecure-http", "--log-flavour", "systemd")...)
 	r.shutdown()
 	if out := r.stderr.String(); !strings.Contains(out, "<6>msg=\"medewid serving\"") || strings.Contains(out, "time=") || strings.Contains(out, "level=") {
 		t.Errorf("stderr not in systemd flavour:\n%s", out)
@@ -59,7 +59,7 @@ func TestLogFlavourFlag(t *testing.T) {
 func TestLogFlavourEnv(t *testing.T) {
 	t.Setenv("MEDEWID_LOG_FLAVOUR", "systemd")
 	addr, xml := startSim(t)
-	r := start(t, append(baseArgs(t, addr, xml), "-insecure-http")...)
+	r := start(t, append(baseArgs(t, addr, xml), "--insecure-http")...)
 	r.shutdown()
 	if out := r.stderr.String(); !strings.Contains(out, "<6>msg=") {
 		t.Errorf("MEDEWID_LOG_FLAVOUR ignored:\n%s", out)
@@ -68,8 +68,8 @@ func TestLogFlavourEnv(t *testing.T) {
 
 func TestLogFlavourInvalid(t *testing.T) {
 	addr, xml := startSim(t)
-	code, stderr := runExit(t, append(baseArgs(t, addr, xml), "-insecure-http", "-log-flavour", "json")...)
-	if code != 2 || !strings.Contains(stderr, "-log-flavour") {
+	code, stderr := runExit(t, append(baseArgs(t, addr, xml), "--insecure-http", "--log-flavour", "json")...)
+	if code != 2 || !strings.Contains(stderr, "--log-flavour") {
 		t.Errorf("exit %d, stderr %q; want 2 naming -log-flavour", code, stderr)
 	}
 }

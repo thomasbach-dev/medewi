@@ -20,10 +20,11 @@ import (
 func runSessionReset(args []string, stdout, stderr io.Writer) int {
 	fs, addr := newFlagSet("session-reset", stderr)
 	if err := fs.Parse(args); err != nil {
+		_, _ = fmt.Fprintf(stderr, "levacap: %v\n", err)
 		return 2
 	}
 	if *addr == "" {
-		_, _ = fmt.Fprintf(stderr, "levacap: no target: set $%s or pass -addr\n", envAddr)
+		_, _ = fmt.Fprintf(stderr, "levacap: no target: set $%s or pass --addr\n", envAddr)
 		return 2
 	}
 

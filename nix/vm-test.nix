@@ -72,7 +72,7 @@ pkgs.testers.runNixOSTest {
       serviceConfig = {
         ExecStart = "${
           self.packages.${system}.levasim
-        }/bin/levasim -addr 127.0.0.1:2300 -tripwire 127.0.0.1:2323 -fixtures ${fixtures}";
+        }/bin/levasim --addr 127.0.0.1:2300 --tripwire 127.0.0.1:2323 --fixtures ${fixtures}";
         DynamicUser = true;
       };
     };

@@ -145,15 +145,15 @@ in
       serviceConfig = {
         ExecStart = lib.concatStringsSep " " [
           "${cfg.package}/bin/medewid"
-          "-log-flavour systemd"
-          "-listen ${lib.escapeShellArg cfg.listen}"
-          "-health-addr ${lib.escapeShellArg cfg.healthAddr}"
-          "-xml ${credArg xmlName}"
-          "-tls-cert ${credArg "tls-cert"}"
-          "-tls-key ${credArg "tls-key"}"
-          "-tls-client-ca ${credArg "tls-client-ca"}"
+          "--log-flavour systemd"
+          "--listen ${lib.escapeShellArg cfg.listen}"
+          "--health-addr ${lib.escapeShellArg cfg.healthAddr}"
+          "--xml ${credArg xmlName}"
+          "--tls-cert ${credArg "tls-cert"}"
+          "--tls-key ${credArg "tls-key"}"
+          "--tls-client-ca ${credArg "tls-client-ca"}"
         ]
-        + lib.optionalString (cfg.tlsMetricsCA != null) " -tls-metrics-ca ${credArg "tls-metrics-ca"}";
+        + lib.optionalString (cfg.tlsMetricsCA != null) " --tls-metrics-ca ${credArg "tls-metrics-ca"}";
         EnvironmentFile = cfg.environmentFile;
         LoadCredential = [
           "${xmlName}:${cfg.xmlFile}"

@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -14,6 +13,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+
+	"github.com/spf13/pflag"
 
 	"github.com/thomasbach-dev/medewi/fixture"
 	"github.com/thomasbach-dev/medewi/sim"
@@ -48,20 +49,21 @@ func main() {
 // request shutdown. Tests drive run with a ready channel and their own done
 // channel; main passes nil and a signal-driven done.
 func run(args []string, stdout, stderr io.Writer, ready chan<- string, done <-chan struct{}) int {
-	fset := flag.NewFlagSet("levasim", flag.ContinueOnError)
+	fset := pflag.NewFlagSet("levasim", pflag.ContinueOnError)
 	fset.SetOutput(stderr)
 	addr := fset.String("addr", "127.0.0.1:2300", "main listen address")
 	tripwire := fset.String("tripwire", "127.0.0.1:2323", `tripwire listen address ("" disables it)`)
 	speed := fset.Float64("speed", 1.0, "stream replay speed factor")
 	fixtures := fset.String("fixtures", "", "fixture directory with "+logFile+" and/or "+responsesFile)
 	if err := fset.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
+		if errors.Is(err, pflag.ErrHelp) {
 			return 0
 		}
+		_, _ = fmt.Fprintf(stderr, "levasim: %v\n", err)
 		return 2
 	}
 	if *speed <= 0 {
-		_, _ = fmt.Fprintf(stderr, "levasim: -speed must be > 0, got %v\n", *speed)
+		_, _ = fmt.Fprintf(stderr, "levasim: --speed must be > 0, got %v\n", *speed)
 		return 2
 	}
 
