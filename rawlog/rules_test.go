@@ -21,8 +21,14 @@ func TestRules(t *testing.T) {
 		in   string
 		want bool
 	}{
-		{"MCu", true}, {"MCm", true}, {"MCu1", true}, {"MCmx", true},
-		{"MCr", false}, {"MC ", false}, {"MCh", false}, {"", false},
+		{"MCu", true},
+		{"MCm", true},
+		{"MCu1", true},
+		{"MCmx", true},
+		{"MCr", false},
+		{"MC ", false},
+		{"MCh", false},
+		{"", false},
 	} {
 		if got := IsDumpCommand([]byte(tc.in)); got != tc.want {
 			t.Errorf("IsDumpCommand(%q) = %v, want %v", tc.in, got, tc.want)
@@ -32,8 +38,13 @@ func TestRules(t *testing.T) {
 		in   string
 		want bool
 	}{
-		{"MCr", true}, {"MC ", true}, {"MC@", true},
-		{"MCu", false}, {"MCr1", false}, {"MC", false}, {"", false},
+		{"MCr", true},
+		{"MC ", true},
+		{"MC@", true},
+		{"MCu", false},
+		{"MCr1", false},
+		{"MC", false},
+		{"", false},
 	} {
 		if got := IsStreamToggle([]byte(tc.in)); got != tc.want {
 			t.Errorf("IsStreamToggle(%q) = %v, want %v", tc.in, got, tc.want)
@@ -53,11 +64,15 @@ func TestRules(t *testing.T) {
 		in   string
 		want bool
 	}{
-		{"{ -1PID}", true}, {"<102x>", true}, {"$id: leva! (3.2)", true},
+		{"{ -1PID}", true},
+		{"<102x>", true},
+		{"$id: leva! (3.2)", true},
 		{"[READY]", true},
 		{"[" + strings.Repeat("x", 30) + "]", true},  // 32 bytes
 		{"[" + strings.Repeat("x", 31) + "]", false}, // 33 bytes
-		{"P 91.0", false}, {"", false}, {"|x", false},
+		{"P 91.0", false},
+		{"", false},
+		{"|x", false},
 	} {
 		if got := IsStreamLine([]byte(tc.in)); got != tc.want {
 			t.Errorf("IsStreamLine(%q) = %v, want %v", tc.in, got, tc.want)
