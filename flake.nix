@@ -38,7 +38,7 @@
           overrideModAttrs = _: {
             postBuild = "go mod tidy";
           };
-          vendorHash = "sha256-xknT6gbXSfSD2C9CsukoUqLC7G58abfYayGDROMvYeg=";
+          vendorHash = "sha256-jVcBrwms/45DAg6SaBDVWvK7OtL5if17fYD3B/hXK10=";
           subPackages = [ "cmd/${name}" ];
           meta.mainProgram = name;
         };
