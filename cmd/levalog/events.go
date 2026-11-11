@@ -75,7 +75,7 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&o.skipStandby, "skip-standby", false, "drop reports whose pump marker is ?")
 	fs.StringVar(&o.fields, "fields", "", "only these columns, by key (see levalog fields), in this order")
 	fs.BoolVar(&o.hideMasked, "hide-masked", false, "text: omit masked report fields")
-	fs.BoolVar(&o.changes, "changes", false, "print a report only when a projected report field changed")
+	fs.BoolVar(&o.changes, "changes", false, "print a report only when a projected report field changed (each run window starts anew)")
 	fs.BoolVar(&o.rawValues, "raw-values", false, "print the raw substrings instead of parsed values")
 	fs.BoolVar(&o.showDumps, "show-dumps", false, "print MCu/MCm dump lines instead of redacting them")
 	if code, done := parse(fs, args, stderr); done {

@@ -204,3 +204,26 @@ func TestRowsOverlapSelectedWins(t *testing.T) {
 		t.Errorf("overlap rows missing: first src %d", rows[0].Entry.Src)
 	}
 }
+
+func TestRowsChangesResetPerRun(t *testing.T) {
+	l, runs := runsLoaded(t, true)
+	// Both shots report the same pressure: each run's first report stays.
+	rows := selectRows(l, runs, Selection{Runs: []int{1, 2}, Changes: true, ChangeKeys: []string{"pressure"}})
+	var got []int
+	for _, r := range rows {
+		got = append(got, r.Run.N)
+	}
+	if len(got) != 2 || got[0] != 1 || got[1] != 2 {
+		t.Errorf("runs of the rows = %v, want [1 2]", got)
+	}
+	// Into a run from no run: the volume (0) is unchanged at the first
+	// pumping report, which is printed all the same.
+	rows = selectRows(l, runs, Selection{Changes: true, ChangeKeys: []string{"volume"}})
+	found := false
+	for _, r := range rows {
+		found = found || r.Entry.Index == runs[0].First.Index
+	}
+	if !found {
+		t.Error("first report of run 1 dropped")
+	}
+}

@@ -32,9 +32,9 @@ type Selection struct {
 	// SkipStandby drops reports whose pump marker is '?'.
 	SkipStandby bool
 	// Changes drops a report whose ChangeKeys values equal those of the
-	// last printed report. Empty ChangeKeys means pump plus every XML key.
-	// Entries that are not reports always pass and do not reset the
-	// comparison.
+	// last printed report in the same run (or also in no run). Empty
+	// ChangeKeys means pump plus every XML key. Entries that are not
+	// reports always pass and do not reset the comparison.
 	Changes    bool
 	ChangeKeys []string
 }
@@ -66,6 +66,7 @@ type Selector struct {
 
 	cache    map[*leva.RecordSpec]*specKeys
 	lastSpec *leva.RecordSpec
+	lastRun  *Run // the run of the last printed report
 	lastSig  []byte
 	sig      []byte
 }
@@ -133,10 +134,10 @@ func (s *Selector) Select(e *Entry) (Row, bool) {
 				s.cache[e.Spec] = sk
 			}
 			s.sig = sk.sig(s.sig[:0], e)
-			if e.Spec == s.lastSpec && string(s.sig) == string(s.lastSig) {
+			if e.Spec == s.lastSpec && row.Run == s.lastRun && string(s.sig) == string(s.lastSig) {
 				return Row{}, false
 			}
-			s.lastSpec = e.Spec
+			s.lastSpec, s.lastRun = e.Spec, row.Run
 			s.lastSig = append(s.lastSig[:0], s.sig...)
 		}
 	}
