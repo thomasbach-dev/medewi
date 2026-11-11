@@ -6,6 +6,7 @@ import (
 
 	"github.com/thomasbach-dev/medewi/brew"
 	"github.com/thomasbach-dev/medewi/fixture"
+	"github.com/thomasbach-dev/medewi/leva"
 )
 
 func TestRowsWindow(t *testing.T) {
@@ -153,5 +154,53 @@ func TestRowsChanges(t *testing.T) {
 	// All keys by default: pressure differs in the last report.
 	if rows = Rows(l, nil, Selection{Changes: true}); len(rows) != 3 {
 		t.Errorf("default len = %d, want 3", len(rows))
+	}
+}
+
+// modeReport builds a report on modeSpecT; modeSpecT has a mode field (offset 4), a pressure and a maskable setpoint.
+func modeReport(mode, sp string) Entry {
+	line := runReport(step{pump: '-', bar: 1})
+	copy(line[4:7], mode)
+	copy(line[7:12], " 1.00")
+	copy(line[13:18], sp)
+	rec, _ := modeSpecT.Decode(line)
+	return Entry{Kind: KindReport, Raw: line, Record: &rec, Spec: modeSpecT}
+}
+
+var modeSpecT = &leva.RecordSpec{Values: []leva.ValueSpec{
+	{Index: 0, Name: "", At: 4, Len: 3, Type: leva.String},
+	{Index: 1, Name: "Pressure", At: 7, Len: 5, Type: leva.Float},
+	{Index: 2, Name: "Pressure SP", At: 13, Len: 5, Type: leva.Float},
+}}
+
+func TestRowsChangesDefaultKeys(t *testing.T) {
+	l := Loaded{Entries: []Entry{
+		modeReport("RUN", "?????"),
+		modeReport("RUN", "?????"), // identical: dropped
+		modeReport("ECO", "?????"), // mode only
+		modeReport("ECO", " 9.00"), // masked -> value
+		modeReport("ECO", " 9.00"), // identical: dropped
+	}}
+	rows := Rows(l, nil, Selection{Changes: true})
+	if len(rows) != 3 {
+		t.Fatalf("len = %d, want 3", len(rows))
+	}
+}
+
+func TestRowsOverlapSelectedWins(t *testing.T) {
+	l, runs := runsLoaded(t, true)
+	// Margin spans the 14 idle reports between the runs: windows overlap.
+	rows := Rows(l, runs, Selection{Runs: []int{2}, Margin: 3 * time.Second})
+	if len(rows) == 0 {
+		t.Fatal("no rows")
+	}
+	for _, r := range rows {
+		if r.Run == nil || r.Run.N != 2 {
+			t.Fatalf("row %v carries run %+v, want 2", r.Entry.Src, r.Run)
+		}
+	}
+	// The first row lies inside run 1's window (its last + 3 s = 12 reports).
+	if rows[0].Entry.Src > runs[0].Last+12+1 {
+		t.Errorf("overlap rows missing: first src %d", rows[0].Entry.Src)
 	}
 }
