@@ -71,15 +71,17 @@ func DefaultConfig() Config {
 // Summary describes a finished brew.
 type Summary struct {
 	StartedAt, EndedAt time.Time // first and last pumping sample
-	Kind               Kind
+	Kind               Kind      // truncated kinds from Abort stay here
+	Normal             Kind      // Shot or Flush: what the run looked like
 	Duration           time.Duration
 	PeakBar, VolumeML  float64
 }
 
 // WaterDraw describes a finished wand draw (water that is not a brew).
 type WaterDraw struct {
-	Duration time.Duration // last increment minus first
-	VolumeML float64
+	StartedAt, EndedAt time.Time     // first and last increment
+	Duration           time.Duration // last increment minus first
+	VolumeML           float64
 }
 
 // Result is what one Feed call produced.
@@ -215,7 +217,7 @@ func (r *Recorder) closeDraw() *WaterDraw {
 	if !d.open || d.ml < r.cfg.MinWaterML {
 		return nil
 	}
-	return &WaterDraw{Duration: d.last.Sub(d.first), VolumeML: d.ml}
+	return &WaterDraw{StartedAt: d.first, EndedAt: d.last, Duration: d.last.Sub(d.first), VolumeML: d.ml}
 }
 
 func (b *brewState) normalKind() Kind {
@@ -232,6 +234,7 @@ func (r *Recorder) closeBrew(k Kind) *Summary {
 		StartedAt: b.start,
 		EndedAt:   b.lastPmp,
 		Kind:      k,
+		Normal:    b.normalKind(),
 		Duration:  b.lastPmp.Sub(b.start),
 		PeakBar:   b.peak,
 		VolumeML:  b.maxVol,

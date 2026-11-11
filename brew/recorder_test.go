@@ -330,3 +330,45 @@ func TestKindTruncated(t *testing.T) {
 		}
 	}
 }
+
+func TestDrawTimes(t *testing.T) {
+	h := newHarness(t)
+	h.feed(Sample{Volume: f(0)})
+	h.now = t0
+	for i, v := range []float64{10, 20, 30} {
+		h.now = t0.Add(time.Duration(i) * time.Second)
+		h.feed(Sample{Volume: f(v)})
+	}
+	h.now = t0.Add(3 * time.Second)
+	for range 12 {
+		h.feed(Sample{Volume: f(30)})
+	}
+	if len(h.water) != 1 {
+		t.Fatalf("water = %+v, want one draw", h.water)
+	}
+	w := h.water[0]
+	if !w.StartedAt.Equal(t0) || !w.EndedAt.Equal(t0.Add(2*time.Second)) {
+		t.Errorf("StartedAt=%v EndedAt=%v, want 0s and 2s", w.StartedAt.Sub(t0), w.EndedAt.Sub(t0))
+	}
+	if w.Duration != 2*time.Second {
+		t.Errorf("Duration = %v, want 2s", w.Duration)
+	}
+}
+
+func TestAbortKeepsNormalKind(t *testing.T) {
+	h := newHarness(t)
+	h.repeat(20, Sample{Pumping: true, PressureSP: f(9)})
+	s := h.r.Abort(TruncatedLost)
+	if s == nil || s.Kind != TruncatedLost || s.Normal != Shot {
+		t.Fatalf("Abort = %+v, want Kind truncated-lost, Normal shot", s)
+	}
+}
+
+func TestCloseSetsNormal(t *testing.T) {
+	h := newHarness(t)
+	h.repeat(20, Sample{Pumping: true})
+	h.idle(4*time.Second, nil)
+	if len(h.closed) != 1 || h.closed[0].Kind != Flush || h.closed[0].Normal != Flush {
+		t.Fatalf("closed = %+v, want Kind and Normal flush", h.closed)
+	}
+}
