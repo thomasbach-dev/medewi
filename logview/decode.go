@@ -46,6 +46,7 @@ type Entry struct {
 	Count   int          // hidden lines, for KindRedacted
 
 	Path   string // the source's path
+	Source int    // index of the source in Loaded.Sources
 	Src    int    // line of the event holding the first byte (see Source.Lines)
 	SrcEnd int    // line of the event holding the last byte
 	XML    string // session XML name in effect for this entry
