@@ -191,25 +191,17 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	selector := logview.NewSelector(sc.runs, sel)
 	problems := sc.problems
 	if !byRun || len(sel.Runs) > 0 || len(sel.RunKinds) > 0 { // --run naming no run prints nothing
-		var notes string
 		s := logview.Stream{
 			Catalog: cat, ShowDumps: o.showDumps,
 			OnSource: func(si logview.SourceInfo) error {
-				notes = si.Notes
+				w.Source(si)
 				return nil
 			},
 			OnEntry: func(e *logview.Entry) error {
-				r, ok := selector.Select(e)
-				if !ok {
-					return nil
+				if r, ok := selector.Select(e); ok {
+					return w.Write(r)
 				}
-				if notes != "" && in.f == logview.FormatText {
-					if _, err := fmt.Fprintf(out, "# notes: %s\n", notes); err != nil {
-						return err
-					}
-					notes = ""
-				}
-				return w.Write(r)
+				return nil
 			},
 		}
 		err = s.Add(paths...)

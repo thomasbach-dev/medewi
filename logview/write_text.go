@@ -61,14 +61,18 @@ func rawText(b []byte) string {
 
 // textWriter writes T WALL DIR EVENT [RUN RUN_T], then src, src_end and xml
 // when Fields names them, then the entry's text; reports as key=value. A
-// "# PATH" line precedes a change of source, "# xml: NAME" a change of XML.
+// "# PATH" line precedes a change of source, followed by "# notes: …" for
+// a capture with notes; "# xml: NAME" precedes a change of XML.
 type textWriter struct {
 	base
 	w       io.Writer
 	started bool
 	path    string
 	xml     string
+	src     SourceInfo // the source announced last
 }
+
+func (t *textWriter) Source(s SourceInfo) { t.src = s }
 
 func (t *textWriter) Write(r Row) error {
 	e := r.Entry
@@ -76,6 +80,9 @@ func (t *textWriter) Write(r Row) error {
 	if !t.started || e.Path != t.path {
 		fmt.Fprintf(&b, "# %s\n", e.Path)
 		t.path = e.Path
+		if t.src.Path == e.Path && t.src.Notes != "" {
+			fmt.Fprintf(&b, "# notes: %s\n", t.src.Notes)
+		}
 	}
 	if e.XML != t.xml {
 		fmt.Fprintf(&b, "# xml: %s\n", orDash(e.XML))

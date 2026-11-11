@@ -142,6 +142,33 @@ func TestTextHeaders(t *testing.T) {
 	}
 }
 
+func TestTextNotes(t *testing.T) {
+	var b bytes.Buffer
+	w := NewWriter(&b, FormatText, WriterOptions{Loc: time.UTC})
+	w.Source(SourceInfo{Path: "p", Notes: "warm"})
+	e := wReport(t, '-', " 9.00", "?????", "")
+	for range 2 {
+		if err := w.Write(Row{Entry: e}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.Source(SourceInfo{Path: "q"})
+	q := *e
+	q.Path = "q"
+	if err := w.Write(Row{Entry: &q}); err != nil {
+		t.Fatal(err)
+	}
+	var hdr []string
+	for _, l := range lines(b.String()) {
+		if strings.HasPrefix(l, "#") {
+			hdr = append(hdr, l)
+		}
+	}
+	if strings.Join(hdr, "|") != "# p|# notes: warm|# xml: x1|# q" {
+		t.Errorf("headers = %q", hdr)
+	}
+}
+
 func TestTextRawReport(t *testing.T) {
 	e := Entry{Dir: fixture.RX, Kind: KindReport, Raw: []byte("{bad}"), Path: "p"}
 	out, _ := writeRows(t, FormatText, WriterOptions{Loc: time.UTC}, Row{Entry: &e})

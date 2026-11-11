@@ -47,9 +47,12 @@ type WriterOptions struct {
 	Loc *time.Location
 }
 
-// Writer writes rows in one format. Close flushes; Warnings lists what was
-// shown as masked, left empty or skipped, once per key or kind with a count.
+// Writer writes rows in one format. Source announces the file whose rows
+// follow (text prints its capture notes after its "# PATH" line). Close
+// flushes; Warnings lists what was shown as masked, left empty or skipped,
+// once per key or kind with a count.
 type Writer interface {
+	Source(SourceInfo)
 	Write(Row) error
 	Close() error
 	Warnings() []string
@@ -165,6 +168,9 @@ func (b *base) field(e *Entry, sc *specCols, k string) (fval, bool) {
 	}
 	return fval{s: *v.Str}, true
 }
+
+// Source does nothing; the text writer prints notes.
+func (b *base) Source(SourceInfo) {}
 
 func (b *base) Warnings() []string {
 	var out []string

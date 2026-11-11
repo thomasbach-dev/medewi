@@ -47,10 +47,10 @@ sides and needs --run or --run-kind.
 events text: T WALL DIR EVENT, then RUN RUN_T with --run/--run-kind, then
 src=, src_end=, xml= when --fields names them, then report fields as
 key=value (pump and mode first) or the line's text. Comment lines: "# PATH"
-when the source changes, "# xml: NAME" when the XML changes, "# notes: ..."
-before a capture with manifest notes. jsonl: one object per event, always
-with src, event and glued (also with --fields); csv: reports only, with a
-header row.
+when the source changes, followed by "# notes: ..." for a capture with
+manifest notes, and "# xml: NAME" when the XML changes. jsonl: one object
+per event, always with src, event and glued (also with --fields); csv:
+reports only, with a header row.
 
 Columns medewi adds; everything after them is the machine's data (report
 fields from the XML, frame fields, or the raw text of other lines):

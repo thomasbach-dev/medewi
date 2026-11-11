@@ -181,7 +181,7 @@ func TestEventsCapture(t *testing.T) {
 	}
 
 	_, out, _ = runCmd(t, "--xml", synth, "events", "../../testdata/fixtures/warmup-stream")
-	if !strings.HasPrefix(out, "# notes: MC? returned no XML= line\n# ../../testdata/fixtures/warmup-stream/log.jsonl\n") {
+	if !strings.HasPrefix(out, "# ../../testdata/fixtures/warmup-stream/log.jsonl\n# notes: MC? returned no XML= line\n") {
 		t.Errorf("no notes header: %q", out[:min(len(out), 300)])
 	}
 }
