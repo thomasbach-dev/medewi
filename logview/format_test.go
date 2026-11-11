@@ -31,7 +31,7 @@ func TestFormatLine(t *testing.T) {
 			"frame no wall",
 			Entry{
 				Offset: 1500 * time.Millisecond, Dir: fixture.RX, Kind: KindFrame,
-				Frame: &leva.Frame{Backlight: true, Key: 0, Layout: 2, Rows: [4]string{"a", "b °C", "", "d"}},
+				Frame: &leva.Frame{Backlight: true, Key: '0', Layout: '2', Rows: [4]string{"a", "b °C", "", "d"}},
 			},
 			"     1.500 - rx   frame    bkl=1 key=0 layout=2 |a|b °C||d|",
 		},

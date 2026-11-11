@@ -200,7 +200,7 @@ func TestJSONLNoRun(t *testing.T) {
 func TestJSONLFrameAndCmd(t *testing.T) {
 	frame := Entry{
 		Dir: fixture.RX, Kind: KindFrame, Path: "p", Src: 1, SrcEnd: 1,
-		Frame: &leva.Frame{Backlight: true, Key: 3, Layout: 2, Rows: [4]string{"a", "b", "c", "d"}},
+		Frame: &leva.Frame{Backlight: true, Key: '3', Layout: '2', Rows: [4]string{"a", "b", "c", "d"}},
 	}
 	cmd := Entry{Dir: fixture.TX, Kind: KindCmd, Raw: []byte("MCr"), Path: "p", Src: 2, SrcEnd: 2}
 	bad := Entry{Dir: fixture.RX, Kind: KindReport, Raw: []byte("{x}"), Err: errText("short"), Path: "p", Src: 3, SrcEnd: 3}
@@ -323,7 +323,7 @@ func TestBadValueWarning(t *testing.T) {
 	for _, f := range []Format{FormatText, FormatJSONL, FormatCSV} {
 		r := Row{Entry: wReport(t, '-', "9?.00", "?????", "")}
 		out, w := writeRows(t, f, WriterOptions{Loc: time.UTC}, r, r)
-		want := []string{"key pressure: 2 unparseable values shown as masked"}
+		want := []string{"key pressure: 2 unparseable values (raw in text, null in jsonl, empty in csv)"}
 		if got := w.Warnings(); strings.Join(got, "|") != strings.Join(want, "|") {
 			t.Errorf("%s: warnings = %q", f, got)
 		}
@@ -424,5 +424,70 @@ func TestWriteRunsText(t *testing.T) {
 	}
 	if ls := lines(b.String()); ls[0] != "run,kind,start,t,duration,peak_bar,volume_ml,truncated,xml,src" || !strings.HasPrefix(ls[1], "1,shot,2026-11-10T07:58:01.000Z,1,") {
 		t.Errorf("csv %q", ls)
+	}
+}
+
+func TestFrameRealLine(t *testing.T) {
+	fr, err := leva.ParseFrame(testFrame())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := Entry{Dir: fixture.RX, Kind: KindFrame, Frame: &fr, Path: "p", Src: 1, SrcEnd: 1}
+	out, _ := writeRows(t, FormatText, WriterOptions{Loc: time.UTC}, Row{Entry: e})
+	if !strings.Contains(out, " bkl=1 key=1 layout=2 |Line one") {
+		t.Errorf("text: %q", out)
+	}
+	out, _ = writeRows(t, FormatJSONL, WriterOptions{}, Row{Entry: e})
+	if m := decodeJSON(t, out); m["bkl"] != true || m["key"] != 1.0 || m["layout"] != 2.0 {
+		t.Errorf("jsonl: %v", m)
+	}
+	// A byte that is not a digit is shown as the character.
+	odd := e
+	odd.Frame = &leva.Frame{Key: 'x', Layout: '2'}
+	out, _ = writeRows(t, FormatText, WriterOptions{Loc: time.UTC}, Row{Entry: odd})
+	if !strings.Contains(out, " bkl=0 key=x layout=2 ") {
+		t.Errorf("text odd: %q", out)
+	}
+	out, _ = writeRows(t, FormatJSONL, WriterOptions{}, Row{Entry: odd})
+	if m := decodeJSON(t, out); m["key"] != "x" {
+		t.Errorf("jsonl odd: %v", m)
+	}
+}
+
+func TestRunTNoNegativeZero(t *testing.T) {
+	run := &Run{N: 1}
+	rt := -100 * time.Microsecond
+	r := Row{Entry: wReport(t, '-', " 9.00", "?????", ""), Run: run, RunT: &rt}
+	out, _ := writeRows(t, FormatText, WriterOptions{Loc: time.UTC, RunCols: true, Fields: []string{"pump"}}, r)
+	if !strings.Contains(out, "report   1    0.000 pump=-") {
+		t.Errorf("text: %q", out)
+	}
+	out, _ = writeRows(t, FormatJSONL, WriterOptions{}, r)
+	if m := decodeJSON(t, out); !strings.Contains(out, `"run_t":0,`) || m["run_t"] != 0.0 {
+		t.Errorf("jsonl: %s", out)
+	}
+	out, _ = writeRows(t, FormatCSV, WriterOptions{Fields: []string{"run_t"}}, r)
+	if out != "run_t\n0\n" {
+		t.Errorf("csv: %q", out)
+	}
+}
+
+func TestTextJSONLLatin1Valid(t *testing.T) {
+	r := Row{Entry: wReport(t, '-', " 9.00", "?????", "SOAK 1\xb0")}
+	for _, f := range []Format{FormatText, FormatJSONL} {
+		out, _ := writeRows(t, f, WriterOptions{Loc: time.UTC, Fields: []string{"field_4"}}, r)
+		if !utf8.ValidString(out) || !strings.Contains(out, "SOAK 1°") {
+			t.Errorf("%s: %q", f, out)
+		}
+	}
+}
+
+func TestWriteRunsDefaultText(t *testing.T) {
+	var b bytes.Buffer
+	if err := WriteRuns(&b, Format("bogus"), Loaded{}, nil, time.UTC); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(b.String(), "RUN  KIND") {
+		t.Errorf("got %q", b.String())
 	}
 }

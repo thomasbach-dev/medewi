@@ -52,11 +52,15 @@ func entryText(e Entry) string {
 		if e.Frame.Backlight {
 			bkl = 1
 		}
-		return fmt.Sprintf("bkl=%d key=%d layout=%d |%s|%s|%s|%s|", bkl, e.Frame.Key, e.Frame.Layout,
+		return fmt.Sprintf("bkl=%d key=%s layout=%s |%s|%s|%s|%s|", bkl, frameByte(e.Frame.Key), frameByte(e.Frame.Layout),
 			e.Frame.Rows[0], e.Frame.Rows[1], e.Frame.Rows[2], e.Frame.Rows[3])
 	}
 	return rawText(e.Raw)
 }
+
+// frameByte shows a frame's key or layout byte: a digit as itself, any
+// other byte as its Latin-1 character.
+func frameByte(c byte) string { return latin1([]byte{c}) }
 
 func redactedText(e Entry) string {
 	return fmt.Sprintf("dump redacted (%d lines)", e.Count)
@@ -113,7 +117,7 @@ func (t *textWriter) Write(r Row) error {
 			run = strconv.Itoa(r.Run.N)
 		}
 		if r.RunT != nil {
-			runT = fmt.Sprintf("%.3f", r.RunT.Seconds())
+			runT = strconv.FormatFloat(roundMilli(*r.RunT), 'f', 3, 64)
 		}
 		parts = append(parts, fmt.Sprintf("%-3s %6s", run, runT))
 	}

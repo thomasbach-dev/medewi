@@ -83,7 +83,7 @@ type specCols struct {
 // fval is one rendered report value.
 type fval struct {
 	masked bool   // all '?'
-	bad    bool   // unparseable; s holds the raw text, shown masked except in text
+	bad    bool   // unparseable; s holds the raw text (text shows it, jsonl/csv mask it)
 	num    bool   // s is a number literal
 	s      string // the value as text
 }
@@ -172,7 +172,7 @@ func (b *base) field(e Entry, sc *specCols, k string) (fval, bool) {
 func (b *base) Warnings() []string {
 	var out []string
 	for k, n := range b.bad {
-		out = append(out, fmt.Sprintf("key %s: %d unparseable values shown as masked", k, n))
+		out = append(out, fmt.Sprintf("key %s: %d unparseable values (raw in text, null in jsonl, empty in csv)", k, n))
 	}
 	for k, n := range b.missing {
 		out = append(out, fmt.Sprintf("key %s: %d reports whose XML lacks it", k, n))
@@ -195,10 +195,17 @@ func pumpByte(e Entry) byte {
 	return '?'
 }
 
-// seconds prints d in seconds, rounded to milliseconds.
-func seconds(d time.Duration) string {
-	return FormatNum(math.Round(d.Seconds()*1000) / 1000)
+// roundMilli is d in seconds, rounded to milliseconds, never -0.
+func roundMilli(d time.Duration) float64 {
+	s := math.Round(d.Seconds()*1000) / 1000
+	if s == 0 {
+		s = 0 // no negative zero
+	}
+	return s
 }
+
+// seconds prints d in seconds, rounded to milliseconds.
+func seconds(d time.Duration) string { return FormatNum(roundMilli(d)) }
 
 const jsonWall = "2006-01-02T15:04:05.000Z"
 
@@ -330,8 +337,8 @@ func (j *jsonWriter) Write(r Row) error {
 		}
 	case e.Frame != nil:
 		o.raw("bkl", strconv.FormatBool(e.Frame.Backlight))
-		o.raw("key", strconv.Itoa(int(e.Frame.Key)))
-		o.raw("layout", strconv.Itoa(int(e.Frame.Layout)))
+		o.raw("key", frameJSON(e.Frame.Key))
+		o.raw("layout", frameJSON(e.Frame.Layout))
 		rows, _ := json.Marshal(e.Frame.Rows) // [4]string always encodes
 		o.raw("rows", string(rows))
 	case e.Kind == KindRedacted:
@@ -344,6 +351,15 @@ func (j *jsonWriter) Write(r Row) error {
 	}
 	_, err := j.w.Write(o.line())
 	return err
+}
+
+// frameJSON is a frame's key or layout byte: a digit as a number, any
+// other byte as a one-character string.
+func frameJSON(c byte) string {
+	if c >= '0' && c <= '9' {
+		return string(c)
+	}
+	return jsonString(latin1([]byte{c}))
 }
 
 func (j *jsonWriter) Close() error { return nil }
@@ -561,10 +577,11 @@ func WriteRuns(w io.Writer, f Format, l Loaded, runs []Run, loc *time.Location) 
 	var tw *tabwriter.Writer
 	var cw *csv.Writer
 	switch f {
+	case FormatJSONL:
 	case FormatCSV:
 		cw = csv.NewWriter(w)
 		_ = cw.Write(header)
-	case FormatText:
+	default:
 		tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		_, _ = fmt.Fprintln(tw, strings.ToUpper(strings.Join(header, "\t")))
 	}
