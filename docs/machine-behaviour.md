@@ -56,23 +56,24 @@ capture that teaches something new, and mark hypotheses as such.
 
 ## Pressure band
 
-- Hypothesis: `Pressure band (min)` and `(max)` are the lowest and highest
-  raw sensor reading within one report interval (~250 ms), and `Pressure`
-  is their average. The manual does not define the fields.
+- Hypothesis: `pressure_band_min` and `pressure_band_max` are the lowest
+  and highest raw sensor reading within one report interval (~250 ms),
+  and `pressure` is their average. The manual does not define the fields.
 - Evidence: in all 644 reports of the `shot-genlever` fixture,
-  min ≤ `Pressure` ≤ max. At rest the band is sensor noise (e.g.
-  0.00 … 0.03 … 0.11 bar); near 10 bar it is e.g. 9.80 … 9.90 … 9.94,
-  with a median width of about 0.3 bar above 3 bar.
-- Fits the manual: the sensor is "read many times per second and
-  averaged"; the `Noise` value is "max–min of readings"; a changelog
-  bugfix reads "Pressure band didn't include user-defined offset". The
-  Status Monitor XML draws it as a hidden-by-default band around the
-  pressure curve.
+  `pressure_band_min` ≤ `pressure` ≤ `pressure_band_max`. At rest the
+  band is sensor noise (e.g. 0.00 … 0.03 … 0.11 bar); near 10 bar it is
+  e.g. 9.80 … 9.90 … 9.94, with a median width of about 0.3 bar above
+  3 bar.
+- Fits the manual: it says the sensor is sampled several times a second
+  and the samples averaged, and its sensor-noise value is the spread of
+  the readings (max − min). A firmware changelog entry fixed the band
+  ignoring the user-set pressure offset. The Status Monitor XML draws it
+  as a band around the pressure curve, hidden by default.
 - Use: the width shows pressure jitter within a report (pump pulsation,
   sensor noise); a narrowing band means the pressure regulation settled.
-  It is not the profile target (that is `Pressure SP`).
+  It is not the profile target (that is `pressure_sp`).
 - To confirm: a profiled shot should widen the band during phase control
-  (marker `*`, `Pressure SP` set) and shrink it to noise with the pump off.
+  (marker `*`, `pressure_sp` set) and shrink it to noise with the pump off.
 
 ## Warm-up program (run menu)
 
