@@ -559,9 +559,14 @@ func TestRunsAndEventsAgree(t *testing.T) {
 		}
 	}
 
-	// A run number that does not exist selects nothing.
-	if code, out, _ := runCmd(t, "--xml", xml, "events", "--dir", dir, "--run", "99"); code != 0 || out != "" {
-		t.Errorf("--run 99: exit %d, output %q", code, out)
+	// A run number that does not exist selects nothing and says so.
+	if code, out, errs := runCmd(t, "--xml", xml, "events", "--dir", dir, "--run", "99"); code != 0 || out != "" ||
+		errs != "levalog: no run 99 in this input\n" {
+		t.Errorf("--run 99: exit %d, output %q, stderr %q", code, out, errs)
+	}
+	if _, out, errs := runCmd(t, "--xml", xml, "events", "--dir", dir, "--run", "2,7-9"); out == "" ||
+		errs != "levalog: no run 7-9 in this input\n" {
+		t.Errorf("--run 2,7-9: output %d bytes, stderr %q", len(out), errs)
 	}
 
 	// Runs as a list, a range, by kind and as a union.

@@ -175,6 +175,15 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 			sel.Runs = append(sel.Runs, r.N)
 		}
 	}
+	for _, rr := range runSel {
+		if !slices.ContainsFunc(sel.Runs, func(n int) bool { return rr.lo <= n && n <= rr.hi }) {
+			name := strconv.Itoa(rr.lo)
+			if rr.hi != rr.lo {
+				name += "-" + strconv.Itoa(rr.hi)
+			}
+			_, _ = fmt.Fprintf(stderr, "levalog: no run %s in this input\n", name)
+		}
+	}
 	if bad := unknownKeys(keys, sc.specs, cat); len(bad) > 0 {
 		return fail(stderr, 2, "--fields: unknown keys %s (see levalog fields)", strings.Join(bad, ", "))
 	}
