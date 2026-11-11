@@ -226,7 +226,7 @@ func TestJSONLFields(t *testing.T) {
 	out, _ := writeRows(t, FormatJSONL, WriterOptions{Fields: []string{"pressure"}},
 		Row{Entry: wReport(t, '*', " 9.00", "?????", "")})
 	m := decodeJSON(t, out)
-	if len(m) != 3 || m["src"] != "p:3" || m["event"] != "report" || m["pressure"] != 9.0 {
+	if len(m) != 4 || m["src"] != "p:3" || m["event"] != "report" || m["glued"] != false || m["pressure"] != 9.0 {
 		t.Errorf("got %v", m)
 	}
 }

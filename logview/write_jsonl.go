@@ -85,9 +85,7 @@ func (j *jsonWriter) Write(r Row) error {
 		o.str("dir", string(e.Dir))
 	}
 	o.str("event", string(e.Kind))
-	if len(j.opt.Fields) == 0 || e.Glued {
-		o.raw("glued", strconv.FormatBool(e.Glued))
-	}
+	o.raw("glued", strconv.FormatBool(e.Glued)) // always, so keys never shift
 	if j.want("run") {
 		if r.Run != nil {
 			o.raw("run", strconv.Itoa(r.Run.N))
