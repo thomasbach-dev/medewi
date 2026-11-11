@@ -61,6 +61,11 @@ func rawText(b []byte) string {
 			return strconv.Quote(string(b))
 		}
 	}
+	return latin1(b)
+}
+
+// latin1 converts Latin-1 bytes to the equivalent runes (valid UTF-8).
+func latin1(b []byte) string {
 	var sb strings.Builder
 	for _, c := range b {
 		sb.WriteRune(rune(c))
