@@ -126,8 +126,8 @@ a truncated kind naming the cause (`truncated-lost`, `truncated-released`,
 - `systime/` — the `systemd.time(7)` subset every command accepts for
   timestamps and spans, plus pflag values for them
   ([CLI conventions](cli-conventions.md)).
-- `cmd/levalog` — `levalog fields`, `runs` and `events` over `logview`, installed on brewhost
-  by the module.
+- `cmd/levalog` — `levalog fields`, `runs` and `events` over `logview`,
+  installed on brewhost by the module.
 - `nix/module.nix` — the `nixosModules.medewid` service.
 
 ## Build order

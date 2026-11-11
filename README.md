@@ -98,8 +98,8 @@ gzip -dc FILE 2>/dev/null | grep '}$' > DIR/log.jsonl; levasim --fixtures DIR
 The `grep` keeps only complete lines, so a file still being written or left
 by a crash replays too.
 
-**Decoding the raw log and captures: `levalog`.** `levalog events` prints one line per event:
-seconds since the file start, wall time (raw logs only; captures carry no
+**Decoding the raw log and captures: `levalog`.** `levalog events` prints one
+line per event: seconds since the file start, wall time (raw logs only; captures carry no
 exact start), direction (`tx`, `rx`, `note`), kind (`cmd`, `report`,
 `frame`, `banner`, `notice`, `reply`, `note`, `fragment`, `partial`,
 `redacted`; a `+` marks a piece split off a glued line) and the text:
@@ -121,7 +121,8 @@ Without FILE it reads the raw logs in `--dir` (default `$MEDEWID_RAW_DIR`,
 then `/var/lib/medewid/raw`) that overlap the window, in time order, each
 after a `# <path>` header (captures add `# notes: …` from their manifest).
 `--xml` defaults to `$MEDEWID_XML_PATH`, then `$MEDEWI_XML_PATH`; without
-it reports are printed raw after one warning. Times are `systemd.time(7)`
+it `events` prints reports raw after one warning; `fields` and `runs` need
+the XML (exit 2 without it). Times are `systemd.time(7)`
 forms in local time (`2026-11-10 10:40`, `10:40`, `-5min`, `yesterday`,
 ` UTC` suffix), as for `journalctl -S/-U`; `--since`/`--until` work on
 raw logs only. Exit codes: 0 ok, 1 read error, 2 usage error. On brewhost
