@@ -35,7 +35,7 @@ from any output line back to the raw bytes.
 2. `levalog fields` lists every report field with a stable key.
 3. `levalog runs` lists the pump runs (shots, flushes) and wand draws in
    the input, numbered.
-4. `levalog decode` selects by run, event kind and standby; projects
+4. `levalog events` (today's `decode`, renamed) selects by run, event kind and standby; projects
    fields; hides masked values; prints only changes; writes text, JSON
    Lines or CSV.
 5. Every output line can carry its source: file and JSON line number.
@@ -68,16 +68,16 @@ levalog [--xml F] SUBCOMMAND [OPTIONS] [FILE|DIR ...]
 
   fields    list the report fields: key, name, unit, factor, offset, source
   runs      list pump runs and wand draws in the input, numbered
-  decode    print events, with selection, projection and formats
+  events    print events, with selection, projection and formats
 ```
 
-`runs` and `decode` share the input options of today's `decode`:
+`runs` and `events` share the input options of today's `decode`:
 `FILE|DIR ...`, `--dir D`, `-s/--since T`, `-u/--until T`. With the same
 input options they see the same runs with the same numbers. All three take
 `--format text|jsonl|csv` (default `text`).
 
 Without the vendor XML, `fields` and `runs` fail with exit 2 (they need
-field names and run detection needs `Pressure SP` and `Volume`); `decode`
+field names and run detection needs `Pressure SP` and `Volume`); `events`
 keeps printing reports raw, as today, and rejects `--fields`, `--run`,
 `--run-kind` and parsed-value output with exit 2.
 
@@ -97,7 +97,7 @@ keeps printing reports raw, as today, and rejects `--fields`, `--run`,
 
 Everything after these is the machine's data: report fields from the XML
 (and `mode`, below), frame fields, or the raw text of other lines. The
-`--help` of `decode` contains this table in short form.
+`--help` of `events` contains this table in short form.
 
 `src` matters because a printed line is not one raw-log line: rx bytes
 arrive in chunks, one chunk per JSON line, so a report is often assembled
@@ -140,17 +140,17 @@ RUN  KIND   START                    T        DURATION  PEAK_BAR  VOLUME_ML  TRU
   filters the rows shown, never renumbers.
 - Numbering covers the runs that **start** inside the `--since/--until`
   window (all runs, without a window), from 1, in input order: the order
-  `decode` already processes sources in (captures first, in argument
+  `events` already processes sources in (captures first, in argument
   order, each on its own offsets; then raw logs by start time). *(Builder
   check; my call.)*
 - `START`/`T`/`SRC` refer to the first sample of the run: the first
   pumping report (shot, flush) or the first volume increment (draw).
 - Peak bar is blank for draws (brew does not track it).
 
-### `levalog decode`
+### `levalog events`
 
 ```
-levalog decode [OPTIONS] [FILE|DIR ...]
+levalog events [OPTIONS] [FILE|DIR ...]
 
   input        --dir, -s/--since, -u/--until        (as today)
   selection    --run LIST        runs by number: 12 | 3,5 | 7-9
@@ -223,7 +223,7 @@ Example agent session:
 
 ```sh
 levalog runs -s yesterday --kind shot
-levalog decode -s yesterday --run 2 --margin 5s --format csv \
+levalog events -s yesterday --run 2 --margin 5s --format csv \
   --fields run_t,pump,pressure,pressure_sp,temperature_pid1,heat_pid,volume
 ```
 
@@ -252,14 +252,64 @@ daemon may ignore them).
   runs starting in the window are numbered.
 - Thresholds: `brew.DefaultConfig()`, the same as the daemon.
 
+## One XML per session (firmware updates)
+
+Firmware updates are rare (once or twice a year), but a year of raw logs
+will span one, and comparing pre- and post-update behaviour is a planned
+use. Decoding old logs with the new XML would not fail: it would print
+plausible wrong numbers. So the XML is chosen per session, not per call.
+
+- **The log names its XML.** medewid's handshake (`MC?` →
+  `XML=leva!-65FCB201`) starts every session and its reply is kept in
+  the raw log; medewid refuses a machine whose name differs from its
+  configured XML (`daemon/daemon.go`, `SpecName`), so after an update the
+  operator adds the new XML before any new log exists. Only the first
+  file of a session holds the handshake, so `rawlog` gains a way for the
+  daemon to set the session's XML name once known, and writes it as a
+  `note` (`xml: leva!-65FCB201`) at the top of every later file of that
+  session (rotation). For older files without the note, `levalog` looks
+  back through the earlier files of the same directory to the latest
+  handshake before them.
+- **`--xml` takes a file or a directory** (same env vars as today). A
+  directory holds XMLs named after their ID, as the vendor ships them
+  (`leva!-65FCB201.xml`); each source uses the one its session names. A
+  file is used for every source, as today.
+- **Mismatch is loud.** A session naming an XML other than `--xml FILE`,
+  or one missing from the directory, gets its reports printed raw (no
+  fields, no runs) and one warning per session on stderr naming both.
+  A source with no XML name at all (e.g. a capture without `MC?`) uses
+  `--xml FILE`; with a directory it uses the only XML there, else is
+  treated as missing.
+- **The boundary is visible.** `xml` is a medewi column (in `fields`, in
+  `runs` as `XML`, selectable in `events`), so an agent sees where the
+  firmware changed.
+- *(My calls:)* `fields` reads the same input options and lists the XML
+  of the last source (default input: the raw-log dir, i.e. the current
+  firmware). CSV without `--fields` takes its columns from the first
+  source's XML; a later source whose key set differs is an error (exit 1)
+  telling to use `--fields`. With `--fields`, a key a source's XML lacks
+  prints empty and is counted in one warning. Keys are derived per XML
+  with the same rule, so unchanged fields keep their key across versions.
+
+## Rename
+
+`decode` becomes `events` (no alias): the subcommands are nouns for what
+they list (`fields`, `runs`, `events`), and `dump` already means the
+`MCu`/`MCm` output in this project. Every mention moves with it: README,
+`docs/` (architecture, deployment, cli-conventions, runbooks),
+`nix/module.nix`, `nix/vm-test.nix`. Earlier specs and plans stay as
+written.
+
 ## Changes by package
 
 - `brew`: `SampleFrom`, draw times, truncated-with-kind on abort.
-- `daemon`: use `brew.SampleFrom`; behaviour unchanged.
-- `logview`: entries carry `src`/`src_end` (event index → line number);
+- `daemon`: use `brew.SampleFrom`; hand the XML name to the raw-log
+  session after the handshake; behaviour otherwise unchanged.
+- `rawlog`: per-session XML name, repeated as a note at each new file.
+- `logview`: entries carry `src`/`src_end` (event index → line number) and their session's XML name;
   field keys; run detection over a sequence of sources; selection,
   projection and the three formatters. Kept out of `main` for #30.
-- `cmd/levalog`: the `fields` and `runs` subcommands, the new flags, the
+- `cmd/levalog`: the `fields` and `runs` subcommands, `decode` → `events`, `--xml DIR`, the new flags, the
   help text.
 - Docs: `docs/architecture.md` (logview's new role), the levalog part of
   `docs/runbooks/` if one covers it.
