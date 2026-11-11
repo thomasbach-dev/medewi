@@ -55,7 +55,7 @@ func Key(name string) string {
 
 // Columns returns MedewiColumns followed by one column per XML value in spec
 // order. Empty names become "mode" (at offset 4) or "field_N". Duplicate keys
-// get the unit appended; remaining duplicates and clashes with medewi keys
+// get the unit's key appended (nothing when that is empty); remaining duplicates and clashes with medewi keys
 // are errors.
 func Columns(spec *leva.RecordSpec) ([]Column, error) {
 	cols := append([]Column(nil), MedewiColumns...)
@@ -86,8 +86,8 @@ func Columns(spec *leva.RecordSpec) ([]Column, error) {
 		count[c.Key]++
 	}
 	for i := range xml {
-		if count[xml[i].Key] > 1 {
-			xml[i].Key += "_" + Key(xml[i].Unit)
+		if u := Key(xml[i].Unit); count[xml[i].Key] > 1 && u != "" {
+			xml[i].Key += "_" + u
 		}
 	}
 	reserved := map[string]bool{}

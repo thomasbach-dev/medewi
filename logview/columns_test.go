@@ -79,6 +79,24 @@ func TestColumnsDuplicate(t *testing.T) {
 	}
 }
 
+func TestColumnsDuplicateNoUnit(t *testing.T) {
+	spec := &leva.RecordSpec{Values: []leva.ValueSpec{
+		{Index: 0, Name: "Flow rate", At: 4, Len: 5, Type: leva.Float, Unit: "ml/s"},
+		{Index: 1, Name: "Flow rate", At: 10, Len: 5, Type: leva.Float, Unit: "%"},
+	}}
+	cols, err := Columns(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cols[10].Key + "," + cols[11].Key; got != "flow_rate_ml_s,flow_rate" {
+		t.Errorf("keys = %s, want flow_rate_ml_s,flow_rate (no trailing _)", got)
+	}
+	spec.Values[0].Unit = ""
+	if _, err := Columns(spec); err == nil || !strings.Contains(err.Error(), `both map to key "flow_rate"`) {
+		t.Errorf("err = %v, want the duplicate error", err)
+	}
+}
+
 func TestColumnsReservedClash(t *testing.T) {
 	spec := &leva.RecordSpec{Values: []leva.ValueSpec{
 		{Index: 0, Name: "Run", At: 4, Len: 3, Type: leva.Int},
