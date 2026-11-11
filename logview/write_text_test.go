@@ -3,6 +3,7 @@ package logview
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,23 +11,15 @@ import (
 	"github.com/thomasbach-dev/medewi/leva"
 )
 
-func TestFormatLine(t *testing.T) {
+// TestTextEntries pins the text line of each non-report entry kind.
+func TestTextEntries(t *testing.T) {
 	loc := time.FixedZone("X", 3600)
 	wall := time.Date(2026, 11, 10, 11, 0, 5, 7_000_000, time.UTC) // 12:00:05.007 in loc
-	rec := &leva.Record{Fields: []leva.Field{
-		{Spec: leva.ValueSpec{Name: "Heat PID", Index: 3}, Raw: "91.0"},
-		{Spec: leva.ValueSpec{Name: "", Index: 7}, Raw: "?????"},
-	}}
 	tests := []struct {
 		name string
 		e    Entry
 		want string
 	}{
-		{
-			"report",
-			Entry{Offset: 592123 * time.Millisecond, Wall: wall, HasWall: true, Dir: fixture.RX, Kind: KindReport, Record: rec},
-			"   592.123 2026-11-10 12:00:05.007 rx   report   Heat PID=91.0; #7=?????",
-		},
 		{
 			"frame no wall",
 			Entry{
@@ -37,8 +30,8 @@ func TestFormatLine(t *testing.T) {
 		},
 		{
 			"redacted",
-			Entry{Dir: fixture.RX, Kind: KindRedacted, Count: 12},
-			"     0.000 - rx   redacted dump redacted (12 lines)",
+			Entry{Wall: wall, HasWall: true, Dir: fixture.RX, Kind: KindRedacted, Count: 12},
+			"     0.000 2026-11-10 12:00:05.007 rx   redacted dump redacted (12 lines)",
 		},
 		{
 			"error",
@@ -83,10 +76,12 @@ func TestFormatLine(t *testing.T) {
 	}
 	for _, tc := range tests {
 		var b bytes.Buffer
-		if err := FormatLine(&b, tc.e, loc); err != nil {
+		w := NewWriter(&b, FormatText, WriterOptions{Loc: loc})
+		if err := w.Write(Row{Entry: tc.e}); err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
-		if got := b.String(); got != tc.want+"\n" {
+		got, _ := strings.CutPrefix(b.String(), "# \n") // the PATH header of an unnamed source
+		if got != tc.want+"\n" {
 			t.Errorf("%s:\n got %q\nwant %q", tc.name, got, tc.want+"\n")
 		}
 	}

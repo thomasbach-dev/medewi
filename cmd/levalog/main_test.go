@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,7 +30,8 @@ func testReport() []byte {
 	b := bytes.Repeat([]byte(" "), 289)
 	b[0], b[288] = '{', '}'
 	b[2] = '*'
-	copy(b[7:], "  93.5")
+	copy(b[4:], "PID  93.5 91.0 50")
+	copy(b[36:], " 9.00")
 	return b
 }
 
@@ -73,11 +75,10 @@ func runCmd(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	return code, out.String(), errb.String()
 }
 
-func TestDecodeCmdWindow(t *testing.T) {
-	t.Skip("window returns in Task 10")
+func TestEventsWindow(t *testing.T) {
 	noEnv(t)
 	dir := rawDir(t)
-	code, out, errs := runCmd(t, "--xml", synth, "decode", "--dir", dir,
+	code, out, errs := runCmd(t, "--xml", synth, "events", "--dir", dir,
 		"-s", "2026-11-10 10:00:05 UTC", "--until=2026-11-10 10:30:15 UTC")
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, errs)
@@ -114,14 +115,14 @@ func TestDecodeCmdWindow(t *testing.T) {
 	}
 }
 
-func TestDecodeCmdFileArgsInStartOrder(t *testing.T) {
+func TestEventsFileArgsInStartOrder(t *testing.T) {
 	noEnv(t)
 	dir := rawDir(t)
 	files, err := filepath.Glob(filepath.Join(dir, "*.jsonl.gz"))
 	if err != nil || len(files) != 2 {
 		t.Fatalf("files = %v, err = %v", files, err)
 	}
-	code, out, _ := runCmd(t, "--xml", synth, "decode", files[1], files[0])
+	code, out, _ := runCmd(t, "--xml", synth, "events", files[1], files[0])
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -131,12 +132,12 @@ func TestDecodeCmdFileArgsInStartOrder(t *testing.T) {
 	}
 }
 
-func TestDecodeCmdEnvDir(t *testing.T) {
+func TestEventsEnvDir(t *testing.T) {
 	noEnv(t)
 	dir := rawDir(t)
 	t.Setenv("MEDEWID_RAW_DIR", dir)
 	t.Setenv("MEDEWI_XML_PATH", synth)
-	code, out, errs := runCmd(t, "decode")
+	code, out, errs := runCmd(t, "events")
 	if code != 0 || errs != "" {
 		t.Fatalf("exit %d, stderr %q", code, errs)
 	}
@@ -145,10 +146,10 @@ func TestDecodeCmdEnvDir(t *testing.T) {
 	}
 }
 
-func TestDecodeCmdNoXML(t *testing.T) {
+func TestEventsNoXML(t *testing.T) {
 	noEnv(t)
 	dir := rawDir(t)
-	code, out, errs := runCmd(t, "decode", "--dir", dir)
+	code, out, errs := runCmd(t, "events", "--dir", dir)
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, errs)
 	}
@@ -161,9 +162,9 @@ func TestDecodeCmdNoXML(t *testing.T) {
 	}
 }
 
-func TestDecodeCmdCapture(t *testing.T) {
+func TestEventsCapture(t *testing.T) {
 	noEnv(t)
-	code, out, errs := runCmd(t, "--xml", synth, "decode", "../../testdata/fixtures/shot-genlever")
+	code, out, errs := runCmd(t, "--xml", synth, "events", "../../testdata/fixtures/shot-genlever")
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, errs)
 	}
@@ -177,8 +178,8 @@ func TestDecodeCmdCapture(t *testing.T) {
 		t.Error("no report lines")
 	}
 
-	_, out, _ = runCmd(t, "--xml", synth, "decode", "../../testdata/fixtures/warmup-stream")
-	if !strings.Contains(out, "\n# notes: MC? returned no XML= line\n") {
+	_, out, _ = runCmd(t, "--xml", synth, "events", "../../testdata/fixtures/warmup-stream")
+	if !strings.HasPrefix(out, "# notes: MC? returned no XML= line\n# ../../testdata/fixtures/warmup-stream/log.jsonl\n") {
 		t.Errorf("no notes header: %q", out[:min(len(out), 300)])
 	}
 }
@@ -203,10 +204,10 @@ func dumpCapture(t *testing.T) string {
 	return dir
 }
 
-func TestDecodeCmdRedactsDumps(t *testing.T) {
+func TestEventsRedactsDumps(t *testing.T) {
 	noEnv(t)
 	dir := dumpCapture(t)
-	code, out, errs := runCmd(t, "--xml", synth, "decode", dir)
+	code, out, errs := runCmd(t, "--xml", synth, "events", dir)
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, errs)
 	}
@@ -217,7 +218,7 @@ func TestDecodeCmdRedactsDumps(t *testing.T) {
 		t.Errorf("want a redaction line and the report:\n%s", out)
 	}
 
-	code, out, errs = runCmd(t, "--xml", synth, "decode", "--show-dumps", dir)
+	code, out, errs = runCmd(t, "--xml", synth, "events", "--show-dumps", dir)
 	if code != 0 {
 		t.Fatalf("--show-dumps: exit %d, stderr %q", code, errs)
 	}
@@ -226,7 +227,7 @@ func TestDecodeCmdRedactsDumps(t *testing.T) {
 	}
 }
 
-func TestDecodeCmdUsageErrors(t *testing.T) {
+func TestEventsUsageErrors(t *testing.T) {
 	noEnv(t)
 	tests := []struct {
 		name string
@@ -235,19 +236,27 @@ func TestDecodeCmdUsageErrors(t *testing.T) {
 	}{
 		{
 			"capture with since",
-			[]string{"--xml", synth, "decode", "-s", "-5min", "../../testdata/fixtures/shot-genlever"},
+			[]string{"--xml", synth, "events", "-s", "-5min", "../../testdata/fixtures/shot-genlever"},
 			"levalog: --since/--until need raw logs with wall time; ../../testdata/fixtures/shot-genlever/log.jsonl is a capture\n",
 		},
 		{
 			"capture with until",
-			[]string{"decode", "--until", "now", "../../testdata/fixtures/shot-genlever/log.jsonl"},
+			[]string{"events", "--until", "now", "../../testdata/fixtures/shot-genlever/log.jsonl"},
 			"is a capture",
 		},
 		{"single-dash long option", []string{"-ca"}, "unknown shorthand flag"},
-		{"single-dash long sub option", []string{"decode", "-dir", "x"}, "unknown shorthand flag"},
-		{"bad since", []string{"decode", "--since", "bogus"}, "--since"},
+		{"single-dash long sub option", []string{"events", "-dir", "x"}, "unknown shorthand flag"},
+		{"bad since", []string{"events", "--since", "bogus"}, "--since"},
 		{"no subcommand", nil, "usage:"},
 		{"unknown subcommand", []string{"encode"}, "unknown subcommand"},
+		{"bad format", []string{"--xml", synth, "events", "--format", "xml"}, "--format"},
+		{"bad event", []string{"--xml", synth, "events", "--event", "report,bogus"}, "--event"},
+		{"bad run", []string{"--xml", synth, "events", "--run", "3-x"}, "--run"},
+		{"bad run range", []string{"--xml", synth, "events", "--run", "5-3"}, "--run"},
+		{"bad run-kind", []string{"--xml", synth, "events", "--run-kind", "espresso"}, "--run-kind"},
+		{"bad kind", []string{"--xml", synth, "runs", "--kind", "espresso"}, "--kind"},
+		{"bad margin", []string{"--xml", synth, "events", "--margin", "-5s"}, "--margin"},
+		{"csv with other events", []string{"--xml", synth, "events", "--format", "csv", "--event", "report,note"}, "--event"},
 	}
 	for _, tc := range tests {
 		code, _, errs := runCmd(t, tc.args...)
@@ -260,13 +269,13 @@ func TestDecodeCmdUsageErrors(t *testing.T) {
 	}
 }
 
-func TestDecodeCmdReadErrors(t *testing.T) {
+func TestEventsReadErrors(t *testing.T) {
 	noEnv(t)
 	missing := filepath.Join(t.TempDir(), "missing")
 	for _, args := range [][]string{
-		{"--xml", synth, "decode", "--dir", missing},
-		{"--xml", synth, "decode", missing},
-		{"--xml", missing, "decode", "../../testdata/fixtures/shot-genlever"},
+		{"--xml", synth, "events", "--dir", missing},
+		{"--xml", synth, "events", missing},
+		{"--xml", missing, "events", "../../testdata/fixtures/shot-genlever"},
 	} {
 		if code, _, errs := runCmd(t, args...); code != 1 || errs == "" {
 			t.Errorf("%q: exit %d, stderr %q; want 1 and a message", args, code, errs)
@@ -276,7 +285,7 @@ func TestDecodeCmdReadErrors(t *testing.T) {
 
 func TestHelp(t *testing.T) {
 	noEnv(t)
-	for _, args := range [][]string{{"--help"}, {"decode", "--help"}} {
+	for _, args := range [][]string{{"--help"}, {"events", "--help"}} {
 		code, _, errs := runCmd(t, args...)
 		if code != 0 {
 			t.Errorf("%q: exit %d", args, code)
@@ -286,5 +295,414 @@ func TestHelp(t *testing.T) {
 				t.Errorf("%q: help does not name %s:\n%s", args, w, errs)
 			}
 		}
+	}
+}
+
+func TestEventsRenamed(t *testing.T) {
+	noEnv(t)
+	code, _, errs := runCmd(t, "--xml", synth, "decode")
+	if code != 2 || !strings.Contains(errs, `levalog: unknown subcommand "decode"`) {
+		t.Errorf("exit %d, stderr %q; want 2 and unknown subcommand", code, errs)
+	}
+}
+
+func TestFieldsSynthetic(t *testing.T) {
+	noEnv(t)
+	t.Setenv("MEDEWID_RAW_DIR", filepath.Join(t.TempDir(), "missing"))
+	wantKeys := []string{
+		"t", "wall", "src", "src_end", "dir", "event", "run", "run_t", "pump", "xml",
+		"mode", "temperature_pid1", "setpoint_pid", "pressure", "heat_pid", "field_5",
+	}
+	for _, args := range [][]string{
+		{"--xml", synth, "fields"},                     // no readable input: the file's columns
+		{"--xml", synth, "fields", "--dir", rawDir(t)}, // the XML of the last raw log
+		{"--xml", synth, "fields", "-s", "2026-11-10 10:30 UTC", "--dir", rawDir(t)},
+	} {
+		code, out, errs := runCmd(t, args...)
+		if code != 0 || errs != "" {
+			t.Fatalf("%q: exit %d, stderr %q", args, code, errs)
+		}
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		if strings.HasPrefix(lines[0], "# xml: ") {
+			lines = lines[1:]
+		}
+		if !strings.HasPrefix(lines[0], "KEY ") {
+			t.Fatalf("%q: no header:\n%s", args, out)
+		}
+		var keys []string
+		for _, l := range lines[1:] {
+			keys = append(keys, strings.Fields(l)[0])
+		}
+		if strings.Join(keys, " ") != strings.Join(wantKeys, " ") {
+			t.Errorf("%q: keys = %q\nwant %q", args, keys, wantKeys)
+		}
+		if !strings.Contains(out, "temperature_pid1  Temperature PID1") {
+			t.Errorf("%q: no name column:\n%s", args, out)
+		}
+	}
+
+	code, out, _ := runCmd(t, "--xml", synth, "fields", "--format", "jsonl", "--dir", rawDir(t))
+	if code != 0 || !strings.Contains(out, `{"key":"pressure","name":"Pressure","unit":"bar"`) {
+		t.Errorf("jsonl: exit %d\n%s", code, out)
+	}
+}
+
+func TestFieldsNoXML(t *testing.T) {
+	noEnv(t)
+	for _, sub := range []string{"fields", "runs"} {
+		code, _, errs := runCmd(t, sub, "--dir", rawDir(t))
+		if code != 2 || !strings.Contains(errs, "levalog: "+sub+" needs the vendor XML") {
+			t.Errorf("%s: exit %d, stderr %q; want 2", sub, code, errs)
+		}
+	}
+}
+
+// runXML writes a spec with the fields brew reads for runs: Pressure,
+// Pressure SP and Volume.
+func runXML(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "runs.xml")
+	const x = `<cfg version="4"><values>
+<value at="7" len="5" export="Pressure" type="float" unit="bar"></value>
+<value at="13" len="5" export="Pressure SP" type="float" unit="bar"></value>
+<value at="19" len="5" export="Volume" type="float" unit="ml"></value>
+</values></cfg>
+`
+	if err := os.WriteFile(p, []byte(x), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// step is one synthetic report of the run spec.
+type step struct {
+	pump   byte
+	sp     string // "" masks Pressure SP
+	volume float64
+}
+
+func runReport(s step) []byte {
+	b := bytes.Repeat([]byte(" "), 289)
+	b[0], b[288] = '{', '}'
+	b[2] = s.pump
+	copy(b[7:], " 9.00")
+	sp := "?????"
+	if s.sp != "" {
+		sp = fmt.Sprintf("%5s", s.sp)
+	}
+	copy(b[13:], sp)
+	copy(b[19:], fmt.Sprintf("%5.1f", s.volume))
+	return b
+}
+
+// pumpRun is n pumping steps (a shot with a setpoint, else a flush) and
+// then n/2 idle steps at the end volume.
+func pumpRun(n int, sp string) []step {
+	var out []step
+	for i := range n {
+		out = append(out, step{pump: '*', sp: sp, volume: float64(i)})
+	}
+	for range n / 2 {
+		out = append(out, step{pump: '-', volume: float64(n - 1)})
+	}
+	return out
+}
+
+func idleSteps(n int) []step {
+	out := make([]step, n)
+	for i := range out {
+		out[i] = step{pump: '-'}
+	}
+	return out
+}
+
+// runDir writes steps as one session from 10:00:00 UTC on 2026-11-10, one
+// report every 250 ms, into raw logs that rotate every rotate.
+func runDir(t *testing.T, rotate time.Duration, steps []step) string {
+	t.Helper()
+	dir := t.TempDir()
+	var mu sync.Mutex
+	start := time.Date(2026, 11, 10, 10, 0, 0, 0, time.UTC)
+	now := start
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	l, err := rawlog.Open(rawlog.Config{Dir: dir, Now: clock, RotateEvery: rotate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := l.Session()
+	for i, st := range steps {
+		mu.Lock()
+		now = start.Add(time.Duration(i) * 250 * time.Millisecond)
+		mu.Unlock()
+		s.Tap("rx", append(runReport(st), '\r', '\n'))
+	}
+	s.Close()
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestRunsAndEventsAgree(t *testing.T) {
+	noEnv(t)
+	xml := runXML(t)
+	dir := runDir(t, time.Hour, concat(
+		idleSteps(8), pumpRun(12, ""), idleSteps(16), pumpRun(40, "9.00"), idleSteps(16), pumpRun(32, "9.00"), idleSteps(8),
+	))
+	code, out, errs := runCmd(t, "--xml", xml, "runs", "--format", "jsonl", "--dir", dir)
+	if code != 0 || errs != "" {
+		t.Fatalf("runs: exit %d, stderr %q", code, errs)
+	}
+	type runRow struct {
+		Run  int     `json:"run"`
+		Kind string  `json:"kind"`
+		T    float64 `json:"t"`
+	}
+	var runs []runRow
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		var r runRow
+		if err := json.Unmarshal([]byte(line), &r); err != nil {
+			t.Fatalf("%q: %v", line, err)
+		}
+		runs = append(runs, r)
+	}
+	if len(runs) != 3 || runs[0].Kind != "flush" || runs[1].Kind != "shot" || runs[2].Kind != "shot" {
+		t.Fatalf("runs = %+v", runs)
+	}
+
+	_, out, _ = runCmd(t, "--xml", xml, "runs", "--kind", "shot", "--dir", dir)
+	if n := strings.Count(out, " shot "); n != 2 || strings.Contains(out, "flush") {
+		t.Errorf("--kind shot:\n%s", out)
+	}
+
+	for _, r := range runs {
+		code, out, errs := runCmd(t, "--xml", xml, "events", "--format", "jsonl", "--run", fmt.Sprint(r.Run), "--dir", dir)
+		if code != 0 || errs != "" {
+			t.Fatalf("events --run %d: exit %d, stderr %q", r.Run, code, errs)
+		}
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		for i, line := range lines {
+			var row struct {
+				Run  *int     `json:"run"`
+				T    float64  `json:"t"`
+				RunT *float64 `json:"run_t"`
+			}
+			if err := json.Unmarshal([]byte(line), &row); err != nil {
+				t.Fatalf("%q: %v", line, err)
+			}
+			if row.Run == nil || *row.Run != r.Run {
+				t.Errorf("events --run %d: row run %v: %s", r.Run, row.Run, line)
+			}
+			if i == 0 && (row.T != r.T || row.RunT == nil || *row.RunT != 0) {
+				t.Errorf("events --run %d: first row %s, want t %v run_t 0", r.Run, line, r.T)
+			}
+		}
+	}
+
+	// Runs as a list, a range, by kind and as a union.
+	for _, tc := range []struct {
+		sel  []string
+		want string
+	}{
+		{[]string{"--run", "1,3"}, "1,3"},
+		{[]string{"--run", "2-3"}, "2,3"},
+		{[]string{"--run-kind", "shot"}, "2,3"},
+		{[]string{"--run", "1", "--run-kind", "shot"}, "1,2,3"},
+	} {
+		args := append([]string{"--xml", xml, "events", "--format", "jsonl", "--dir", dir}, tc.sel...)
+		_, out, _ := runCmd(t, args...)
+		var got []string
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			var row struct {
+				Run int `json:"run"`
+			}
+			if err := json.Unmarshal([]byte(line), &row); err != nil {
+				t.Fatalf("%q: %v", line, err)
+			}
+			if n := fmt.Sprint(row.Run); len(got) == 0 || got[len(got)-1] != n {
+				got = append(got, n)
+			}
+		}
+		if strings.Join(got, ",") != tc.want {
+			t.Errorf("%q: runs %v, want %s", tc.sel, got, tc.want)
+		}
+	}
+}
+
+func concat(parts ...[]step) []step {
+	var out []step
+	for _, p := range parts {
+		out = append(out, p...)
+	}
+	return out
+}
+
+func TestEventsRunAcrossFiles(t *testing.T) {
+	noEnv(t)
+	xml := runXML(t)
+	// The shot pumps from 2 s to 12 s; files rotate every 10 s.
+	dir := runDir(t, 10*time.Second, concat(idleSteps(8), pumpRun(40, "9.00"), idleSteps(8)))
+	files, _ := filepath.Glob(filepath.Join(dir, "*.jsonl.gz"))
+	if len(files) != 2 {
+		t.Fatalf("files = %v", files)
+	}
+	code, out, errs := runCmd(t, "--xml", xml, "events", "--dir", dir,
+		"-s", "2026-11-10 10:00 UTC", "-u", "2026-11-10 10:00:05 UTC", "--run", "1", "--event", "report")
+	if code != 0 || errs != "" {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	if !strings.Contains(out, "# "+files[1]+"\n") {
+		t.Errorf("second file not read:\n%s", out)
+	}
+	reports := strings.Count(out, " report ")
+	if reports != 40 {
+		t.Errorf("reports = %d, want the whole shot (40)\n%s", reports, out)
+	}
+	// RUN and RUN_T follow EVENT in text with a run selection.
+	if !strings.Contains(out, " report   1    0.000 pump=* ") || !strings.Contains(out, " report   1    9.750 pump=* ") {
+		t.Errorf("no run columns:\n%s", out)
+	}
+
+	// Without a run selection the window cuts.
+	_, out, _ = runCmd(t, "--xml", xml, "events", "--dir", dir,
+		"-s", "2026-11-10 10:00 UTC", "-u", "2026-11-10 10:00:05 UTC", "--event", "report")
+	if n := strings.Count(out, " report "); n != 20 {
+		t.Errorf("window: reports = %d, want 20", n)
+	}
+}
+
+func TestEventsCSV(t *testing.T) {
+	noEnv(t)
+	dir := rawDir(t)
+	files, _ := filepath.Glob(filepath.Join(dir, "*.jsonl.gz"))
+	code, out, errs := runCmd(t, "--xml", synth, "events", "--format", "csv",
+		"--fields", "t,wall,src,pump,temperature_pid1,heat_pid", files[0])
+	if code != 0 || errs != "" {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	want := "t,wall,src,pump,temperature_pid1,heat_pid\n10,2026-11-10T10:00:10.000Z," + files[0] + ":3,1,93.5,50\n"
+	if out != want {
+		t.Errorf("csv:\n got %q\nwant %q", out, want)
+	}
+
+	code, _, errs = runCmd(t, "--xml", synth, "events", "--fields", "t,bogus,temperature_pid1,nope", files[0])
+	if code != 2 || !strings.Contains(errs, "--fields") || !strings.Contains(errs, "bogus, nope") {
+		t.Errorf("unknown keys: exit %d, stderr %q", code, errs)
+	}
+}
+
+func TestEventsUsageWithoutXML(t *testing.T) {
+	noEnv(t)
+	dir := rawDir(t)
+	for _, flags := range [][]string{
+		{"--fields", "t"}, {"--run", "1"}, {"--run-kind", "shot"}, {"--changes"}, {"--format", "csv"},
+	} {
+		args := append([]string{"events", "--dir", dir}, flags...)
+		code, out, errs := runCmd(t, args...)
+		if code != 2 || !strings.Contains(errs, flags[0]) || !strings.Contains(errs, "vendor XML") {
+			t.Errorf("%q: exit %d, stderr %q; want 2 naming the flag", flags, code, errs)
+		}
+		if out != "" {
+			t.Errorf("%q: output %q", flags, out)
+		}
+	}
+}
+
+func TestEventsXMLDirTwoNoName(t *testing.T) {
+	noEnv(t)
+	x, err := os.ReadFile(synth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	xmls := t.TempDir()
+	for _, n := range []string{"a.xml", "b.xml"} {
+		if err := os.WriteFile(filepath.Join(xmls, n), x, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	capture := t.TempDir()
+	line := fmt.Sprintf("{\"t\":0,\"dir\":\"rx\",\"data\":%q}\n", base64.StdEncoding.EncodeToString(append(testReport(), '\r', '\n')))
+	if err := os.WriteFile(filepath.Join(capture, "log.jsonl"), []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCmd(t, "--xml", xmls, "events", capture)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	want := "levalog: " + filepath.Join(capture, "log.jsonl") + ": no XML name in the log and 2 XMLs in " + xmls + "\n"
+	if errs != want {
+		t.Errorf("stderr = %q, want %q", errs, want)
+	}
+	if !strings.Contains(out, " report   {") || strings.Contains(out, "temperature_pid1") {
+		t.Errorf("want the raw report:\n%s", out)
+	}
+}
+
+func TestHelpExplainsColumns(t *testing.T) {
+	noEnv(t)
+	for _, args := range [][]string{{"--help"}, {"events", "--help"}, {"runs", "--help"}, {"fields", "--help"}} {
+		code, _, errs := runCmd(t, args...)
+		if code != 0 {
+			t.Errorf("%q: exit %d", args, code)
+		}
+		for _, w := range []string{"src", "run_t", "medewi adds", "fields", "runs", "events", "UTC", "directory of NAME.xml"} {
+			if !strings.Contains(errs, w) {
+				t.Errorf("%q: help does not mention %q", args, w)
+			}
+		}
+	}
+}
+
+func TestEventsFixtureCSV(t *testing.T) {
+	xml := os.Getenv("MEDEWI_XML_PATH")
+	if xml == "" {
+		t.Skip("MEDEWI_XML_PATH not set")
+	}
+	noEnv(t)
+	code, out, errs := runCmd(t, "--xml", xml, "events", "--run", "2", "--format", "csv",
+		"--fields", "run_t,pump,pressure", "../../testdata/fixtures/shot-genlever")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	lines := strings.Split(out, "\n")
+	if len(lines) < 3 || lines[0] != "run_t,pump,pressure" {
+		t.Fatalf("csv:\n%s", out[:min(len(out), 300)])
+	}
+	row := strings.Split(lines[1], ",")
+	if row[0] != "0" || row[1] != "1" {
+		t.Errorf("first row = %q, want run_t 0 and pump 1", lines[1])
+	}
+}
+
+func TestEventsSelectionFlags(t *testing.T) {
+	noEnv(t)
+	dir := rawDir(t)
+	_, out, _ := runCmd(t, "--xml", synth, "events", "--dir", dir, "--event", "note")
+	if n := strings.Count(out, " note "); n != 6 || strings.Contains(out, " report ") {
+		t.Errorf("--event note:\n%s", out)
+	}
+	// Both reports carry the same values: --changes keeps the first.
+	_, out, _ = runCmd(t, "--xml", synth, "events", "--dir", dir, "--changes", "--fields", "pump,temperature_pid1")
+	if n := strings.Count(out, " report "); n != 1 || !strings.Contains(out, " report   pump=* temperature_pid1=93.5\n") {
+		t.Errorf("--changes:\n%s", out)
+	}
+}
+
+func TestEventsExtendCap(t *testing.T) {
+	noEnv(t)
+	xml := runXML(t)
+	// One report per file: the shot spans 40 files.
+	dir := runDir(t, 250*time.Millisecond, concat(idleSteps(4), pumpRun(40, "9.00")))
+	code, out, errs := runCmd(t, "--xml", xml, "events", "--dir", dir, "--event", "report",
+		"-u", "2026-11-10 10:00:01.5 UTC", "--run", "1")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	if !strings.Contains(errs, "levalog: a run is still open after 24 more raw logs; stopped reading at ") {
+		t.Errorf("stderr = %q, want the cap warning", errs)
+	}
+	// Files up to 10:00:01.25 hold reports 0..5 (run from 1 s), then 24 more.
+	if n := strings.Count(out, " report "); n != 2+24 {
+		t.Errorf("reports = %d, want 26", n)
 	}
 }

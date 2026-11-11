@@ -10,14 +10,6 @@ import (
 
 const wallLayout = "2006-01-02 15:04:05.000"
 
-// FormatLine writes one text line for e in the layout of levalog decode:
-// OFFSET WALL DIR KIND TEXT, separated by single spaces, report fields as
-// NAME=RAW. Wall times are shown in loc. New code uses NewWriter.
-func FormatLine(w io.Writer, e Entry, loc *time.Location) error {
-	_, err := fmt.Fprintf(w, "%s %s\n", linePrefix(e, loc), entryText(e))
-	return err
-}
-
 // linePrefix is the T WALL DIR EVENT part of a text line.
 func linePrefix(e Entry, loc *time.Location) string {
 	wall := "-"
@@ -37,16 +29,6 @@ func entryText(e Entry) string {
 		return strconv.Quote(string(e.Raw)) + "  # error: " + e.Err.Error()
 	case e.Kind == KindRedacted:
 		return redactedText(e)
-	case e.Record != nil:
-		parts := make([]string, 0, len(e.Record.Fields))
-		for _, f := range e.Record.Fields {
-			name := f.Spec.Name
-			if name == "" {
-				name = "#" + strconv.Itoa(f.Spec.Index)
-			}
-			parts = append(parts, name+"="+f.Raw)
-		}
-		return strings.Join(parts, "; ")
 	case e.Frame != nil:
 		bkl := 0
 		if e.Frame.Backlight {
@@ -75,15 +57,6 @@ func rawText(b []byte) string {
 		}
 	}
 	return latin1(b)
-}
-
-// latin1 converts Latin-1 bytes to the equivalent runes (valid UTF-8).
-func latin1(b []byte) string {
-	var sb strings.Builder
-	for _, c := range b {
-		sb.WriteRune(rune(c))
-	}
-	return sb.String()
 }
 
 // textWriter writes T WALL DIR EVENT [RUN RUN_T], then src, src_end and xml
@@ -188,12 +161,3 @@ func textQuote(s string) string {
 }
 
 func (t *textWriter) Close() error { return nil }
-
-func srcRef(path string, line int) string { return path + ":" + strconv.Itoa(line) }
-
-func orDash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
-}

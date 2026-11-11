@@ -1,0 +1,228 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"io"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/thomasbach-dev/medewi/leva"
+	"github.com/thomasbach-dev/medewi/logview"
+	"github.com/thomasbach-dev/medewi/systime"
+)
+
+// eventKinds are the values of --event.
+var eventKinds = []logview.Kind{
+	logview.KindReport, logview.KindFrame, logview.KindCmd, logview.KindReply, logview.KindBanner,
+	logview.KindNotice, logview.KindNote, logview.KindFragment, logview.KindPartial, logview.KindRedacted,
+}
+
+// maxRunRange bounds one --run range.
+const maxRunRange = 100000
+
+// parseRuns parses --run: numbers and ranges, comma-separated ("12",
+// "3,5", "7-9", "1,4-6").
+func parseRuns(s string) ([]int, error) {
+	var out []int
+	for _, p := range splitList(s) {
+		lo, hi, isRange := strings.Cut(p, "-")
+		a, err := strconv.Atoi(lo)
+		b := a
+		if err == nil && isRange {
+			b, err = strconv.Atoi(hi)
+		}
+		if err != nil || a < 1 || b < a || b-a >= maxRunRange {
+			return nil, fmt.Errorf("bad run %q (want N, N,M or N-M with 1 <= N <= M, at most %d runs)", p, maxRunRange)
+		}
+		for n := a; n <= b; n++ {
+			out = append(out, n)
+		}
+	}
+	return out, nil
+}
+
+// eventsOpts are the flags of events beyond the input.
+type eventsOpts struct {
+	run, runKind, event, fields string
+	margin                      time.Duration
+	skipStandby, hideMasked     bool
+	changes, rawValues          bool
+	showDumps                   bool
+}
+
+// events prints the selected events of the input.
+func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
+	var in input
+	var o eventsOpts
+	fs := subFlags("events", stderr)
+	in.register(fs)
+	fs.StringVar(&o.run, "run", "", "only the windows of these runs, by number: 12, 3,5 or 7-9")
+	fs.StringVar(&o.runKind, "run-kind", "", "only the windows of runs of these kinds: shot, flush, draw")
+	fs.Var(systime.NewSpan(&o.margin), "margin", "widen each run window on both sides (systemd.time span)")
+	fs.StringVar(&o.event, "event", "", "only these event kinds, comma-separated: "+kindList())
+	fs.BoolVar(&o.skipStandby, "skip-standby", false, "drop reports whose pump marker is ?")
+	fs.StringVar(&o.fields, "fields", "", "only these columns, by key (see levalog fields), in this order")
+	fs.BoolVar(&o.hideMasked, "hide-masked", false, "text: omit masked report fields")
+	fs.BoolVar(&o.changes, "changes", false, "print a report only when a projected report field changed")
+	fs.BoolVar(&o.rawValues, "raw-values", false, "print the raw substrings instead of parsed values")
+	fs.BoolVar(&o.showDumps, "show-dumps", false, "print MCu/MCm dump lines instead of redacting them")
+	if code, done := parse(fs, args, stderr); done {
+		return code
+	}
+	if code := in.check(fs, stderr); code != 0 {
+		return code
+	}
+
+	var sel logview.Selection
+	var err error
+	if sel.Runs, err = parseRuns(o.run); err != nil {
+		return fail(stderr, 2, "--run: %v", err)
+	}
+	code := 0
+	if sel.RunKinds, code = parseRunKinds(o.runKind, "--run-kind", stderr); code != 0 {
+		return code
+	}
+	for _, k := range splitList(o.event) {
+		if !slices.Contains(eventKinds, logview.Kind(k)) {
+			return fail(stderr, 2, "--event: unknown event kind %q (want %s)", k, kindList())
+		}
+		if in.f == logview.FormatCSV && logview.Kind(k) != logview.KindReport {
+			return fail(stderr, 2, "--event: csv holds reports only, not %s", k)
+		}
+		sel.Events = append(sel.Events, logview.Kind(k))
+	}
+	keys := splitList(o.fields)
+	if xmlPath == "" {
+		for _, c := range []struct {
+			set  bool
+			flag string
+		}{
+			{o.fields != "", "--fields"},
+			{o.run != "", "--run"},
+			{o.runKind != "", "--run-kind"},
+			{o.changes, "--changes"},
+			{in.f == logview.FormatCSV, "--format csv"},
+		} {
+			if c.set {
+				return needXML(stderr, c.flag)
+			}
+		}
+	}
+	sel.Since, sel.Until, sel.Margin = in.since.T, in.until.T, o.margin
+	sel.SkipStandby, sel.Changes = o.skipStandby, o.changes
+	byRun := len(sel.Runs) > 0 || len(sel.RunKinds) > 0
+
+	// A selected run is printed whole: with its margins, from files before
+	// and after the window.
+	since, until := in.since.T, in.until.T
+	if byRun {
+		if !since.IsZero() {
+			since = since.Add(-o.margin)
+		}
+		if !until.IsZero() {
+			until = until.Add(o.margin)
+		}
+	}
+	paths, code := in.paths(since, until, stderr)
+	if code != 0 {
+		return code
+	}
+	if len(paths) == 0 {
+		return fail(stderr, 0, "no raw logs for this window in %s", in.dir)
+	}
+	cat, code := loadCatalog(xmlPath, stderr)
+	if code != 0 {
+		return code
+	}
+	if cat == nil {
+		_, _ = fmt.Fprintln(stderr, "levalog: no vendor XML (--xml / MEDEWI_XML_PATH); reports shown raw")
+	}
+	keep := func(r logview.Run) bool {
+		return slices.Contains(sel.Runs, r.N) || slices.Contains(sel.RunKinds, r.Kind)
+	}
+	l, runs, warns, err := loadRuns(paths, in.dir, byRun && in.fromDir(), cat, o.showDumps, in.since.T, in.until.T, keep)
+	if err != nil {
+		return fail(stderr, 1, "%v", err)
+	}
+	if bad := unknownKeys(keys, l, cat); len(bad) > 0 {
+		return fail(stderr, 2, "--fields: unknown keys %s (see levalog fields)", strings.Join(bad, ", "))
+	}
+	for _, k := range keys {
+		if k == "pump" || !isMedewiKey(k) {
+			sel.ChangeKeys = append(sel.ChangeKeys, k)
+		}
+	}
+
+	out := bufio.NewWriter(stdout)
+	w := logview.NewWriter(out, in.f, logview.WriterOptions{
+		Fields: keys, RawValues: o.rawValues, HideMasked: o.hideMasked, RunCols: byRun, Loc: time.Local,
+	})
+	noted := map[int]bool{}
+	for _, r := range logview.Rows(l, runs, sel) {
+		if src := r.Entry.Source; in.f == logview.FormatText && !noted[src] {
+			noted[src] = true
+			if notes := l.Sources[src].Notes; notes != "" {
+				_, _ = fmt.Fprintf(out, "# notes: %s\n", notes)
+			}
+		}
+		if err = w.Write(r); err != nil {
+			break
+		}
+	}
+	if cerr := w.Close(); err == nil {
+		err = cerr
+	}
+	if ferr := out.Flush(); err == nil {
+		err = ferr
+	}
+	if err != nil {
+		return fail(stderr, 1, "%v", err)
+	}
+	warn(stderr, l.Problems)
+	warn(stderr, warns)
+	warn(stderr, w.Warnings())
+	return 0
+}
+
+func kindList() string {
+	s := make([]string, len(eventKinds))
+	for i, k := range eventKinds {
+		s[i] = string(k)
+	}
+	return strings.Join(s, ", ")
+}
+
+func isMedewiKey(k string) bool {
+	return slices.ContainsFunc(logview.MedewiColumns, func(c logview.Column) bool { return c.Key == k })
+}
+
+// unknownKeys returns the keys that are neither medewi's nor in the XML of
+// any report spec of l or the catalog's default spec.
+func unknownKeys(keys []string, l logview.Loaded, cat *logview.Catalog) []string {
+	known := map[string]bool{}
+	specs := map[*leva.RecordSpec]bool{}
+	if spec, _ := cat.Lookup(""); spec != nil {
+		specs[spec] = true
+	}
+	for _, e := range l.Entries {
+		if e.Spec != nil {
+			specs[e.Spec] = true
+		}
+	}
+	for spec := range specs {
+		cols, _ := logview.Columns(spec) // a clash surfaces when writing
+		for _, c := range cols {
+			known[c.Key] = true
+		}
+	}
+	var bad []string
+	for _, k := range keys {
+		if !known[k] && !isMedewiKey(k) {
+			bad = append(bad, k)
+		}
+	}
+	return bad
+}

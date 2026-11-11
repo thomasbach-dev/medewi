@@ -206,7 +206,7 @@ in
       };
     };
 
-    # The raw-log decoder for troubleshooting (`sudo levalog decode -s …`),
+    # The raw-log decoder for troubleshooting (`sudo levalog events -s …`),
     # with the vendor XML built in: sudo drops MEDEWI_XML_PATH.
     environment.systemPackages = [
       (pkgs.writeShellScriptBin "levalog" ''
