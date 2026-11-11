@@ -319,6 +319,7 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	if !ok {
 		return false
 	}
+	rs.SetXML(name)
 	if name != d.cfg.SpecName {
 		slog.Error("machine XML does not match the loaded spec; not starting reports",
 			"machine", name, "spec", d.cfg.SpecName)

@@ -109,3 +109,18 @@ func TestRawLogDumpsNeverLogged(t *testing.T) {
 		t.Error("no report lines logged during the dumps")
 	}
 }
+
+func TestRawLogNamesXML(t *testing.T) {
+	s := startSim(t, simConfig(idleLines(20)))
+	cfg, rl, dir := rawDaemonConfig(t, s.Addr().String())
+	d, stop := runDaemon(t, cfg)
+	waitActive(t, d)
+	stop()
+
+	for _, e := range readRaw(t, rl, dir) {
+		if e.Dir == fixture.Note && string(e.Data) == rawlog.XMLNotePrefix+"test" {
+			return
+		}
+	}
+	t.Error(`no note "xml: test" in the raw log`)
+}
