@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -158,18 +159,23 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		return runSel.has(r.N) || slices.Contains(sel.RunKinds, r.Kind)
 	}
 	// Text shows run and run_t only with a run selection; jsonl and csv
-	// always carry them.
-	detect := byRun || in.f != logview.FormatText
-	l, runs, warns, err := loadRuns(paths, in.dir, detect, byRun && in.fromDir(), cat, o.showDumps, in.since.T, in.until.T, keep)
-	if err != nil {
-		return fail(stderr, 1, "%v", err)
+	// always carry them. Pass 1 finds the runs (and the specs --fields is
+	// checked against); pass 2 decodes again and writes. Without either,
+	// one pass streams.
+	detect := cat != nil && (byRun || in.f != logview.FormatText)
+	var sc scanned
+	if detect || len(keys) > 0 {
+		if sc, err = scan(paths, in.dir, detect, byRun && in.fromDir(), cat, o.showDumps, in.since.T, in.until.T, keep); err != nil {
+			return fail(stderr, 1, "%v", err)
+		}
+		paths = sc.paths
 	}
-	for _, r := range runs {
+	for _, r := range sc.runs {
 		if runSel.has(r.N) {
 			sel.Runs = append(sel.Runs, r.N)
 		}
 	}
-	if bad := unknownKeys(keys, l, cat); len(bad) > 0 {
+	if bad := unknownKeys(keys, sc.specs, cat); len(bad) > 0 {
 		return fail(stderr, 2, "--fields: unknown keys %s (see levalog fields)", strings.Join(bad, ", "))
 	}
 	for _, k := range keys {
@@ -182,21 +188,32 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	w := logview.NewWriter(out, in.f, logview.WriterOptions{
 		Fields: keys, RawValues: o.rawValues, HideMasked: o.hideMasked, RunCols: byRun, Loc: time.Local,
 	})
-	noted := map[int]bool{}
-	var rows []logview.Row
+	selector := logview.NewSelector(sc.runs, sel)
+	problems := sc.problems
 	if !byRun || len(sel.Runs) > 0 || len(sel.RunKinds) > 0 { // --run naming no run prints nothing
-		rows = logview.Rows(l, runs, sel)
-	}
-	for _, r := range rows {
-		if src := r.Entry.Source; in.f == logview.FormatText && !noted[src] {
-			noted[src] = true
-			if notes := l.Sources[src].Notes; notes != "" {
-				_, _ = fmt.Fprintf(out, "# notes: %s\n", notes)
-			}
+		var notes string
+		s := logview.Stream{
+			Catalog: cat, ShowDumps: o.showDumps,
+			OnSource: func(si logview.SourceInfo) error {
+				notes = si.Notes
+				return nil
+			},
+			OnEntry: func(e *logview.Entry) error {
+				r, ok := selector.Select(e)
+				if !ok {
+					return nil
+				}
+				if notes != "" && in.f == logview.FormatText {
+					if _, err := fmt.Fprintf(out, "# notes: %s\n", notes); err != nil {
+						return err
+					}
+					notes = ""
+				}
+				return w.Write(r)
+			},
 		}
-		if err = w.Write(r); err != nil {
-			break
-		}
+		err = s.Add(paths...)
+		problems = s.Problems
 	}
 	if cerr := w.Close(); err == nil {
 		err = cerr
@@ -204,8 +221,8 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	if ferr := out.Flush(); err == nil {
 		err = ferr
 	}
-	warn(stderr, l.Problems)
-	warn(stderr, warns)
+	warn(stderr, problems)
+	warn(stderr, sc.warns)
 	warn(stderr, w.Warnings())
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
@@ -226,19 +243,17 @@ func isMedewiKey(k string) bool {
 }
 
 // unknownKeys returns the keys that are neither medewi's nor in the XML of
-// any report spec of l or the catalog's default spec.
-func unknownKeys(keys []string, l logview.Loaded, cat *logview.Catalog) []string {
+// any of the report specs of the input or the catalog's default spec.
+func unknownKeys(keys []string, specs map[*leva.RecordSpec]bool, cat *logview.Catalog) []string {
 	known := map[string]bool{}
-	specs := map[*leva.RecordSpec]bool{}
+	all := maps.Clone(specs)
+	if all == nil {
+		all = map[*leva.RecordSpec]bool{}
+	}
 	if spec, _ := cat.Lookup(""); spec != nil {
-		specs[spec] = true
+		all[spec] = true
 	}
-	for _, e := range l.Entries {
-		if e.Spec != nil {
-			specs[e.Spec] = true
-		}
-	}
-	for spec := range specs {
+	for spec := range all {
 		cols, _ := logview.Columns(spec) // a clash surfaces when writing
 		for _, c := range cols {
 			known[c.Key] = true

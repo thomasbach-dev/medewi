@@ -11,7 +11,7 @@ import (
 const wallLayout = "2006-01-02 15:04:05.000"
 
 // linePrefix is the T WALL DIR EVENT part of a text line.
-func linePrefix(e Entry, loc *time.Location) string {
+func linePrefix(e *Entry, loc *time.Location) string {
 	wall := "-"
 	if e.HasWall {
 		wall = e.Wall.In(loc).Format(wallLayout)
@@ -23,7 +23,7 @@ func linePrefix(e Entry, loc *time.Location) string {
 	return fmt.Sprintf("%10.3f %s %-4s %-8s", e.Offset.Seconds(), wall, string(e.Dir), kind)
 }
 
-func entryText(e Entry) string {
+func entryText(e *Entry) string {
 	switch {
 	case e.Err != nil:
 		return strconv.Quote(string(e.Raw)) + "  # error: " + e.Err.Error()
@@ -44,7 +44,7 @@ func entryText(e Entry) string {
 // other byte as its Latin-1 character.
 func frameByte(c byte) string { return latin1([]byte{c}) }
 
-func redactedText(e Entry) string {
+func redactedText(e *Entry) string {
 	return fmt.Sprintf("dump redacted (%d lines)", e.Count)
 }
 
@@ -123,7 +123,7 @@ func (t *textWriter) Write(r Row) error {
 	return err
 }
 
-func (t *textWriter) reportText(e Entry) ([]string, error) {
+func (t *textWriter) reportText(e *Entry) ([]string, error) {
 	sc, err := t.specCols(e.Spec)
 	if err != nil {
 		return nil, err

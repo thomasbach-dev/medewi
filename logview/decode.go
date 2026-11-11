@@ -46,7 +46,8 @@ type Entry struct {
 	Count   int          // hidden lines, for KindRedacted
 
 	Path   string // the source's path
-	Source int    // index of the source in Loaded.Sources
+	Source int    // index of the source in the input (Stream), from 0
+	Index  int    // index of the entry in the input (Stream), from 0
 	Src    int    // line of the event holding the first byte (see Source.Lines)
 	SrcEnd int    // line of the event holding the last byte
 	XML    string // session XML name in effect for this entry
@@ -62,7 +63,7 @@ type Options struct {
 
 // Decoded is the result of Decode.
 type Decoded struct {
-	Entries  []Entry
+	Entries  []Entry  // nil from DecodeEach
 	XML      string   // session XML name in effect at the end
 	Problems []string // "PATH: PROBLEM", one per XML name that failed Lookup
 }
@@ -70,7 +71,8 @@ type Decoded struct {
 type decoder struct {
 	src  Source
 	opt  Options
-	out  []Entry
+	fn   func(*Entry) error
+	err  error  // first error of fn; decoding stops
 	buf  []byte // rx bytes of the current, unterminated line
 	bufT int64  // time of its first byte
 
@@ -100,9 +102,25 @@ type decoder struct {
 // decoded with the spec opt.Catalog holds for the name in effect. A name the
 // catalog cannot resolve leaves its reports raw and adds one Problem.
 func Decode(src Source, opt Options) Decoded {
-	d := &decoder{src: src, opt: opt, failed: map[string]bool{}}
+	var es []Entry
+	d, _ := DecodeEach(src, opt, func(e *Entry) error {
+		es = append(es, *e)
+		return nil
+	})
+	d.Entries = es
+	return d
+}
+
+// DecodeEach decodes like Decode but hands each entry to fn instead of
+// collecting them, so a file's entries need not all be held at once. It
+// stops at the first error of fn and returns it. Entries are not reused.
+func DecodeEach(src Source, opt Options, fn func(*Entry) error) (Decoded, error) {
+	d := &decoder{src: src, opt: opt, fn: fn, failed: map[string]bool{}}
 	d.setXML(opt.XML)
 	for i, ev := range src.Events {
+		if d.err != nil {
+			break
+		}
 		d.cur = 0
 		if i < len(src.Lines) {
 			d.cur = src.Lines[i]
@@ -127,7 +145,7 @@ func Decode(src Source, opt Options) Decoded {
 		}
 	}
 	d.flushHidden()
-	return Decoded{Entries: d.out, XML: d.xml, Problems: d.problems}
+	return Decoded{XML: d.xml, Problems: d.problems}, d.err
 }
 
 // setXML makes name the session XML and resolves its spec.
@@ -303,7 +321,7 @@ func (d *decoder) emit(t int64, e Entry) {
 	d.put(t, e)
 }
 
-// put stamps e with time t, source and session XML and appends it.
+// put stamps e with time t, source and session XML and hands it on.
 func (d *decoder) put(t int64, e Entry) {
 	e.Offset = time.Duration(t) * time.Millisecond
 	e.HasWall = d.src.HasWall
@@ -311,5 +329,7 @@ func (d *decoder) put(t int64, e Entry) {
 		e.Wall = d.src.Start.Add(e.Offset)
 	}
 	e.Path, e.XML, e.Spec = d.src.Path, d.xml, d.spec
-	d.out = append(d.out, e)
+	if d.err == nil && d.fn != nil {
+		d.err = d.fn(&e)
+	}
 }

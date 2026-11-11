@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -768,5 +770,84 @@ func TestEventsExtendCap(t *testing.T) {
 	// file is read for detection, then 24 more.
 	if n := strings.Count(out, " report "); n != 2+1+24 {
 		t.Errorf("reports = %d, want 27", n)
+	}
+}
+
+// peakHeap runs levalog with args, output discarded, and returns the peak
+// heap in use above what was in use before, sampled every millisecond.
+func peakHeap(t *testing.T, args ...string) uint64 {
+	t.Helper()
+	runtime.GC()
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	base, peak := ms.HeapInuse, ms.HeapInuse
+	done := make(chan struct{})
+	sampled := make(chan uint64)
+	go func() {
+		tick := time.NewTicker(time.Millisecond)
+		defer tick.Stop()
+		var ms runtime.MemStats
+		for {
+			select {
+			case <-done:
+				sampled <- peak
+				return
+			case <-tick.C:
+				runtime.ReadMemStats(&ms)
+				peak = max(peak, ms.HeapInuse)
+			}
+		}
+	}()
+	var errb bytes.Buffer
+	code := run(args, io.Discard, &errb)
+	close(done)
+	p := <-sampled
+	if code != 0 {
+		t.Fatalf("%q: exit %d, stderr %q", args, code, errb.String())
+	}
+	return p - min(p, base)
+}
+
+func TestMemoryBoundedByFile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("writes 24 raw logs")
+	}
+	noEnv(t)
+	// The run fields plus 50 string fields: reports as heavy as real ones.
+	xml := filepath.Join(t.TempDir(), "heavy.xml")
+	var x strings.Builder
+	x.WriteString(`<cfg version="4"><values>
+<value at="7" len="5" export="Pressure" type="float" unit="bar"></value>
+<value at="13" len="5" export="Pressure SP" type="float" unit="bar"></value>
+<value at="19" len="5" export="Volume" type="float" unit="ml"></value>
+`)
+	for i := range 50 {
+		fmt.Fprintf(&x, "<value at=\"%d\" len=\"4\" export=\"Aux %d\" type=\"string\"></value>\n", 30+5*i, i)
+	}
+	x.WriteString("</values></cfg>\n")
+	if err := os.WriteFile(xml, []byte(x.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// 2000 reports per file (500 s at 4/s), a shot every 140 reports.
+	const perFile = 2000
+	var day []step
+	for len(day) < 24*perFile {
+		day = append(day, concat(idleSteps(80), pumpRun(40, "9.00"))...)
+	}
+	few := runDir(t, perFile*250*time.Millisecond, day[:2*perFile])
+	many := runDir(t, perFile*250*time.Millisecond, day[:24*perFile])
+	for _, args := range [][]string{
+		{"runs"},
+		{"events", "--format", "jsonl"},
+		{"events", "--format", "csv", "--run-kind", "shot"},
+		{"events", "--event", "report"},
+	} {
+		a := append([]string{"--xml", xml}, args...)
+		pf := peakHeap(t, append(a, "--dir", few)...)
+		pm := peakHeap(t, append(a, "--dir", many)...)
+		t.Logf("%q: peak heap %d MB for 2 files, %d MB for 24", args, pf>>20, pm>>20)
+		if pm > 64<<20 || pm > pf+8<<20 {
+			t.Errorf("%q: peak heap %d MB for 24 files vs %d MB for 2: grows with the input", args, pm>>20, pf>>20)
+		}
 	}
 }

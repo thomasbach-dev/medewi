@@ -58,14 +58,25 @@ func fields(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		// The last source alone: Load looks back through its directory for
 		// the XML in effect when it starts.
 		last := srcs[len(srcs)-1].path
-		l, err := logview.Load([]string{last}, cat, false)
-		if err != nil {
+		var src logview.SourceInfo
+		var entries int
+		s := logview.Stream{
+			Catalog: cat,
+			OnSource: func(si logview.SourceInfo) error {
+				src = si
+				return nil
+			},
+			OnEntry: func(e *logview.Entry) error {
+				name, spec = e.XML, e.Spec
+				entries++
+				return nil
+			},
+		}
+		if err := s.Add(last); err != nil {
 			return fail(stderr, 1, "%v", err)
 		}
-		problems = l.Problems
-		if n := len(l.Entries); n > 0 {
-			name, spec = l.Entries[n-1].XML, l.Entries[n-1].Spec
-		} else if src := l.Sources[0]; src.HasWall {
+		problems = s.Problems
+		if entries == 0 && src.HasWall {
 			var warns []string
 			if name, warns, err = logview.LastXML(filepath.Dir(src.Path), src.Start); err != nil {
 				return fail(stderr, 1, "%v", err)

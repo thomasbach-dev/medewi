@@ -372,3 +372,37 @@ func TestCloseSetsNormal(t *testing.T) {
 		t.Fatalf("closed = %+v, want Kind and Normal flush", h.closed)
 	}
 }
+
+func TestDrawing(t *testing.T) {
+	h := newHarness(t)
+	h.feed(Sample{Volume: f(0)})
+	if h.r.Drawing() {
+		t.Fatal("drawing before any growth")
+	}
+	h.feed(Sample{Volume: f(10)})
+	if !h.r.Drawing() {
+		t.Fatal("not drawing after growth")
+	}
+	h.idle(3*time.Second, f(10))
+	if h.r.Drawing() || len(h.water) != 1 {
+		t.Errorf("drawing %v after the quiet period, water %+v", h.r.Drawing(), h.water)
+	}
+}
+
+func TestClone(t *testing.T) {
+	h := newHarness(t)
+	h.feed(Sample{Volume: f(0)})
+	h.repeat(4, Sample{Pumping: true, Volume: f(5)})
+	c := h.r.Clone()
+	if s := c.Abort(TruncatedLost); s == nil || s.Kind != TruncatedLost {
+		t.Fatalf("clone abort = %+v, want a truncated brew", s)
+	}
+	if !h.r.Open() {
+		t.Fatal("aborting the clone closed the original")
+	}
+	h.repeat(4, Sample{Pumping: true, Volume: f(9)})
+	h.idle(4*time.Second, f(9))
+	if len(h.closed) != 1 || h.closed[0].VolumeML != 9 {
+		t.Errorf("closed = %+v, want one 9 ml brew", h.closed)
+	}
+}

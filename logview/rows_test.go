@@ -11,14 +11,14 @@ import (
 
 func TestRowsWindow(t *testing.T) {
 	start := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
-	var l Loaded
+	var l loaded
 	for i, s := range []string{"a", "b", "c", "d"} {
 		l.Entries = append(l.Entries, Entry{
 			Offset: time.Duration(i) * time.Second, Wall: start.Add(time.Duration(i) * time.Second),
 			HasWall: true, Kind: KindReply, Raw: []byte(s), Dir: fixture.RX,
 		})
 	}
-	rows := Rows(l, nil, Selection{Since: start.Add(time.Second), Until: start.Add(3 * time.Second)})
+	rows := selectRows(l, nil, Selection{Since: start.Add(time.Second), Until: start.Add(3 * time.Second)})
 	if len(rows) != 2 || string(rows[0].Entry.Raw) != "b" || string(rows[1].Entry.Raw) != "c" {
 		t.Fatalf("rows = %+v", rows)
 	}
@@ -26,20 +26,20 @@ func TestRowsWindow(t *testing.T) {
 	for i := range l.Entries {
 		l.Entries[i].HasWall = false
 	}
-	if rows = Rows(l, nil, Selection{Since: start.Add(time.Second)}); len(rows) != 4 {
+	if rows = selectRows(l, nil, Selection{Since: start.Add(time.Second)}); len(rows) != 4 {
 		t.Errorf("len = %d, want 4", len(rows))
 	}
 }
 
 // runsLoaded has idle 0-3, shot 4-13, idle 14-27, shot 28-37, idle 38-51.
-func runsLoaded(t *testing.T, raw bool) (Loaded, []Run) {
+func runsLoaded(t *testing.T, raw bool) (loaded, []Run) {
 	t.Helper()
-	var l Loaded
+	var l loaded
 	addSource(t, &l, runT0, raw, concat(
 		idle(4, 0, 0), pumping(10, "9.0", 9, 4), idle(14, 40, 0),
 		pumping(10, "9.0", 9, 4), idle(14, 40, 0),
 	))
-	runs := FindRuns(l, brew.DefaultConfig(), time.Time{}, time.Time{})
+	runs := findRuns(l, brew.DefaultConfig(), time.Time{}, time.Time{})
 	if len(runs) != 2 {
 		t.Fatalf("runs = %+v", runs)
 	}
@@ -48,8 +48,8 @@ func runsLoaded(t *testing.T, raw bool) (Loaded, []Run) {
 
 func TestRowsRunWithMargin(t *testing.T) {
 	l, runs := runsLoaded(t, true)
-	rows := Rows(l, runs, Selection{Runs: []int{2}, Margin: time.Second})
-	first, last := runs[1].First, runs[1].Last
+	rows := selectRows(l, runs, Selection{Runs: []int{2}, Margin: time.Second})
+	first, last := runs[1].First.Index, runs[1].Last.Index
 	if len(rows) != last-first+1+8 {
 		t.Fatalf("len = %d, want %d", len(rows), last-first+9)
 	}
@@ -66,25 +66,25 @@ func TestRowsRunWithMargin(t *testing.T) {
 
 func TestRowsRunIgnoresUntil(t *testing.T) {
 	l, runs := runsLoaded(t, true)
-	until := l.Entries[runs[0].First+2].Wall
-	rows := Rows(l, runs, Selection{Runs: []int{1}, Until: until})
-	if len(rows) != runs[0].Last-runs[0].First+1 {
+	until := l.Entries[runs[0].First.Index+2].Wall
+	rows := selectRows(l, runs, Selection{Runs: []int{1}, Until: until})
+	if len(rows) != runs[0].Last.Index-runs[0].First.Index+1 {
 		t.Errorf("len = %d, want whole run", len(rows))
 	}
 }
 
 func TestRowsRunKindUnion(t *testing.T) {
-	var l Loaded
+	var l loaded
 	addSource(t, &l, runT0, true, concat(
 		pumping(10, "9.0", 9, 4), idle(14, 40, 0), // shot
 		idle(10, 40, 2), idle(12, 58, 0), // draw
 		pumping(10, "9.0", 9, 4), idle(14, 40, 0), // shot 2
 	))
-	runs := FindRuns(l, brew.DefaultConfig(), time.Time{}, time.Time{})
+	runs := findRuns(l, brew.DefaultConfig(), time.Time{}, time.Time{})
 	if len(runs) != 3 || runs[1].Kind != RunDraw {
 		t.Fatalf("runs = %+v", runs)
 	}
-	rows := Rows(l, runs, Selection{Runs: []int{1}, RunKinds: []RunKind{RunDraw}})
+	rows := selectRows(l, runs, Selection{Runs: []int{1}, RunKinds: []RunKind{RunDraw}})
 	seen := map[int]bool{}
 	for _, r := range rows {
 		if r.Run == nil {
@@ -100,7 +100,7 @@ func TestRowsRunKindUnion(t *testing.T) {
 func TestRowsCaptureTimeline(t *testing.T) {
 	l, runs := runsLoaded(t, false)
 	addSource(t, &l, runT0, true, idle(30, 0, 0))
-	rows := Rows(l, runs, Selection{Runs: []int{1}})
+	rows := selectRows(l, runs, Selection{Runs: []int{1}})
 	for _, r := range rows {
 		if r.Entry.Source != 0 {
 			t.Fatalf("row from source %d matched a capture run", r.Entry.Source)
@@ -114,7 +114,7 @@ func TestRowsCaptureTimeline(t *testing.T) {
 func TestRowsEvents(t *testing.T) {
 	l, _ := runsLoaded(t, true)
 	l.Entries = append(l.Entries[:2:2], append([]Entry{{Kind: KindCmd, Raw: []byte("MCh")}, {Kind: KindBanner}}, l.Entries[2:4]...)...)
-	rows := Rows(l, nil, Selection{Events: []Kind{KindReport}})
+	rows := selectRows(l, nil, Selection{Events: []Kind{KindReport}})
 	if len(rows) != 4 {
 		t.Fatalf("len = %d, want 4", len(rows))
 	}
@@ -126,21 +126,21 @@ func TestRowsEvents(t *testing.T) {
 }
 
 func TestRowsSkipStandby(t *testing.T) {
-	var l Loaded
+	var l loaded
 	addSource(t, &l, runT0, true, []step{{pump: '-'}, {pump: '?'}, {pump: '*'}})
-	rows := Rows(l, nil, Selection{SkipStandby: true})
+	rows := selectRows(l, nil, Selection{SkipStandby: true})
 	if len(rows) != 2 || rows[0].Entry.Raw[2] != '-' || rows[1].Entry.Raw[2] != '*' {
 		t.Errorf("rows = %d", len(rows))
 	}
 }
 
 func TestRowsChanges(t *testing.T) {
-	var l Loaded
+	var l loaded
 	addSource(t, &l, runT0, true, []step{
 		{pump: '-', bar: 1}, {pump: '-', bar: 1}, {pump: '-', bar: 2},
 	})
 	l.Entries = append(l.Entries[:2:2], append([]Entry{{Kind: KindCmd}}, l.Entries[2:]...)...)
-	rows := Rows(l, nil, Selection{Changes: true, ChangeKeys: []string{"pressure"}})
+	rows := selectRows(l, nil, Selection{Changes: true, ChangeKeys: []string{"pressure"}})
 	if len(rows) != 3 { // report 1, the cmd, report 3
 		t.Fatalf("len = %d, want 3", len(rows))
 	}
@@ -148,11 +148,11 @@ func TestRowsChanges(t *testing.T) {
 		t.Errorf("rows = %+v", rows)
 	}
 	// Pump alone: no change.
-	if rows = Rows(l, nil, Selection{Changes: true, ChangeKeys: []string{"pump"}}); len(rows) != 2 {
+	if rows = selectRows(l, nil, Selection{Changes: true, ChangeKeys: []string{"pump"}}); len(rows) != 2 {
 		t.Errorf("pump len = %d, want 2", len(rows))
 	}
 	// All keys by default: pressure differs in the last report.
-	if rows = Rows(l, nil, Selection{Changes: true}); len(rows) != 3 {
+	if rows = selectRows(l, nil, Selection{Changes: true}); len(rows) != 3 {
 		t.Errorf("default len = %d, want 3", len(rows))
 	}
 }
@@ -174,14 +174,14 @@ var modeSpecT = &leva.RecordSpec{Values: []leva.ValueSpec{
 }}
 
 func TestRowsChangesDefaultKeys(t *testing.T) {
-	l := Loaded{Entries: []Entry{
+	l := loaded{Entries: []Entry{
 		modeReport("RUN", "?????"),
 		modeReport("RUN", "?????"), // identical: dropped
 		modeReport("ECO", "?????"), // mode only
 		modeReport("ECO", " 9.00"), // masked -> value
 		modeReport("ECO", " 9.00"), // identical: dropped
 	}}
-	rows := Rows(l, nil, Selection{Changes: true})
+	rows := selectRows(l, nil, Selection{Changes: true})
 	if len(rows) != 3 {
 		t.Fatalf("len = %d, want 3", len(rows))
 	}
@@ -190,7 +190,7 @@ func TestRowsChangesDefaultKeys(t *testing.T) {
 func TestRowsOverlapSelectedWins(t *testing.T) {
 	l, runs := runsLoaded(t, true)
 	// Margin spans the 14 idle reports between the runs: windows overlap.
-	rows := Rows(l, runs, Selection{Runs: []int{2}, Margin: 3 * time.Second})
+	rows := selectRows(l, runs, Selection{Runs: []int{2}, Margin: 3 * time.Second})
 	if len(rows) == 0 {
 		t.Fatal("no rows")
 	}
@@ -200,7 +200,7 @@ func TestRowsOverlapSelectedWins(t *testing.T) {
 		}
 	}
 	// The first row lies inside run 1's window (its last + 3 s = 12 reports).
-	if rows[0].Entry.Src > runs[0].Last+12+1 {
+	if rows[0].Entry.Src > runs[0].Last.Index+12+1 {
 		t.Errorf("overlap rows missing: first src %d", rows[0].Entry.Src)
 	}
 }

@@ -121,8 +121,11 @@ a truncated kind naming the cause (`truncated-lost`, `truncated-released`,
   same rules as `rawlog`. It also names the report fields (stable keys
   from the XML), finds pump runs and wand draws with `brew.Recorder`,
   picks the XML per session, and filters, projects and formats events as
-  text, JSON Lines or CSV. Kept out of `main` so a later remote reader
-  (#30) can reuse it.
+  text, JSON Lines or CSV. It streams: a `Stream` decodes one file at a
+  time and hands on entry by entry, so memory stays bounded by one file;
+  `levalog` reads its input twice when it needs the runs first (a
+  `RunFinder` pass keeps only run metadata, a `Selector` pass writes).
+  Kept out of `main` so a later remote reader (#30) can reuse it.
 - `systime/` — the `systemd.time(7)` subset every command accepts for
   timestamps and spans, plus pflag values for them
   ([CLI conventions](cli-conventions.md)).

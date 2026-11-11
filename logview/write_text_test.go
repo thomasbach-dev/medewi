@@ -77,7 +77,7 @@ func TestTextEntries(t *testing.T) {
 	for _, tc := range tests {
 		var b bytes.Buffer
 		w := NewWriter(&b, FormatText, WriterOptions{Loc: loc})
-		if err := w.Write(Row{Entry: tc.e}); err != nil {
+		if err := w.Write(Row{Entry: &tc.e}); err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
 		got, _ := strings.CutPrefix(b.String(), "# \n") // the PATH header of an unnamed source

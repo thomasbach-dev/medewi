@@ -144,7 +144,7 @@ func (b *base) reportKeys(sc *specCols) []string {
 
 // field renders the report value of key k; ok is false when e's spec has
 // no such key (counted as a warning).
-func (b *base) field(e Entry, sc *specCols, k string) (fval, bool) {
+func (b *base) field(e *Entry, sc *specCols, k string) (fval, bool) {
 	p, ok := sc.pos[k]
 	if !ok || p >= len(e.Record.Fields) {
 		b.missing[k]++
@@ -185,7 +185,7 @@ func (b *base) Warnings() []string {
 }
 
 // pumpByte is report byte 2 when it is '*' or '-', else '?'.
-func pumpByte(e Entry) byte {
+func pumpByte(e *Entry) byte {
 	if len(e.Raw) > 2 && (e.Raw[2] == '*' || e.Raw[2] == '-') {
 		return e.Raw[2]
 	}

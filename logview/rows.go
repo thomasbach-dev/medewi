@@ -2,6 +2,7 @@ package logview
 
 import (
 	"slices"
+	"sort"
 	"strconv"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 
 // Row is one entry selected for output, with the run it belongs to.
 type Row struct {
-	Entry Entry
+	Entry *Entry
 	Run   *Run           // the run whose window holds the entry, or nil
 	RunT  *time.Duration // entry time minus the run's first entry; nil without Run
 }
@@ -38,96 +39,108 @@ type Selection struct {
 	ChangeKeys []string
 }
 
-// entryTime is the time of e on its timeline: wall clock for raw logs,
-// offset for captures.
-func entryTime(e *Entry) time.Duration {
-	if e.HasWall {
-		return time.Duration(e.Wall.UnixNano())
-	}
-	return e.Offset
-}
-
 // window is a run's precomputed time window on its timeline.
 type window struct {
 	run        *Run
 	t0, lo, hi time.Duration
-	wall       bool
-	source     int
-	selected   bool
 }
 
-// at returns the time of e relative to the run's first entry when e lies in
-// the window on the run's timeline.
-func (w *window) at(e *Entry, t time.Duration) (time.Duration, bool) {
-	if w.wall != e.HasWall || (!w.wall && w.source != e.Source) || t < w.lo || t > w.hi {
-		return 0, false
+// timeline names the timeline of an entry or point: -1 for the wall clock
+// of raw logs, the source index for a capture.
+func timeline(hasWall bool, source int) int {
+	if hasWall {
+		return -1
 	}
-	return t - w.t0, true
+	return source
 }
 
-// Rows returns the entries of l that sel keeps, in order. Run and RunT come
+// Selector picks the rows of an input entry by entry. Run and RunT come
 // from the earliest run whose window [first-margin, last+margin] holds the
 // entry on the same timeline: raw logs share the wall clock, a capture is
-// its own timeline. When sel selects runs, only selected runs count.
-func Rows(l Loaded, runs []Run, sel Selection) []Row {
-	byRun := len(sel.Runs) > 0 || len(sel.RunKinds) > 0
-	wins := make([]window, 0, len(runs))
+// its own timeline. When the Selection selects runs, only selected runs
+// count.
+type Selector struct {
+	sel   Selection
+	byRun bool
+	wins  map[int][]window // by timeline, in run order
+
+	cache    map[*leva.RecordSpec]*specKeys
+	lastSpec *leva.RecordSpec
+	lastSig  []byte
+	sig      []byte
+}
+
+// NewSelector returns a Selector for runs, as RunFinder.Runs returns them
+// (in input order); rows point into runs.
+func NewSelector(runs []Run, sel Selection) *Selector {
+	s := &Selector{
+		sel:   sel,
+		byRun: len(sel.Runs) > 0 || len(sel.RunKinds) > 0,
+		wins:  map[int][]window{},
+		cache: map[*leva.RecordSpec]*specKeys{},
+	}
 	for i := range runs {
 		r := &runs[i]
-		first, last := &l.Entries[r.First], &l.Entries[r.Last]
-		w := window{run: r, wall: first.HasWall, source: first.Source, t0: entryTime(first)}
-		w.lo, w.hi = w.t0-sel.Margin, entryTime(last)+sel.Margin
-		w.selected = slices.Contains(sel.Runs, r.N) || slices.Contains(sel.RunKinds, r.Kind)
-		if byRun && !w.selected {
+		if s.byRun && !slices.Contains(sel.Runs, r.N) && !slices.Contains(sel.RunKinds, r.Kind) {
 			continue
 		}
-		wins = append(wins, w)
+		tl := timeline(r.First.HasWall, r.First.Source)
+		t0 := r.First.at()
+		s.wins[tl] = append(s.wins[tl], window{run: r, t0: t0, lo: t0 - sel.Margin, hi: r.Last.at() + sel.Margin})
 	}
-	cache := map[*leva.RecordSpec]*specKeys{}
-	var lastSpec *leva.RecordSpec
-	var lastSig, sig []byte
-	var out []Row
-	for i := range l.Entries {
-		e := &l.Entries[i]
-		row := Row{Entry: *e}
-		t := entryTime(e)
-		for j := range wins {
-			if d, ok := wins[j].at(e, t); ok {
-				row.Run, row.RunT = wins[j].run, &d
-				break
-			}
-		}
-		if byRun {
-			if row.Run == nil {
-				continue
-			}
-		} else if e.HasWall && (!sel.Since.IsZero() && e.Wall.Before(sel.Since) || !sel.Until.IsZero() && !e.Wall.Before(sel.Until)) {
-			continue
-		}
-		if len(sel.Events) > 0 && !slices.Contains(sel.Events, e.Kind) {
-			continue
-		}
-		if e.Kind == KindReport {
-			if sel.SkipStandby && len(e.Raw) > 2 && e.Raw[2] == '?' {
-				continue
-			}
-			if sel.Changes && e.Spec != nil && e.Record != nil {
-				sk := cache[e.Spec]
-				if sk == nil {
-					sk = newSpecKeys(e.Spec, sel.ChangeKeys)
-					cache[e.Spec] = sk
-				}
-				sig = sk.sig(sig[:0], e)
-				if e.Spec == lastSpec && string(sig) == string(lastSig) {
-					continue
-				}
-				lastSpec = e.Spec
-				lastSig = append(lastSig[:0], sig...)
-			}
-		}
-		out = append(out, row)
+	return s
+}
+
+// window returns the earliest window holding e. Runs follow each other on
+// a timeline, so windows are ordered by lo and by hi alike: the first one
+// whose hi reaches e is the only candidate.
+func (s *Selector) window(e *Entry) (*window, time.Duration) {
+	ws := s.wins[timeline(e.HasWall, e.Source)]
+	t := PointOf(e).at()
+	k := sort.Search(len(ws), func(i int) bool { return ws[i].hi >= t })
+	if k == len(ws) || ws[k].lo > t {
+		return nil, t
 	}
-	return out
+	return &ws[k], t
+}
+
+// Select returns the row for e and whether the Selection keeps it.
+func (s *Selector) Select(e *Entry) (Row, bool) {
+	sel := &s.sel
+	row := Row{Entry: e}
+	if w, t := s.window(e); w != nil {
+		d := t - w.t0
+		row.Run, row.RunT = w.run, &d
+	}
+	if s.byRun {
+		if row.Run == nil {
+			return Row{}, false
+		}
+	} else if e.HasWall && (!sel.Since.IsZero() && e.Wall.Before(sel.Since) || !sel.Until.IsZero() && !e.Wall.Before(sel.Until)) {
+		return Row{}, false
+	}
+	if len(sel.Events) > 0 && !slices.Contains(sel.Events, e.Kind) {
+		return Row{}, false
+	}
+	if e.Kind == KindReport {
+		if sel.SkipStandby && len(e.Raw) > 2 && e.Raw[2] == '?' {
+			return Row{}, false
+		}
+		if sel.Changes && e.Spec != nil && e.Record != nil {
+			sk := s.cache[e.Spec]
+			if sk == nil {
+				sk = newSpecKeys(e.Spec, sel.ChangeKeys)
+				s.cache[e.Spec] = sk
+			}
+			s.sig = sk.sig(s.sig[:0], e)
+			if e.Spec == s.lastSpec && string(s.sig) == string(s.lastSig) {
+				return Row{}, false
+			}
+			s.lastSpec = e.Spec
+			s.lastSig = append(s.lastSig[:0], s.sig...)
+		}
+	}
+	return row, true
 }
 
 // specKeys lists what --changes compares for one spec.

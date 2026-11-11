@@ -122,6 +122,17 @@ func NewRecorder(cfg Config) *Recorder { return &Recorder{cfg: cfg} }
 // Open reports whether a brew is open, including one that is coasting.
 func (r *Recorder) Open() bool { return r.brew.open }
 
+// Drawing reports whether a wand draw is open: the volume grew while no
+// brew was open and the draw has not ended yet.
+func (r *Recorder) Drawing() bool { return r.draw.open }
+
+// Clone returns an independent copy of r: feeding or aborting either one
+// leaves the other as it was.
+func (r *Recorder) Clone() *Recorder {
+	c := *r // the *float64 fields are replaced, never written through
+	return &c
+}
+
 // Feed advances the state machine by one sample.
 func (r *Recorder) Feed(s Sample) Result {
 	var res Result

@@ -26,7 +26,7 @@ var writeSpec = &leva.RecordSpec{Values: []leva.ValueSpec{
 var writeWall = time.Date(2026, 11, 10, 7, 58, 12, 300_000_000, time.UTC)
 
 // wReport builds a decoded report entry on writeSpec at path "p", line 3.
-func wReport(t *testing.T, pump byte, pressure, sp, label string) Entry {
+func wReport(t *testing.T, pump byte, pressure, sp, label string) *Entry {
 	t.Helper()
 	b := bytes.Repeat([]byte(" "), 289)
 	b[0], b[288] = '{', '}'
@@ -40,7 +40,7 @@ func wReport(t *testing.T, pump byte, pressure, sp, label string) Entry {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Entry{
+	return &Entry{
 		Offset: 712300 * time.Millisecond, Wall: writeWall, HasWall: true,
 		Dir: fixture.RX, Kind: KindReport, Raw: b, Record: &rec,
 		Path: "p", Src: 3, SrcEnd: 3, XML: "x1", Spec: writeSpec,
@@ -120,13 +120,13 @@ func TestTextRawValues(t *testing.T) {
 
 func TestTextHeaders(t *testing.T) {
 	a := wReport(t, '-', " 9.00", "?????", "")
-	b := a
+	b := *a
 	b.XML = "x2"
 	c := b
 	c.Path = "q"
 	note := Entry{Dir: fixture.Note, Kind: KindNote, Raw: []byte("hi"), Path: "q", XML: "x2"}
 	out, _ := writeRows(t, FormatText, WriterOptions{Loc: time.UTC},
-		Row{Entry: a}, Row{Entry: a}, Row{Entry: b}, Row{Entry: c}, Row{Entry: note})
+		Row{Entry: a}, Row{Entry: a}, Row{Entry: &b}, Row{Entry: &c}, Row{Entry: &note})
 	var hdr []string
 	for _, l := range lines(out) {
 		if strings.HasPrefix(l, "#") {
@@ -144,7 +144,7 @@ func TestTextHeaders(t *testing.T) {
 
 func TestTextRawReport(t *testing.T) {
 	e := Entry{Dir: fixture.RX, Kind: KindReport, Raw: []byte("{bad}"), Path: "p"}
-	out, _ := writeRows(t, FormatText, WriterOptions{Loc: time.UTC}, Row{Entry: e})
+	out, _ := writeRows(t, FormatText, WriterOptions{Loc: time.UTC}, Row{Entry: &e})
 	if l := lines(out)[1]; l != "     0.000 - rx   report   {bad}" {
 		t.Errorf("got %q", l)
 	}
@@ -204,7 +204,7 @@ func TestJSONLFrameAndCmd(t *testing.T) {
 	}
 	cmd := Entry{Dir: fixture.TX, Kind: KindCmd, Raw: []byte("MCr"), Path: "p", Src: 2, SrcEnd: 2}
 	bad := Entry{Dir: fixture.RX, Kind: KindReport, Raw: []byte("{x}"), Err: errText("short"), Path: "p", Src: 3, SrcEnd: 3}
-	out, _ := writeRows(t, FormatJSONL, WriterOptions{}, Row{Entry: frame}, Row{Entry: cmd}, Row{Entry: bad})
+	out, _ := writeRows(t, FormatJSONL, WriterOptions{}, Row{Entry: &frame}, Row{Entry: &cmd}, Row{Entry: &bad})
 	ls := lines(out)
 	f := decodeJSON(t, ls[0])
 	if rows, ok := f["rows"].([]any); !ok || len(rows) != 4 || f["bkl"] != true || f["key"] != 3.0 || f["layout"] != 2.0 {
@@ -245,7 +245,7 @@ func TestCSVHeaderAndRows(t *testing.T) {
 	rt := 500 * time.Millisecond
 	note := Entry{Dir: fixture.Note, Kind: KindNote, Raw: []byte("hi")}
 	out, _ := writeRows(t, FormatCSV, WriterOptions{Fields: []string{"run_t", "pump", "pressure", "pressure_sp"}},
-		Row{Entry: note},
+		Row{Entry: &note},
 		Row{Entry: wReport(t, '*', " 9.00", "?????", ""), Run: run, RunT: &rt},
 		Row{Entry: wReport(t, '-', " 1.50", "?????", "")})
 	want := "run_t,pump,pressure,pressure_sp\n0.5,1,9,\n,0,1.5,\n"
@@ -271,7 +271,7 @@ func TestCSVSpecChangeError(t *testing.T) {
 	}
 	other := modeReport("PID", " 9.00")
 	other.Path, other.Src, other.XML = "q", 7, "x2"
-	err := w.Write(Row{Entry: other})
+	err := w.Write(Row{Entry: &other})
 	if err == nil || !strings.Contains(err.Error(), "--fields") || !strings.Contains(err.Error(), "q:7") {
 		t.Errorf("err = %v", err)
 	}
@@ -289,8 +289,8 @@ func TestCSVMissingKeyAndSkips(t *testing.T) {
 	bad := Entry{Dir: fixture.RX, Kind: KindReport, Raw: []byte("{x}"), Err: errText("short")}
 	raw := Entry{Dir: fixture.RX, Kind: KindReport, Raw: []byte("{x}")}
 	out, w := writeRows(t, FormatCSV, WriterOptions{Fields: []string{"pressure", "temperature_pid1"}},
-		Row{Entry: wReport(t, '-', " 9.00", "?????", "")}, Row{Entry: other}, Row{Entry: other},
-		Row{Entry: bad}, Row{Entry: raw}, Row{Entry: raw})
+		Row{Entry: wReport(t, '-', " 9.00", "?????", "")}, Row{Entry: &other}, Row{Entry: &other},
+		Row{Entry: &bad}, Row{Entry: &raw}, Row{Entry: &raw})
 	if want := "pressure,temperature_pid1\n9,93.5\n1,\n1,\n"; out != want {
 		t.Errorf("got %q\nwant %q", out, want)
 	}
@@ -387,17 +387,17 @@ func TestWriteColumnsText(t *testing.T) {
 }
 
 func TestWriteRunsText(t *testing.T) {
-	var l Loaded
+	var l loaded
 	addSource(t, &l, runT0, true, concat(
 		idle(4, 0, 0), pumping(10, "9.0", 9, 4), idle(14, 40, 0), // shot
 		idle(10, 40, 2), idle(12, 58, 0), // draw
 	))
-	runs := FindRuns(l, brew.DefaultConfig(), time.Time{}, time.Time{})
+	runs := findRuns(l, brew.DefaultConfig(), time.Time{}, time.Time{})
 	if len(runs) != 2 || runs[1].Kind != RunDraw {
 		t.Fatalf("runs = %+v", runs)
 	}
 	var b bytes.Buffer
-	if err := WriteRuns(&b, FormatText, l, runs, time.UTC); err != nil {
+	if err := WriteRuns(&b, FormatText, runs, time.UTC); err != nil {
 		t.Fatal(err)
 	}
 	ls := lines(b.String())
@@ -411,7 +411,7 @@ func TestWriteRunsText(t *testing.T) {
 		t.Errorf("draw %q", ls[2])
 	}
 	b.Reset()
-	if err := WriteRuns(&b, FormatJSONL, l, runs, time.UTC); err != nil {
+	if err := WriteRuns(&b, FormatJSONL, runs, time.UTC); err != nil {
 		t.Fatal(err)
 	}
 	m := decodeJSON(t, lines(b.String())[1])
@@ -419,7 +419,7 @@ func TestWriteRunsText(t *testing.T) {
 		t.Errorf("jsonl %v", m)
 	}
 	b.Reset()
-	if err := WriteRuns(&b, FormatCSV, l, runs, time.UTC); err != nil {
+	if err := WriteRuns(&b, FormatCSV, runs, time.UTC); err != nil {
 		t.Fatal(err)
 	}
 	if ls := lines(b.String()); ls[0] != "run,kind,start,t,duration,peak_bar,volume_ml,truncated,xml,src" || !strings.HasPrefix(ls[1], "1,shot,2026-11-10T07:58:01.000Z,1,") {
@@ -433,22 +433,22 @@ func TestFrameRealLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := Entry{Dir: fixture.RX, Kind: KindFrame, Frame: &fr, Path: "p", Src: 1, SrcEnd: 1}
-	out, _ := writeRows(t, FormatText, WriterOptions{Loc: time.UTC}, Row{Entry: e})
+	out, _ := writeRows(t, FormatText, WriterOptions{Loc: time.UTC}, Row{Entry: &e})
 	if !strings.Contains(out, " bkl=1 key=1 layout=2 |Line one") {
 		t.Errorf("text: %q", out)
 	}
-	out, _ = writeRows(t, FormatJSONL, WriterOptions{}, Row{Entry: e})
+	out, _ = writeRows(t, FormatJSONL, WriterOptions{}, Row{Entry: &e})
 	if m := decodeJSON(t, out); m["bkl"] != true || m["key"] != 1.0 || m["layout"] != 2.0 {
 		t.Errorf("jsonl: %v", m)
 	}
 	// A byte that is not a digit is shown as the character.
 	odd := e
 	odd.Frame = &leva.Frame{Key: 'x', Layout: '2'}
-	out, _ = writeRows(t, FormatText, WriterOptions{Loc: time.UTC}, Row{Entry: odd})
+	out, _ = writeRows(t, FormatText, WriterOptions{Loc: time.UTC}, Row{Entry: &odd})
 	if !strings.Contains(out, " bkl=0 key=x layout=2 ") {
 		t.Errorf("text odd: %q", out)
 	}
-	out, _ = writeRows(t, FormatJSONL, WriterOptions{}, Row{Entry: odd})
+	out, _ = writeRows(t, FormatJSONL, WriterOptions{}, Row{Entry: &odd})
 	if m := decodeJSON(t, out); m["key"] != "x" {
 		t.Errorf("jsonl odd: %v", m)
 	}
@@ -484,7 +484,7 @@ func TestTextJSONLLatin1Valid(t *testing.T) {
 
 func TestWriteRunsDefaultText(t *testing.T) {
 	var b bytes.Buffer
-	if err := WriteRuns(&b, Format("bogus"), Loaded{}, nil, time.UTC); err != nil {
+	if err := WriteRuns(&b, Format("bogus"), nil, time.UTC); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(b.String(), "RUN  KIND") {

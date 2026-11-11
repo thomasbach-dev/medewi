@@ -70,7 +70,7 @@ func concat(parts ...[]step) []step {
 
 // addSource appends a source whose steps come every 250 ms; raw logs start
 // at start (wall time), captures have none.
-func addSource(t *testing.T, l *Loaded, start time.Time, raw bool, steps []step) {
+func addSource(t *testing.T, l *loaded, start time.Time, raw bool, steps []step) {
 	t.Helper()
 	i := len(l.Sources)
 	src := Source{Path: fmt.Sprintf("src%d", i), HasWall: raw}
@@ -81,27 +81,26 @@ func addSource(t *testing.T, l *Loaded, start time.Time, raw bool, steps []step)
 		off := time.Duration(k) * 250 * time.Millisecond
 		line := runReport(s)
 		src.Events = append(src.Events, fixture.Event{T: off.Milliseconds(), Dir: fixture.RX, Data: append(line, '\r', '\n')})
-		src.Lines = append(src.Lines, k+1)
 		rec, err := runSpec.Decode(line)
 		if err != nil {
 			t.Fatal(err)
 		}
 		e := Entry{
 			Offset: off, Dir: fixture.RX, Kind: KindReport, Raw: line, Record: &rec,
-			Path: src.Path, Source: i, Src: k + 1, SrcEnd: k + 1, XML: "x", Spec: runSpec,
+			Path: src.Path, Source: i, Index: len(l.Entries), Src: k + 1, SrcEnd: k + 1, XML: "x", Spec: runSpec,
 		}
 		if raw {
 			e.Wall, e.HasWall = start.Add(off), true
 		}
 		l.Entries = append(l.Entries, e)
 	}
-	l.Sources = append(l.Sources, src)
+	l.Sources = append(l.Sources, src.Info(i))
 }
 
 var runT0 = time.Date(2026, 11, 10, 7, 58, 0, 0, time.UTC)
 
 func TestFindRunsKinds(t *testing.T) {
-	var l Loaded
+	var l loaded
 	addSource(t, &l, time.Time{}, false, concat(
 		idle(4, 0, 0),            // 0-3
 		pumping(8, "", 2, 3),     // 4-11 flush, 21 ml
@@ -111,7 +110,7 @@ func TestFindRunsKinds(t *testing.T) {
 		idle(10, 36, 2),          // 48-57 draw: 18 ml
 		idle(12, 54, 0),          // 58-69 closes the draw
 	))
-	runs := FindRuns(l, brew.DefaultConfig(), time.Time{}, time.Time{})
+	runs := findRuns(l, brew.DefaultConfig(), time.Time{}, time.Time{})
 	if len(runs) != 3 {
 		t.Fatalf("runs = %+v, want 3", runs)
 	}
@@ -126,7 +125,7 @@ func TestFindRunsKinds(t *testing.T) {
 	}
 	for i, w := range want {
 		r := runs[i]
-		if r.N != i+1 || r.Kind != w.kind || r.First != w.first || r.Last != w.last || r.VolumeML != w.ml || r.Truncated || r.OpenAtEnd || r.XML != "x" {
+		if r.N != i+1 || r.Kind != w.kind || r.First.Index != w.first || r.Last.Index != w.last || r.VolumeML != w.ml || r.Truncated || r.OpenAtEnd || r.XML != "x" {
 			t.Errorf("run %d = %+v, want N %d %s [%d,%d] %v ml", i, r, i+1, w.kind, w.first, w.last, w.ml)
 		}
 	}
@@ -143,10 +142,10 @@ func TestFindRunsKinds(t *testing.T) {
 
 // splitShot puts a 12-sample shot across two raw logs, the second starting
 // gap after the first one's last event.
-func splitShot(t *testing.T, gap time.Duration) Loaded {
+func splitShot(t *testing.T, gap time.Duration) loaded {
 	t.Helper()
 	shot := pumping(12, "9.0", 9, 3)
-	var l Loaded
+	var l loaded
 	addSource(t, &l, runT0, true, concat(idle(4, 0, 0), shot[:6]))
 	last := runT0.Add(9 * 250 * time.Millisecond)
 	addSource(t, &l, last.Add(gap), true, concat(shot[6:], idle(14, 33, 0)))
@@ -154,56 +153,56 @@ func splitShot(t *testing.T, gap time.Duration) Loaded {
 }
 
 func TestFindRunsAcrossFiles(t *testing.T) {
-	runs := FindRuns(splitShot(t, 250*time.Millisecond), brew.DefaultConfig(), time.Time{}, time.Time{})
+	runs := findRuns(splitShot(t, 250*time.Millisecond), brew.DefaultConfig(), time.Time{}, time.Time{})
 	if len(runs) != 1 {
 		t.Fatalf("runs = %+v, want 1", runs)
 	}
-	if r := runs[0]; r.Kind != RunShot || r.Truncated || r.OpenAtEnd || r.First != 4 || r.Last != 15 || r.VolumeML != 33 {
+	if r := runs[0]; r.Kind != RunShot || r.Truncated || r.OpenAtEnd || r.First.Index != 4 || r.Last.Index != 15 || r.VolumeML != 33 {
 		t.Errorf("run = %+v, want one shot [4,15] 33 ml", r)
 	}
 }
 
 func TestFindRunsGapAborts(t *testing.T) {
-	runs := FindRuns(splitShot(t, 10*time.Second), brew.DefaultConfig(), time.Time{}, time.Time{})
+	runs := findRuns(splitShot(t, 10*time.Second), brew.DefaultConfig(), time.Time{}, time.Time{})
 	if len(runs) != 2 {
 		t.Fatalf("runs = %+v, want 2", runs)
 	}
-	if r := runs[0]; r.Kind != RunShot || !r.Truncated || r.OpenAtEnd || r.First != 4 || r.Last != 9 {
+	if r := runs[0]; r.Kind != RunShot || !r.Truncated || r.OpenAtEnd || r.First.Index != 4 || r.Last.Index != 9 {
 		t.Errorf("first = %+v, want truncated shot [4,9]", r)
 	}
-	if r := runs[1]; r.N != 2 || r.First != 10 || r.Truncated {
+	if r := runs[1]; r.N != 2 || r.First.Index != 10 || r.Truncated {
 		t.Errorf("second = %+v, want N 2 from 10", r)
 	}
 }
 
 func TestFindRunsWindowNumbering(t *testing.T) {
-	var l Loaded
+	var l loaded
 	one := concat(idle(4, 0, 0), pumping(8, "9.0", 9, 3), idle(16, 21, 0)) // 28 steps, 7 s
 	addSource(t, &l, runT0, true, concat(one, one, one))
 	since := runT0.Add(5 * time.Second) // after the first start (1 s), before the second (8 s)
-	runs := FindRuns(l, brew.DefaultConfig(), since, time.Time{})
+	runs := findRuns(l, brew.DefaultConfig(), since, time.Time{})
 	if len(runs) != 2 {
 		t.Fatalf("runs = %+v, want 2", runs)
 	}
 	for i, first := range []int{32, 60} {
-		if r := runs[i]; r.N != i+1 || r.First != first {
+		if r := runs[i]; r.N != i+1 || r.First.Index != first {
 			t.Errorf("run %d = %+v, want N %d from %d", i, r, i+1, first)
 		}
 	}
-	runs = FindRuns(l, brew.DefaultConfig(), since, runT0.Add(10*time.Second))
-	if len(runs) != 1 || runs[0].First != 32 || runs[0].N != 1 {
+	runs = findRuns(l, brew.DefaultConfig(), since, runT0.Add(10*time.Second))
+	if len(runs) != 1 || runs[0].First.Index != 32 || runs[0].N != 1 {
 		t.Errorf("window runs = %+v, want only the second as N 1", runs)
 	}
 }
 
 func TestFindRunsOpenAtEnd(t *testing.T) {
-	var l Loaded
+	var l loaded
 	addSource(t, &l, runT0, true, concat(idle(4, 0, 0), pumping(6, "9.0", 9, 3)))
-	runs := FindRuns(l, brew.DefaultConfig(), time.Time{}, time.Time{})
+	runs := findRuns(l, brew.DefaultConfig(), time.Time{}, time.Time{})
 	if len(runs) != 1 {
 		t.Fatalf("runs = %+v, want 1", runs)
 	}
-	if r := runs[0]; !r.OpenAtEnd || !r.Truncated || r.Kind != RunShot || r.First != 4 || r.Last != 9 {
+	if r := runs[0]; !r.OpenAtEnd || !r.Truncated || r.Kind != RunShot || r.First.Index != 4 || r.Last.Index != 9 {
 		t.Errorf("run = %+v, want open, truncated shot [4,9]", r)
 	}
 }
@@ -219,14 +218,14 @@ func TestFindRunsFixture(t *testing.T) {
 	}
 	load := func(t *testing.T, name string) []Run {
 		t.Helper()
-		l, err := Load([]string{"../testdata/fixtures/" + name}, cat, false)
+		l, err := loadAll([]string{"../testdata/fixtures/" + name}, cat)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(l.Problems) != 0 {
 			t.Fatalf("problems = %v", l.Problems)
 		}
-		return FindRuns(l, brew.DefaultConfig(), time.Time{}, time.Time{})
+		return findRuns(l, brew.DefaultConfig(), time.Time{}, time.Time{})
 	}
 
 	t.Run("shot-genlever", func(t *testing.T) {

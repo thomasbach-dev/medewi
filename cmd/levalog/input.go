@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/thomasbach-dev/medewi/brew"
+	"github.com/thomasbach-dev/medewi/leva"
 	"github.com/thomasbach-dev/medewi/logview"
 	"github.com/thomasbach-dev/medewi/rawlog"
 	"github.com/thomasbach-dev/medewi/systime"
@@ -81,41 +82,74 @@ func loadCatalog(xmlPath string, stderr io.Writer) (*logview.Catalog, int) {
 	return cat, 0
 }
 
-// loadRuns loads paths and, when detect is set, finds the runs that start
-// in [since, until). When extend is set too (input from dir), it appends the
-// next raw log of dir while a run that keep selects is open at the end, up
-// to maxExtend files.
-func loadRuns(paths []string, dir string, detect, extend bool, cat *logview.Catalog, showDumps bool,
+// scanned is what the first pass over an input keeps: no entries, only the
+// runs and the report specs in use.
+type scanned struct {
+	paths    []string // the input, with the raw logs appended to finish runs
+	runs     []logview.Run
+	specs    map[*leva.RecordSpec]bool
+	problems []string
+	warns    []string
+}
+
+// scan decodes paths one file at a time and collects the report specs and,
+// when detect is set, the runs that start in [since, until). When extend is
+// set too (input from dir), it decodes the next raw log of dir while a run
+// that keep selects is open at the end, up to maxExtend files.
+func scan(paths []string, dir string, detect, extend bool, cat *logview.Catalog, showDumps bool,
 	since, until time.Time, keep func(logview.Run) bool,
-) (logview.Loaded, []logview.Run, []string, error) {
+) (scanned, error) {
+	sc := scanned{paths: slices.Clone(paths), specs: map[*leva.RecordSpec]bool{}}
+	finder := logview.NewRunFinder(brew.DefaultConfig())
+	s := logview.Stream{
+		Catalog: cat, ShowDumps: showDumps,
+		OnSource: func(si logview.SourceInfo) error {
+			finder.Source(si)
+			return nil
+		},
+		OnEntry: func(e *logview.Entry) error {
+			if e.Spec != nil {
+				sc.specs[e.Spec] = true
+			}
+			if detect {
+				finder.Entry(e)
+			}
+			return nil
+		},
+	}
+	err := s.Add(paths...)
+	sc.problems = s.Problems
+	if err != nil || !detect {
+		return sc, err
+	}
 	var all []string
 	next := -1
 	for extra := 0; ; extra++ {
-		l, err := logview.Load(paths, cat, showDumps)
-		if err != nil {
-			return logview.Loaded{}, nil, nil, err
-		}
-		if cat == nil || !detect {
-			return l, nil, nil, nil
-		}
-		runs := logview.FindRuns(l, brew.DefaultConfig(), since, until)
-		if !extend || len(paths) == 0 || !slices.ContainsFunc(runs, func(r logview.Run) bool { return r.OpenAtEnd && keep(r) }) {
-			return l, runs, nil, nil
+		sc.runs = finder.Runs(since, until)
+		if !extend || len(sc.paths) == 0 || !slices.ContainsFunc(sc.runs, func(r logview.Run) bool { return r.OpenAtEnd && keep(r) }) {
+			return sc, nil
 		}
 		if all == nil {
 			if all, err = logview.Select(dir, time.Time{}, time.Time{}); err != nil {
-				return logview.Loaded{}, nil, nil, err
+				return sc, err
 			}
-			next = slices.Index(all, paths[len(paths)-1]) + 1
+			next = slices.Index(all, sc.paths[len(sc.paths)-1]) + 1
 		}
 		if next <= 0 || next >= len(all) {
-			return l, runs, nil, nil
+			return sc, nil
 		}
 		if extra == maxExtend {
-			return l, runs, []string{fmt.Sprintf("a run is still open after %d more raw logs; stopped reading at %s",
-				maxExtend, paths[len(paths)-1])}, nil
+			sc.warns = []string{fmt.Sprintf("a run is still open after %d more raw logs; stopped reading at %s",
+				maxExtend, sc.paths[len(sc.paths)-1])}
+			return sc, nil
 		}
-		paths = append(paths, all[next])
+		// Only the appended file is decoded; the XML carries on.
+		sc.paths = append(sc.paths, all[next])
+		err = s.Add(all[next])
+		sc.problems = s.Problems
+		if err != nil {
+			return sc, err
+		}
 		next++
 	}
 }

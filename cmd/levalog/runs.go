@@ -54,18 +54,18 @@ func runsCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		return code
 	}
 	keep := func(r logview.Run) bool { return len(kinds) == 0 || slices.Contains(kinds, r.Kind) }
-	l, runs, warns, err := loadRuns(paths, in.dir, true, in.fromDir(), cat, false, in.since.T, in.until.T, keep)
+	sc, err := scan(paths, in.dir, true, in.fromDir(), cat, false, in.since.T, in.until.T, keep)
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
 	}
-	runs = slices.DeleteFunc(runs, func(r logview.Run) bool { return !keep(r) })
+	runs := slices.DeleteFunc(sc.runs, func(r logview.Run) bool { return !keep(r) })
 	w := bufio.NewWriter(stdout)
-	err = logview.WriteRuns(w, in.f, l, runs, time.Local)
+	err = logview.WriteRuns(w, in.f, runs, time.Local)
 	if ferr := w.Flush(); err == nil {
 		err = ferr
 	}
-	warn(stderr, l.Problems)
-	warn(stderr, warns)
+	warn(stderr, sc.problems)
+	warn(stderr, sc.warns)
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
 	}

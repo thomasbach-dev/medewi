@@ -97,9 +97,9 @@ func yesNo(b bool) string {
 }
 
 // WriteRuns lists runs: RUN KIND START T DURATION PEAK_BAR VOLUME_ML
-// TRUNCATED XML SRC, all of the run's first sample in l. START is the wall
+// TRUNCATED XML SRC, all of the run's first sample. START is the wall
 // time in loc (text) or UTC (jsonl, csv), absent for captures.
-func WriteRuns(w io.Writer, f Format, l Loaded, runs []Run, loc *time.Location) error {
+func WriteRuns(w io.Writer, f Format, runs []Run, loc *time.Location) error {
 	if loc == nil {
 		loc = time.Local
 	}
@@ -116,7 +116,7 @@ func WriteRuns(w io.Writer, f Format, l Loaded, runs []Run, loc *time.Location) 
 		_, _ = fmt.Fprintln(tw, strings.ToUpper(strings.Join(header, "\t")))
 	}
 	for _, r := range runs {
-		e := l.Entries[r.First]
+		e := r.First
 		start, peak := "", ""
 		if e.HasWall {
 			start = utcWall(e.Wall)

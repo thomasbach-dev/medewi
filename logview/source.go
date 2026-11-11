@@ -28,6 +28,28 @@ type Source struct {
 	Lines   []int // 1-based line in the decompressed file of each event
 }
 
+// SourceInfo is what is kept of an opened source once its events are
+// decoded: enough to place it on a timeline.
+type SourceInfo struct {
+	Index       int // position in the input, from 0
+	Path        string
+	Start       time.Time // as in Source
+	HasWall     bool
+	Notes       string
+	Events      int           // number of events
+	First, Last time.Duration // offsets of the first and last event; zero without events
+}
+
+// Info summarises s as the source at position index of an input.
+func (s Source) Info(index int) SourceInfo {
+	si := SourceInfo{Index: index, Path: s.Path, Start: s.Start, HasWall: s.HasWall, Notes: s.Notes, Events: len(s.Events)}
+	if n := len(s.Events); n > 0 {
+		si.First = time.Duration(s.Events[0].T) * time.Millisecond
+		si.Last = time.Duration(s.Events[n-1].T) * time.Millisecond
+	}
+	return si
+}
+
 // Wall returns the wall-clock time of ev: Start + T ms. It is only
 // meaningful when HasWall is true.
 func (s Source) Wall(ev fixture.Event) time.Time {
