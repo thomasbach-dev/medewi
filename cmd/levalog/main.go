@@ -15,7 +15,6 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/thomasbach-dev/medewi/leva"
 	"github.com/thomasbach-dev/medewi/logview"
 	"github.com/thomasbach-dev/medewi/rawlog"
 	"github.com/thomasbach-dev/medewi/systime"
@@ -120,15 +119,15 @@ func decode(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	var spec *leva.RecordSpec
+	var cat *logview.Catalog
 	if xmlPath == "" {
 		_, _ = fmt.Fprintln(stderr, "levalog: no vendor XML (--xml / MEDEWI_XML_PATH); reports shown raw")
-	} else if spec, err = leva.LoadSpecFile(xmlPath); err != nil {
+	} else if cat, err = logview.LoadCatalog(xmlPath); err != nil {
 		_, _ = fmt.Fprintf(stderr, "levalog: --xml: %v\n", err)
 		return 1
 	}
 
-	opt := logview.Options{Spec: spec, ShowDumps: showDumps, Since: since.T, Until: until.T}
+	opt := logview.Options{Catalog: cat, ShowDumps: showDumps}
 	w := bufio.NewWriter(stdout)
 	for _, p := range paths {
 		src, err := logview.Open(p.path)
@@ -141,7 +140,12 @@ func decode(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		if src.Notes != "" {
 			_, _ = fmt.Fprintf(w, "# notes: %s\n", src.Notes)
 		}
-		for _, e := range logview.Decode(src, opt) {
+		dec := logview.Decode(src, opt)
+		opt.XML = dec.XML // a session continues in the next file
+		for _, prob := range dec.Problems {
+			_, _ = fmt.Fprintf(stderr, "levalog: %s\n", prob)
+		}
+		for _, e := range dec.Entries {
 			if err := logview.Format(w, e, time.Local); err != nil {
 				_ = w.Flush()
 				_, _ = fmt.Fprintf(stderr, "levalog: %v\n", err)

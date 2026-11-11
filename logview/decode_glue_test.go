@@ -36,7 +36,7 @@ func gluedSource(prefix string, at int64) Source {
 }
 
 func TestDecodeGluedDumpTailReport(t *testing.T) {
-	es := Decode(gluedSource("{ * 93.5", 10), Options{Spec: testSpec(t)})
+	es := Decode(gluedSource("{ * 93.5", 10), Options{Catalog: testCatalog(t)}).Entries
 	noSecret(t, es)
 	if !hasRedacted(es) {
 		t.Errorf("kinds = %v", kinds(es))
@@ -44,7 +44,7 @@ func TestDecodeGluedDumpTailReport(t *testing.T) {
 }
 
 func TestDecodeGluedDumpTailFrame(t *testing.T) {
-	es := Decode(gluedSource("<112"+strings.Repeat("x", 20), 10), Options{Spec: testSpec(t)})
+	es := Decode(gluedSource("<112"+strings.Repeat("x", 20), 10), Options{Catalog: testCatalog(t)}).Entries
 	noSecret(t, es)
 	if !hasRedacted(es) {
 		t.Errorf("kinds = %v", kinds(es))
@@ -52,7 +52,7 @@ func TestDecodeGluedDumpTailFrame(t *testing.T) {
 }
 
 func TestDecodeGluedLineOutsideQuiet(t *testing.T) {
-	es := Decode(gluedSource("{ * 93.5", 70_000), Options{})
+	es := Decode(gluedSource("{ * 93.5", 70_000), Options{}).Entries
 	wantKinds(t, es, KindCmd, KindCmd, KindReport)
 }
 
@@ -61,7 +61,7 @@ func TestDecodeWholeRecordsInQuietShown(t *testing.T) {
 		ev(0, fixture.TX, "MCu\r\n"),
 		ev(10, fixture.RX, string(sumReport())+string(testFrame())+"\r\n"),
 	}}
-	es := Decode(src, Options{Spec: testSpec(t)})
+	es := Decode(src, Options{Catalog: testCatalog(t)}).Entries
 	wantKinds(t, es, KindCmd, KindReport, KindFrame)
 }
 
@@ -89,7 +89,7 @@ func TestDecodeQuietProbes(t *testing.T) {
 				ev(0, fixture.TX, "MCu\r\n"),
 				ev(5, fixture.RX, line+"\r\n"),
 			}}
-			es := Decode(src, Options{Spec: testSpec(t)})
+			es := Decode(src, Options{Catalog: testCatalog(t)}).Entries
 			noSecret(t, es)
 			if !hasRedacted(es) {
 				t.Errorf("kinds = %v", kinds(es))
@@ -104,7 +104,7 @@ func TestDecodeQuietPartialTail(t *testing.T) {
 			ev(0, fixture.TX, "MCu\r\n"),
 			ev(5, fixture.RX, tail),
 		}}
-		es := Decode(src, Options{Spec: testSpec(t)})
+		es := Decode(src, Options{Catalog: testCatalog(t)}).Entries
 		noSecret(t, es)
 		if !hasRedacted(es) {
 			t.Errorf("%q: kinds = %v", tail, kinds(es))
@@ -118,6 +118,6 @@ func TestDecodeQuietWholeReportAndBannerShown(t *testing.T) {
 		ev(5, fixture.RX, string(sumReport())+"$id: leva! (3.2)\r\n"),
 		ev(9, fixture.RX, "$id: leva! (3.2)\r\n"),
 	}}
-	es := Decode(src, Options{Spec: testSpec(t)})
+	es := Decode(src, Options{Catalog: testCatalog(t)}).Entries
 	wantKinds(t, es, KindCmd, KindReport, KindBanner, KindBanner)
 }

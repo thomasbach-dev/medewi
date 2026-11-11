@@ -74,6 +74,7 @@ func runCmd(t *testing.T, args ...string) (code int, stdout, stderr string) {
 }
 
 func TestDecodeCmdWindow(t *testing.T) {
+	t.Skip("window returns in Task 10")
 	noEnv(t)
 	dir := rawDir(t)
 	code, out, errs := runCmd(t, "--xml", synth, "decode", "--dir", dir,

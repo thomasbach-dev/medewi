@@ -7,16 +7,15 @@ import (
 	"time"
 
 	"github.com/thomasbach-dev/medewi/fixture"
-	"github.com/thomasbach-dev/medewi/leva"
 )
 
-func testSpec(t *testing.T) *leva.RecordSpec {
+func testCatalog(t *testing.T) *Catalog {
 	t.Helper()
-	spec, err := leva.LoadSpecFile("../testdata/spec/synthetic.xml")
+	c, err := LoadCatalog("../testdata/spec/synthetic.xml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return spec
+	return c
 }
 
 // testReport builds a 289-byte report line (CRLF not included).
@@ -70,7 +69,7 @@ func TestDecodeKinds(t *testing.T) {
 		ev(50, fixture.RX, "P 12\r\n"),
 		ev(60, fixture.Note, "mark"),
 	}}
-	es := Decode(src, Options{Spec: testSpec(t)})
+	es := Decode(src, Options{Catalog: testCatalog(t)}).Entries
 	wantKinds(t, es, KindCmd, KindReport, KindFrame, KindBanner, KindNotice, KindReply, KindNote)
 	if string(es[0].Raw) != "MCr" || es[0].Dir != fixture.TX {
 		t.Errorf("cmd = %q %v", es[0].Raw, es[0].Dir)
@@ -96,7 +95,7 @@ func TestDecodeReassembles(t *testing.T) {
 		ev(200, fixture.RX, string(r[7:150])),
 		ev(300, fixture.RX, string(r[150:])),
 	}}
-	es := Decode(src, Options{Spec: testSpec(t)})
+	es := Decode(src, Options{Catalog: testCatalog(t)}).Entries
 	wantKinds(t, es, KindReport)
 	if es[0].Offset != 100*time.Millisecond || es[0].Record == nil {
 		t.Errorf("entry = %+v", es[0])
@@ -108,7 +107,7 @@ func TestDecodeGlued(t *testing.T) {
 	src := Source{Events: []fixture.Event{
 		ev(0, fixture.RX, string(cut)+string(testReport())+"\r\n"),
 	}}
-	es := Decode(src, Options{Spec: testSpec(t)})
+	es := Decode(src, Options{Catalog: testCatalog(t)}).Entries
 	wantKinds(t, es, KindFragment, KindReport)
 	if !es[0].Glued || !es[1].Glued {
 		t.Errorf("glued = %v %v", es[0].Glued, es[1].Glued)
@@ -121,7 +120,7 @@ func TestDecodeBadReport(t *testing.T) {
 		ev(10, fixture.RX, "[READY]\r\n"),
 		ev(20, fixture.RX, string(testReport())+"\r\n"),
 	}}
-	es := Decode(src, Options{Spec: testSpec(t)})
+	es := Decode(src, Options{Catalog: testCatalog(t)}).Entries
 	wantKinds(t, es, KindReport, KindNotice, KindReport)
 	if es[0].Err == nil || es[0].Record != nil {
 		t.Errorf("bad report: err=%v rec=%v", es[0].Err, es[0].Record)
@@ -133,7 +132,7 @@ func TestDecodeBadReport(t *testing.T) {
 
 func TestDecodeNilSpec(t *testing.T) {
 	src := Source{Events: []fixture.Event{ev(0, fixture.RX, "{short}\r\n")}}
-	es := Decode(src, Options{})
+	es := Decode(src, Options{}).Entries
 	wantKinds(t, es, KindReport)
 	if es[0].Err != nil || es[0].Record != nil {
 		t.Errorf("entry = %+v", es[0])
@@ -152,19 +151,19 @@ func dumpSource() Source {
 }
 
 func TestDecodeRedactsDumps(t *testing.T) {
-	es := Decode(dumpSource(), Options{Spec: testSpec(t)})
+	es := Decode(dumpSource(), Options{Catalog: testCatalog(t)}).Entries
 	wantKinds(t, es, KindCmd, KindRedacted, KindReport)
 	if es[1].Count != 4 || es[1].Offset != 10*time.Millisecond || es[1].Raw != nil {
 		t.Errorf("redacted = %+v", es[1])
 	}
-	es = Decode(dumpSource(), Options{Spec: testSpec(t), ShowDumps: true})
+	es = Decode(dumpSource(), Options{Catalog: testCatalog(t), ShowDumps: true}).Entries
 	wantKinds(t, es, KindCmd, KindReply, KindReply, KindReply, KindReply, KindReport)
 }
 
 func TestDecodeRedactsQuietPeriodEnds(t *testing.T) {
 	src := dumpSource()
 	src.Events = append(src.Events, ev(70_000, fixture.RX, "late reply\r\n"))
-	es := Decode(src, Options{})
+	es := Decode(src, Options{}).Entries
 	wantKinds(t, es, KindCmd, KindRedacted, KindReport, KindReply)
 }
 
@@ -173,7 +172,7 @@ func TestDecodeRedactsPartialTail(t *testing.T) {
 		ev(0, fixture.TX, "MCm\r\n"),
 		ev(10, fixture.RX, ":abc secret"),
 	}}
-	es := Decode(src, Options{})
+	es := Decode(src, Options{}).Entries
 	wantKinds(t, es, KindCmd, KindRedacted)
 	for _, e := range es {
 		if bytes.Contains(e.Raw, []byte("secret")) {
@@ -182,35 +181,137 @@ func TestDecodeRedactsPartialTail(t *testing.T) {
 	}
 }
 
-func TestDecodeWindow(t *testing.T) {
-	start := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
-	src := Source{Start: start, HasWall: true, Events: []fixture.Event{
-		ev(0, fixture.RX, "a\r\n"),
-		ev(1000, fixture.RX, "b\r\n"),
-		ev(2000, fixture.RX, "c\r\n"),
-		ev(3000, fixture.RX, "d\r\n"),
-	}}
-	es := Decode(src, Options{Since: start.Add(time.Second), Until: start.Add(3 * time.Second)})
-	wantKinds(t, es, KindReply, KindReply)
-	if string(es[0].Raw) != "b" || string(es[1].Raw) != "c" || !es[0].HasWall || !es[0].Wall.Equal(start.Add(time.Second)) {
-		t.Errorf("entries = %+v", es)
-	}
-	// Without wall time the bounds are ignored.
-	src.HasWall = false
-	es = Decode(src, Options{Since: start.Add(time.Second)})
-	if len(es) != 4 {
-		t.Errorf("len = %d, want 4", len(es))
-	}
-}
-
 func TestDecodeTail(t *testing.T) {
 	src := Source{Events: []fixture.Event{
 		ev(0, fixture.RX, "P 12\r\n"),
 		ev(10, fixture.RX, "{abc"),
 	}}
-	es := Decode(src, Options{})
+	es := Decode(src, Options{}).Entries
 	wantKinds(t, es, KindReply, KindPartial)
 	if !strings.HasPrefix(string(es[1].Raw), "{abc") {
 		t.Errorf("raw = %q", es[1].Raw)
+	}
+}
+
+func TestDecodeSrcSpansEvents(t *testing.T) {
+	r := testReport()
+	src := Source{Lines: []int{1, 2, 3}, Events: []fixture.Event{
+		ev(0, fixture.RX, string(r[:100])),
+		ev(10, fixture.RX, string(r[100:200])),
+		ev(20, fixture.RX, string(r[200:])+"\r\n"),
+	}}
+	es := Decode(src, Options{}).Entries
+	wantKinds(t, es, KindReport)
+	if es[0].Src != 1 || es[0].SrcEnd != 3 {
+		t.Errorf("Src, SrcEnd = %d, %d, want 1, 3", es[0].Src, es[0].SrcEnd)
+	}
+}
+
+func TestDecodeSrcGlued(t *testing.T) {
+	r := string(testReport())
+	src := Source{Lines: []int{4, 5}, Events: []fixture.Event{
+		ev(0, fixture.TX, "MCr\r\n"),
+		ev(10, fixture.RX, r+r+"\r\n"),
+	}}
+	es := Decode(src, Options{}).Entries
+	wantKinds(t, es, KindCmd, KindReport, KindReport)
+	if es[0].Src != 4 || es[0].SrcEnd != 4 {
+		t.Errorf("cmd Src, SrcEnd = %d, %d", es[0].Src, es[0].SrcEnd)
+	}
+	for _, e := range es[1:] {
+		if e.Src != 5 || e.SrcEnd != 5 {
+			t.Errorf("glued Src, SrcEnd = %d, %d, want 5, 5", e.Src, e.SrcEnd)
+		}
+	}
+}
+
+func TestDecodeSrcNoteAndRedacted(t *testing.T) {
+	src := dumpSource()
+	src.Events = append(src.Events, ev(1100, fixture.Note, "n"))
+	src.Lines = make([]int, len(src.Events))
+	for i := range src.Lines {
+		src.Lines[i] = 10 + i
+	}
+	es := Decode(src, Options{}).Entries
+	wantKinds(t, es, KindCmd, KindRedacted, KindReport, KindNote)
+	if es[1].Src != 11 || es[1].SrcEnd != 14 {
+		t.Errorf("redacted Src, SrcEnd = %d, %d, want 11, 14", es[1].Src, es[1].SrcEnd)
+	}
+	if last := es[3]; last.Src != last.SrcEnd || last.Src != 10+len(src.Events)-1 {
+		t.Errorf("note Src, SrcEnd = %d, %d", last.Src, last.SrcEnd)
+	}
+}
+
+func TestDecodeSwitchesXMLOnReply(t *testing.T) {
+	r := string(testReport()) + "\r\n"
+	c, err := LoadCatalog(xmlDir(t, "a", "b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := Source{Path: "p", Events: []fixture.Event{
+		ev(0, fixture.RX, r),
+		ev(10, fixture.RX, r),
+		ev(20, fixture.RX, "XML=b\r\n"),
+		ev(30, fixture.RX, r),
+	}}
+	d := Decode(src, Options{Catalog: c, XML: "a"})
+	wantKinds(t, d.Entries, KindReport, KindReport, KindReply, KindReport)
+	for i, want := range []string{"a", "a", "b", "b"} {
+		e := d.Entries[i]
+		if e.XML != want || e.Spec == nil || e.Path != "p" {
+			t.Errorf("entry %d: XML %q spec %v path %q, want %q", i, e.XML, e.Spec, e.Path, want)
+		}
+	}
+	if d.XML != "b" || len(d.Problems) != 0 {
+		t.Errorf("XML %q problems %v", d.XML, d.Problems)
+	}
+	if d.Entries[3].Record == nil {
+		t.Error("report after the switch not decoded")
+	}
+}
+
+func TestDecodeXMLNote(t *testing.T) {
+	r := string(testReport()) + "\r\n"
+	c, err := LoadCatalog(xmlDir(t, "a", "b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := Source{Events: []fixture.Event{
+		ev(0, fixture.Note, "xml: a"),
+		ev(10, fixture.RX, r),
+	}}
+	d := Decode(src, Options{Catalog: c})
+	if d.XML != "a" || d.Entries[1].XML != "a" || d.Entries[1].Record == nil || len(d.Problems) != 0 {
+		t.Errorf("decoded = %+v", d)
+	}
+}
+
+func TestDecodeXMLProblemOnce(t *testing.T) {
+	r := string(testReport()) + "\r\n"
+	src := Source{Path: "log.jsonl", Events: []fixture.Event{
+		ev(0, fixture.RX, "XML=other\r\n"),
+		ev(10, fixture.RX, r),
+		ev(20, fixture.RX, r),
+		ev(30, fixture.RX, r),
+	}}
+	d := Decode(src, Options{Catalog: testCatalog(t)})
+	for _, e := range d.Entries[1:] {
+		if e.Record != nil || e.Err != nil || e.Kind != KindReport {
+			t.Errorf("entry = %+v, want raw report", e)
+		}
+	}
+	if len(d.Problems) != 1 || !strings.HasPrefix(d.Problems[0], "log.jsonl: log names other") {
+		t.Errorf("problems = %q", d.Problems)
+	}
+}
+
+func TestDecodeNoProblemWithoutReports(t *testing.T) {
+	c, err := LoadCatalog(xmlDir(t, "a", "b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := Source{Events: []fixture.Event{ev(0, fixture.RX, "P 12\r\n")}}
+	if d := Decode(src, Options{Catalog: c}); len(d.Problems) != 0 {
+		t.Errorf("problems = %q", d.Problems)
 	}
 }

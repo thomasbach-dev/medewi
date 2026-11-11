@@ -25,6 +25,7 @@ type Source struct {
 	HasWall bool      // true only for raw logs
 	Notes   string    // the capture manifest's notes, or empty
 	Events  []fixture.Event
+	Lines   []int // 1-based line in the decompressed file of each event
 }
 
 // Wall returns the wall-clock time of ev: Start + T ms. It is only
@@ -48,13 +49,13 @@ func Open(path string) (Source, error) {
 	src := Source{Path: path}
 	if start, ok := rawlog.FileStart(filepath.Base(path)); ok {
 		src.Start, src.HasWall = start, true
-		src.Events, err = rawlog.ReadFile(path)
+		src.Events, src.Lines, err = readEvents(path)
 		if err != nil {
 			return Source{}, err
 		}
 		return src, nil
 	}
-	src.Events, err = readCapture(path)
+	src.Events, src.Lines, err = readEvents(path)
 	if err != nil {
 		return Source{}, err
 	}
@@ -64,26 +65,27 @@ func Open(path string) (Source, error) {
 	return src, nil
 }
 
-// readCapture reads a plain or gzip JSON-lines capture. A cut last line or
-// a missing gzip trailer is tolerated; a bad line in the middle is not.
-func readCapture(path string) ([]fixture.Event, error) {
+// readEvents reads a plain or gzip JSON-lines log and returns the events
+// with the 1-based line number of each. A cut last line or a missing gzip
+// trailer is tolerated; a bad line in the middle is not.
+func readEvents(path string) ([]fixture.Event, []int, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("logview: %w", err)
+		return nil, nil, fmt.Errorf("logview: %w", err)
 	}
 	data := raw
 	if len(raw) >= 2 && raw[0] == 0x1f && raw[1] == 0x8b {
 		gz, err := gzip.NewReader(bytes.NewReader(raw))
 		if err != nil {
-			if errors.Is(err, io.ErrUnexpectedEOF) {
-				return nil, nil
+			if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+				return nil, nil, nil // no complete header yet
 			}
-			return nil, fmt.Errorf("logview: %s: %w", path, err)
+			return nil, nil, fmt.Errorf("logview: %s: %w", path, err)
 		}
 		// A truncated stream returns the bytes read so far with an error.
 		data, err = io.ReadAll(gz)
 		if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
-			return nil, fmt.Errorf("logview: %s: %w", path, err)
+			return nil, nil, fmt.Errorf("logview: %s: %w", path, err)
 		}
 	}
 	lines := bytes.Split(data, []byte("\n"))
@@ -91,6 +93,7 @@ func readCapture(path string) ([]fixture.Event, error) {
 		lines = lines[:len(lines)-1]
 	}
 	var events []fixture.Event
+	var nums []int
 	for i, line := range lines {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
@@ -100,11 +103,12 @@ func readCapture(path string) ([]fixture.Event, error) {
 			if i == len(lines)-1 {
 				break // cut last line
 			}
-			return events, fmt.Errorf("logview: %s: event %d: %w", path, len(events), err)
+			return events, nums, fmt.Errorf("logview: %s: event %d: %w", path, len(events), err)
 		}
 		events = append(events, ev)
+		nums = append(nums, i+1)
 	}
-	return events, nil
+	return events, nums, nil
 }
 
 // Select returns the raw-log files in dir that may hold events in
