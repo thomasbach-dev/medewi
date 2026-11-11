@@ -267,8 +267,16 @@ traffic log with the module's `xmlFile` built in (root only: the
 directory is `0700`):
 
 ```sh
-sudo levalog decode --since=-5min   # the last five minutes on the wire
+sudo levalog events --since=-5min   # the last five minutes on the wire
+sudo levalog runs -s yesterday      # the shots, flushes and wand draws since
 ```
+
+Each session's raw log names the XML it was recorded with. After a
+firmware update, keep the old XML next to the new one in a directory
+(`leva!-65FCB201.xml`, `leva!-NEWID.xml`) and pass it with
+`levalog --xml DIR …`, so each old log is read with its own XML. The wrapper
+above passes the single `xmlFile`; call the plain `levalog` binary for the
+directory form.
 
 When the connection drops later, follow
 [runbooks/troubleshoot-connection.md](runbooks/troubleshoot-connection.md).

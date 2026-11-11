@@ -98,7 +98,7 @@ gzip -dc FILE 2>/dev/null | grep '}$' > DIR/log.jsonl; levasim --fixtures DIR
 The `grep` keeps only complete lines, so a file still being written or left
 by a crash replays too.
 
-**Decoding the raw log and captures: `levalog`.** One line per event:
+**Decoding the raw log and captures: `levalog`.** `levalog events` prints one line per event:
 seconds since the file start, wall time (raw logs only; captures carry no
 exact start), direction (`tx`, `rx`, `note`), kind (`cmd`, `report`,
 `frame`, `banner`, `notice`, `reply`, `note`, `fragment`, `partial`,
@@ -109,12 +109,12 @@ replaced by one `dump redacted (N lines)` line unless `--show-dumps` is
 given.
 
 ```sh
-levalog [--xml F] decode [--dir D] [-s|--since T] [-u|--until T] [--show-dumps] [FILE|DIR ...]
+levalog [--xml F|DIR] events [--dir D] [-s|--since T] [-u|--until T] [--show-dumps] [FILE|DIR ...]
 
-sudo levalog decode -s '10:40' -u '10:45'          # brewhost: the raw logs in that window
-levalog decode --since=-10min                      # = recommended for readability; -s -10min works too
-levalog decode captures/shot2                      # a capture directory (or its log.jsonl)
-levalog decode /var/lib/medewid/raw/20261110T094200.000Z.jsonl.gz
+sudo levalog events -s '10:40' -u '10:45'          # brewhost: the raw logs in that window
+levalog events --since=-10min                      # = recommended for readability; -s -10min works too
+levalog events captures/shot2                      # a capture directory (or its log.jsonl)
+levalog events /var/lib/medewid/raw/20261110T094200.000Z.jsonl.gz
 ```
 
 Without FILE it reads the raw logs in `--dir` (default `$MEDEWID_RAW_DIR`,
@@ -127,6 +127,20 @@ forms in local time (`2026-11-10 10:40`, `10:40`, `-5min`, `yesterday`,
 raw logs only. Exit codes: 0 ok, 1 read error, 2 usage error. On brewhost
 the NixOS module installs a wrapper with the module's `xmlFile` built in,
 since `sudo` drops `MEDEWI_XML_PATH`.
+
+For analysis, `levalog fields` lists the report fields with stable keys,
+`levalog runs` numbers the pump runs (shots, flushes, wand draws), and
+`events` selects, projects and formats (`--format jsonl|csv`):
+
+```sh
+levalog runs -s yesterday --kind shot
+levalog events -s yesterday --run 2 --margin 5s --format csv \
+  --fields run_t,pump,pressure,pressure_sp,temperature_pid1,heat_pid,volume
+```
+
+`--xml` also takes a directory of `NAME.xml` files; each session uses the
+XML it names, so logs from before a firmware update still decode.
+`levalog --help` has the full column list.
 
 **Display, machine READY and marks.** Every `--display-every` medewid
 switches the machine to its LCD mirror for `--display-for`, then back to
