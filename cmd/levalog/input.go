@@ -55,7 +55,7 @@ func (in *input) fromDir() bool { return len(in.args) == 0 }
 // paths resolves the input files, selecting raw logs for [since, until).
 // Code 0 means ok; otherwise the error is printed.
 func (in *input) paths(since, until time.Time, stderr io.Writer) ([]string, int) {
-	srcs, err := sourcePaths(in.args, in.dir, since, until)
+	srcs, err := sourcePaths(in.args, in.dir, since, until, in.window())
 	if err != nil {
 		return nil, fail(stderr, 1, "%v", err)
 	}
@@ -81,10 +81,11 @@ func loadCatalog(xmlPath string, stderr io.Writer) (*logview.Catalog, int) {
 	return cat, 0
 }
 
-// loadRuns loads paths and finds the runs that start in [since, until).
-// When extend is set (input from dir), it appends the next raw log of dir
-// while a run that keep selects is open at the end, up to maxExtend files.
-func loadRuns(paths []string, dir string, extend bool, cat *logview.Catalog, showDumps bool,
+// loadRuns loads paths and, when detect is set, finds the runs that start
+// in [since, until). When extend is set too (input from dir), it appends the
+// next raw log of dir while a run that keep selects is open at the end, up
+// to maxExtend files.
+func loadRuns(paths []string, dir string, detect, extend bool, cat *logview.Catalog, showDumps bool,
 	since, until time.Time, keep func(logview.Run) bool,
 ) (logview.Loaded, []logview.Run, []string, error) {
 	var all []string
@@ -94,7 +95,7 @@ func loadRuns(paths []string, dir string, extend bool, cat *logview.Catalog, sho
 		if err != nil {
 			return logview.Loaded{}, nil, nil, err
 		}
-		if cat == nil {
+		if cat == nil || !detect {
 			return l, nil, nil, nil
 		}
 		runs := logview.FindRuns(l, brew.DefaultConfig(), since, until)
@@ -131,8 +132,10 @@ type source struct {
 // overlap the window when there are none, and sorts them by start time
 // (captures, which have none, first and in argument order). A directory
 // argument holding log.jsonl is a capture; any other is a raw-log
-// directory.
-func sourcePaths(args []string, dir string, since, until time.Time) ([]source, error) {
+// directory. With neighbours, the raw logs just before and after those a
+// directory selects are added too, so run detection sees a run that
+// crosses into or out of the window from a file outside it.
+func sourcePaths(args []string, dir string, since, until time.Time, neighbours bool) ([]source, error) {
 	var paths []string
 	if len(args) == 0 {
 		args = []string{dir}
@@ -155,6 +158,11 @@ func sourcePaths(args []string, dir string, since, until time.Time) ([]source, e
 		if err != nil {
 			return nil, err
 		}
+		if neighbours && len(sel) > 0 {
+			if sel, err = withNeighbours(a, sel); err != nil {
+				return nil, err
+			}
+		}
 		paths = append(paths, sel...)
 	}
 	out := make([]source, 0, len(paths))
@@ -164,4 +172,18 @@ func sourcePaths(args []string, dir string, since, until time.Time) ([]source, e
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].start.Before(out[j].start) })
 	return out, nil
+}
+
+// withNeighbours adds the raw logs of dir just before and after sel, a
+// contiguous selection of it.
+func withNeighbours(dir string, sel []string) ([]string, error) {
+	all, err := logview.Select(dir, time.Time{}, time.Time{})
+	if err != nil {
+		return nil, err
+	}
+	i, j := slices.Index(all, sel[0]), slices.Index(all, sel[len(sel)-1])
+	if i < 0 || j < 0 {
+		return sel, nil
+	}
+	return all[max(i-1, 0):min(j+2, len(all))], nil
 }

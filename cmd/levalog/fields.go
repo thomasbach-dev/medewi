@@ -40,7 +40,7 @@ func fields(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	var name string
 	var spec *leva.RecordSpec
 	var problems []string
-	srcs, err := sourcePaths(in.args, in.dir, in.since.T, in.until.T)
+	srcs, err := sourcePaths(in.args, in.dir, in.since.T, in.until.T, false)
 	switch {
 	case (err != nil || len(srcs) == 0) && in.fromDir() && !fi.IsDir():
 		name = strings.TrimSuffix(filepath.Base(xmlPath), ".xml")

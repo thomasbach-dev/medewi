@@ -36,7 +36,20 @@ log.jsonl) or a raw-log directory. Without FILE or DIR, the raw logs in
 raw logs. --format is text (default), jsonl or csv. fields lists the XML in
 effect at the end of the input (with --xml FILE and no readable input, that
 file). runs numbers the runs that start in the window, from 1; events
---run N names the same run.
+--run N names the same run. Run detection also reads the raw log just before
+and after the window, and a selected run is printed whole.
+
+runs prints RUN KIND START T DURATION PEAK_BAR VOLUME_ML TRUNCATED XML SRC,
+all of the run's first sample (START is empty for captures, PEAK_BAR for
+draws). events --margin SPAN (default 0) widens each run window on both
+sides and needs --run or --run-kind.
+
+events text: T WALL DIR EVENT, then RUN RUN_T with --run/--run-kind, then
+src=, src_end=, xml= when --fields names them, then report fields as
+key=value (pump and mode first) or the line's text. Comment lines: "# PATH"
+when the source changes, "# xml: NAME" when the XML changes, "# notes: ..."
+before a capture with manifest notes. jsonl: one object per event; csv:
+reports only, with a header row.
 
 Columns medewi adds; everything after them is the machine's data (report
 fields from the XML, frame fields, or the raw text of other lines):
@@ -60,7 +73,9 @@ text); masked is ? in text, null in jsonl, empty in csv.
 one per XML name a session reports (MC? XML=NAME). It defaults to
 $MEDEWID_XML_PATH, then $MEDEWI_XML_PATH. Without it events shows reports
 raw; fields and runs need it. --dir defaults to $MEDEWID_RAW_DIR, then
-`+defaultRawDir+`. Exit codes: 0 ok, 1 read error, 2 usage error.`)
+`+defaultRawDir+`. Problems (a missing XML, unparseable values) go to stderr
+as "levalog: ..." lines after the output and do not change the exit code.
+Exit codes: 0 ok, 1 read error, 2 usage error.`)
 }
 
 // envOr returns the first non-empty environment variable of keys, else def.

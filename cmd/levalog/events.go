@@ -20,13 +20,23 @@ var eventKinds = []logview.Kind{
 	logview.KindNotice, logview.KindNote, logview.KindFragment, logview.KindPartial, logview.KindRedacted,
 }
 
-// maxRunRange bounds one --run range.
-const maxRunRange = 100000
+// runSet is the --run selection: numbers and ranges, kept as ranges so
+// "1-1000000" costs nothing.
+type runSet []struct{ lo, hi int }
+
+func (rs runSet) has(n int) bool {
+	for _, r := range rs {
+		if r.lo <= n && n <= r.hi {
+			return true
+		}
+	}
+	return false
+}
 
 // parseRuns parses --run: numbers and ranges, comma-separated ("12",
 // "3,5", "7-9", "1,4-6").
-func parseRuns(s string) ([]int, error) {
-	var out []int
+func parseRuns(s string) (runSet, error) {
+	var out runSet
 	for _, p := range splitList(s) {
 		lo, hi, isRange := strings.Cut(p, "-")
 		a, err := strconv.Atoi(lo)
@@ -34,12 +44,10 @@ func parseRuns(s string) ([]int, error) {
 		if err == nil && isRange {
 			b, err = strconv.Atoi(hi)
 		}
-		if err != nil || a < 1 || b < a || b-a >= maxRunRange {
-			return nil, fmt.Errorf("bad run %q (want N, N,M or N-M with 1 <= N <= M, at most %d runs)", p, maxRunRange)
+		if err != nil || a < 1 || b < a {
+			return nil, fmt.Errorf("bad run %q (want N, N,M or N-M with 1 <= N <= M)", p)
 		}
-		for n := a; n <= b; n++ {
-			out = append(out, n)
-		}
+		out = append(out, struct{ lo, hi int }{a, b})
 	}
 	return out, nil
 }
@@ -61,7 +69,7 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	in.register(fs)
 	fs.StringVar(&o.run, "run", "", "only the windows of these runs, by number: 12, 3,5 or 7-9")
 	fs.StringVar(&o.runKind, "run-kind", "", "only the windows of runs of these kinds: shot, flush, draw")
-	fs.Var(systime.NewSpan(&o.margin), "margin", "widen each run window on both sides (systemd.time span)")
+	fs.Var(systime.NewSpan(&o.margin), "margin", "widen each run window on both sides (systemd.time span, default 0; needs --run or --run-kind)")
 	fs.StringVar(&o.event, "event", "", "only these event kinds, comma-separated: "+kindList())
 	fs.BoolVar(&o.skipStandby, "skip-standby", false, "drop reports whose pump marker is ?")
 	fs.StringVar(&o.fields, "fields", "", "only these columns, by key (see levalog fields), in this order")
@@ -77,8 +85,8 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	}
 
 	var sel logview.Selection
-	var err error
-	if sel.Runs, err = parseRuns(o.run); err != nil {
+	runSel, err := parseRuns(o.run)
+	if err != nil {
 		return fail(stderr, 2, "--run: %v", err)
 	}
 	code := 0
@@ -113,7 +121,13 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	}
 	sel.Since, sel.Until, sel.Margin = in.since.T, in.until.T, o.margin
 	sel.SkipStandby, sel.Changes = o.skipStandby, o.changes
-	byRun := len(sel.Runs) > 0 || len(sel.RunKinds) > 0
+	byRun := len(runSel) > 0 || len(sel.RunKinds) > 0
+	if o.margin != 0 && !byRun {
+		return fail(stderr, 2, "--margin needs --run or --run-kind")
+	}
+	if o.hideMasked && in.f != logview.FormatText {
+		return fail(stderr, 2, "--hide-masked applies to --format text only")
+	}
 
 	// A selected run is printed whole: with its margins, from files before
 	// and after the window.
@@ -141,11 +155,19 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, "levalog: no vendor XML (--xml / MEDEWI_XML_PATH); reports shown raw")
 	}
 	keep := func(r logview.Run) bool {
-		return slices.Contains(sel.Runs, r.N) || slices.Contains(sel.RunKinds, r.Kind)
+		return runSel.has(r.N) || slices.Contains(sel.RunKinds, r.Kind)
 	}
-	l, runs, warns, err := loadRuns(paths, in.dir, byRun && in.fromDir(), cat, o.showDumps, in.since.T, in.until.T, keep)
+	// Text shows run and run_t only with a run selection; jsonl and csv
+	// always carry them.
+	detect := byRun || in.f != logview.FormatText
+	l, runs, warns, err := loadRuns(paths, in.dir, detect, byRun && in.fromDir(), cat, o.showDumps, in.since.T, in.until.T, keep)
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
+	}
+	for _, r := range runs {
+		if runSel.has(r.N) {
+			sel.Runs = append(sel.Runs, r.N)
+		}
 	}
 	if bad := unknownKeys(keys, l, cat); len(bad) > 0 {
 		return fail(stderr, 2, "--fields: unknown keys %s (see levalog fields)", strings.Join(bad, ", "))
@@ -161,7 +183,11 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		Fields: keys, RawValues: o.rawValues, HideMasked: o.hideMasked, RunCols: byRun, Loc: time.Local,
 	})
 	noted := map[int]bool{}
-	for _, r := range logview.Rows(l, runs, sel) {
+	var rows []logview.Row
+	if !byRun || len(sel.Runs) > 0 || len(sel.RunKinds) > 0 { // --run naming no run prints nothing
+		rows = logview.Rows(l, runs, sel)
+	}
+	for _, r := range rows {
 		if src := r.Entry.Source; in.f == logview.FormatText && !noted[src] {
 			noted[src] = true
 			if notes := l.Sources[src].Notes; notes != "" {
@@ -178,12 +204,12 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	if ferr := out.Flush(); err == nil {
 		err = ferr
 	}
-	if err != nil {
-		return fail(stderr, 1, "%v", err)
-	}
 	warn(stderr, l.Problems)
 	warn(stderr, warns)
 	warn(stderr, w.Warnings())
+	if err != nil {
+		return fail(stderr, 1, "%v", err)
+	}
 	return 0
 }
 

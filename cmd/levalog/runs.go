@@ -54,7 +54,7 @@ func runsCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		return code
 	}
 	keep := func(r logview.Run) bool { return len(kinds) == 0 || slices.Contains(kinds, r.Kind) }
-	l, runs, warns, err := loadRuns(paths, in.dir, in.fromDir(), cat, false, in.since.T, in.until.T, keep)
+	l, runs, warns, err := loadRuns(paths, in.dir, true, in.fromDir(), cat, false, in.since.T, in.until.T, keep)
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
 	}
@@ -64,10 +64,10 @@ func runsCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	if ferr := w.Flush(); err == nil {
 		err = ferr
 	}
+	warn(stderr, l.Problems)
+	warn(stderr, warns)
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
 	}
-	warn(stderr, l.Problems)
-	warn(stderr, warns)
 	return 0
 }

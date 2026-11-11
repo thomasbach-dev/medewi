@@ -256,6 +256,8 @@ func TestEventsUsageErrors(t *testing.T) {
 		{"bad run-kind", []string{"--xml", synth, "events", "--run-kind", "espresso"}, "--run-kind"},
 		{"bad kind", []string{"--xml", synth, "runs", "--kind", "espresso"}, "--kind"},
 		{"bad margin", []string{"--xml", synth, "events", "--margin", "-5s"}, "--margin"},
+		{"margin without runs", []string{"--xml", synth, "events", "--margin", "2s"}, "--margin needs --run or --run-kind"},
+		{"hide-masked with jsonl", []string{"--xml", synth, "events", "--format", "jsonl", "--hide-masked"}, "--hide-masked"},
 		{"csv with other events", []string{"--xml", synth, "events", "--format", "csv", "--event", "report,note"}, "--event"},
 	}
 	for _, tc := range tests {
@@ -499,6 +501,67 @@ func TestRunsAndEventsAgree(t *testing.T) {
 		}
 	}
 
+	// A window starting at a file's start: the shot that is pumping across
+	// that file edge started before the window and gets no number, in runs
+	// and in events with a margin alike.
+	xdir := runDir(t, 10*time.Second, concat(
+		idleSteps(8), pumpRun(40, "9.00"), idleSteps(52), pumpRun(24, "9.00"), idleSteps(20), pumpRun(12, ""), idleSteps(8),
+	))
+	since := []string{"-s", "2026-11-10 10:00:10 UTC"}
+	code, out, errs = runCmd(t, append([]string{"--xml", xml, "runs", "--format", "jsonl", "--dir", xdir}, since...)...)
+	if code != 0 || errs != "" {
+		t.Fatalf("runs across files: exit %d, stderr %q", code, errs)
+	}
+	type xrun struct {
+		Run   int    `json:"run"`
+		Kind  string `json:"kind"`
+		Start string `json:"start"`
+		Src   string `json:"src"`
+	}
+	var xruns []xrun
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		var r xrun
+		if err := json.Unmarshal([]byte(line), &r); err != nil {
+			t.Fatalf("%q: %v", line, err)
+		}
+		xruns = append(xruns, r)
+	}
+	if len(xruns) != 2 || xruns[0].Kind != "shot" || xruns[0].Start != "2026-11-10T10:00:30.000Z" || xruns[1].Kind != "flush" {
+		t.Fatalf("runs across files = %+v, want the shot at 10:00:30 and the flush", xruns)
+	}
+	for _, r := range xruns {
+		args := append([]string{"--xml", xml, "events", "--format", "jsonl", "--dir", xdir, "--run", fmt.Sprint(r.Run), "--margin", "2s"}, since...)
+		code, out, errs := runCmd(t, args...)
+		if code != 0 || errs != "" {
+			t.Fatalf("events --run %d --margin 2s: exit %d, stderr %q", r.Run, code, errs)
+		}
+		first := ""
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			var row struct {
+				Run  *int     `json:"run"`
+				RunT *float64 `json:"run_t"`
+				Src  string   `json:"src"`
+			}
+			if err := json.Unmarshal([]byte(line), &row); err != nil {
+				t.Fatalf("%q: %v", line, err)
+			}
+			if row.Run == nil || *row.Run != r.Run {
+				t.Errorf("events --run %d --margin 2s: row %s", r.Run, line)
+			}
+			if row.RunT != nil && *row.RunT == 0 && first == "" {
+				first = row.Src
+			}
+		}
+		if first != r.Src {
+			t.Errorf("events --run %d --margin 2s: first sample at %q, runs says %q", r.Run, first, r.Src)
+		}
+	}
+
+	// A run number that does not exist selects nothing.
+	if code, out, _ := runCmd(t, "--xml", xml, "events", "--dir", dir, "--run", "99"); code != 0 || out != "" {
+		t.Errorf("--run 99: exit %d, output %q", code, out)
+	}
+
 	// Runs as a list, a range, by kind and as a union.
 	for _, tc := range []struct {
 		sel  []string
@@ -645,7 +708,7 @@ func TestHelpExplainsColumns(t *testing.T) {
 		if code != 0 {
 			t.Errorf("%q: exit %d", args, code)
 		}
-		for _, w := range []string{"src", "run_t", "medewi adds", "fields", "runs", "events", "UTC", "directory of NAME.xml"} {
+		for _, w := range []string{"src", "run_t", "medewi adds", "fields", "runs", "events", "UTC", "directory of NAME.xml", "T WALL DIR EVENT", "# xml: NAME", "PEAK_BAR", "do not change the exit code", "needs --run or --run-kind"} {
 			if !strings.Contains(errs, w) {
 				t.Errorf("%q: help does not mention %q", args, w)
 			}
@@ -701,8 +764,9 @@ func TestEventsExtendCap(t *testing.T) {
 	if !strings.Contains(errs, "levalog: a run is still open after 24 more raw logs; stopped reading at ") {
 		t.Errorf("stderr = %q, want the cap warning", errs)
 	}
-	// Files up to 10:00:01.25 hold reports 0..5 (run from 1 s), then 24 more.
-	if n := strings.Count(out, " report "); n != 2+24 {
-		t.Errorf("reports = %d, want 26", n)
+	// Files up to 10:00:01.25 hold reports 0..5 (run from 1 s), the next
+	// file is read for detection, then 24 more.
+	if n := strings.Count(out, " report "); n != 2+1+24 {
+		t.Errorf("reports = %d, want 27", n)
 	}
 }
