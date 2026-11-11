@@ -71,3 +71,12 @@ func TestFormatNum(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestParseFieldNegativeZero(t *testing.T) {
+	for _, raw := range []string{"-000.0000", "-0.0000001"} {
+		v := ParseField(field(leva.Float, 1, raw))
+		if v.Num == nil || FormatNum(*v.Num) != "0" {
+			t.Errorf("%q: %+v", raw, v)
+		}
+	}
+}

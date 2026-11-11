@@ -10,7 +10,7 @@ import (
 	"github.com/thomasbach-dev/medewi/leva"
 )
 
-func TestFormat(t *testing.T) {
+func TestFormatLine(t *testing.T) {
 	loc := time.FixedZone("X", 3600)
 	wall := time.Date(2026, 11, 10, 11, 0, 5, 7_000_000, time.UTC) // 12:00:05.007 in loc
 	rec := &leva.Record{Fields: []leva.Field{
@@ -83,7 +83,7 @@ func TestFormat(t *testing.T) {
 	}
 	for _, tc := range tests {
 		var b bytes.Buffer
-		if err := Format(&b, tc.e, loc); err != nil {
+		if err := FormatLine(&b, tc.e, loc); err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
 		if got := b.String(); got != tc.want+"\n" {

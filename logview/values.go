@@ -12,7 +12,7 @@ import (
 // and Bad describes it.
 type Value struct {
 	Raw    string
-	Num    *float64 // Float/Int fields, factor applied, rounded to 6 decimals
+	Num    *float64 // Float/Int fields, factor applied, rounded to 6 decimals, never -0
 	Str    *string  // String fields, Latin-1 converted to UTF-8
 	Masked bool     // Raw is non-empty and all '?'
 	Bad    bool     // not parseable as the field's type
@@ -40,6 +40,9 @@ func ParseField(f leva.Field) Value {
 		n *= f.Spec.Factor
 	}
 	n = math.Round(n*1e6) / 1e6
+	if n == 0 {
+		n = 0 // no negative zero
+	}
 	v.Num = &n
 	return v
 }

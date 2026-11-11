@@ -146,7 +146,7 @@ func decode(args []string, xmlPath string, stdout, stderr io.Writer) int {
 			_, _ = fmt.Fprintf(stderr, "levalog: %s\n", prob)
 		}
 		for _, e := range dec.Entries {
-			if err := logview.Format(w, e, time.Local); err != nil {
+			if err := logview.FormatLine(w, e, time.Local); err != nil {
 				_ = w.Flush()
 				_, _ = fmt.Fprintf(stderr, "levalog: %v\n", err)
 				return 1
