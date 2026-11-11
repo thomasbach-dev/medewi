@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,10 +72,10 @@ func TestLoadLooksBackForXML(t *testing.T) {
 	if len(l.Entries) != 1 || l.Entries[0].Record == nil || l.Entries[0].XML != "a" {
 		t.Errorf("entries = %+v", l.Entries)
 	}
-	if got, err := LastXML(dir, t0); err != nil || got != "" {
+	if got, _, err := LastXML(dir, t0); err != nil || got != "" {
 		t.Errorf("LastXML before the first = %q, %v", got, err)
 	}
-	if got, err := LastXML(dir, t0.Add(2*time.Hour)); err != nil || got != "a" {
+	if got, _, err := LastXML(dir, t0.Add(2*time.Hour)); err != nil || got != "a" {
 		t.Errorf("LastXML = %q, %v", got, err)
 	}
 }
@@ -108,5 +109,48 @@ func TestLoadSourceIndex(t *testing.T) {
 	}
 	if len(l.Sources) != 2 || len(l.Entries) != 2 || l.Entries[0].Source != 0 || l.Entries[1].Source != 1 {
 		t.Errorf("sources %d entries %+v", len(l.Sources), l.Entries)
+	}
+}
+
+func TestLastXMLSkipsCorruptFile(t *testing.T) {
+	dir := t.TempDir()
+	writeRaw(t, dir, t0, ev(0, fixture.RX, "XML=a\r\n"))
+	bad := writeRaw(t, dir, t0.Add(time.Hour), reportEv(), reportEv())
+	var plain bytes.Buffer
+	plain.WriteString("garbage\n")
+	if err := fixture.WriteLog(&plain, []fixture.Event{reportEv(), reportEv()}); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	_, _ = gz.Write(plain.Bytes())
+	_ = gz.Close()
+	if err := os.WriteFile(bad, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	name, warns, err := LastXML(dir, t0.Add(2*time.Hour))
+	if err != nil || name != "a" {
+		t.Fatalf("name %q err %v", name, err)
+	}
+	if len(warns) != 1 || !strings.HasPrefix(warns[0], bad+": ") {
+		t.Errorf("warnings = %v", warns)
+	}
+}
+
+func TestLoadResetsAfterCapture(t *testing.T) {
+	dir := t.TempDir()
+	c, err := LoadCatalog(xmlDir(t, "a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p1 := writeRaw(t, dir, t0, ev(0, fixture.RX, "XML=a\r\n"), reportEv())
+	p3 := writeRaw(t, dir, t0.Add(2*time.Hour), reportEv())
+	l, err := Load([]string{p1, "../testdata/fixtures/shot-genlever", p3}, c, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := l.Entries[len(l.Entries)-1]
+	if last.Source != 2 || last.XML != "a" || last.Record == nil {
+		t.Errorf("last = %+v", last)
 	}
 }

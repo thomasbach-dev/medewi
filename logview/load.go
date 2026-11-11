@@ -20,11 +20,13 @@ type Loaded struct {
 // LastXML returns the session XML name in effect at the end of the newest
 // raw log in dir that starts before the given time and names one, or ""
 // when there is none. Files are decoded newest first, without a catalog,
-// and the scan stops at the first one that yields a name.
-func LastXML(dir string, before time.Time) (string, error) {
+// and the scan stops at the first one that yields a name. A file that fails
+// to open is skipped with a warning "PATH: ERROR"; only an unreadable dir is
+// an error.
+func LastXML(dir string, before time.Time) (name string, warnings []string, err error) {
 	des, err := os.ReadDir(dir)
 	if err != nil {
-		return "", fmt.Errorf("logview: %w", err)
+		return "", nil, fmt.Errorf("logview: %w", err)
 	}
 	type file struct {
 		path  string
@@ -40,19 +42,21 @@ func LastXML(dir string, before time.Time) (string, error) {
 	for _, f := range files {
 		src, err := Open(f.path)
 		if err != nil {
-			return "", err
+			warnings = append(warnings, f.path+": "+err.Error())
+			continue
 		}
 		if name := Decode(src, Options{}).XML; name != "" {
-			return name, nil
+			return name, warnings, nil
 		}
 	}
-	return "", nil
+	return "", warnings, nil
 }
 
 // Load opens and decodes paths in the order given. Within a run of raw logs
 // from one directory the session XML carries from file to file; the first
 // raw log of a run (also after a capture) starts from LastXML of its
-// directory, and a capture starts with no XML.
+// directory, and a capture starts with no XML. Callers pass contiguous
+// ranges of a directory, so the carried XML is the one in effect.
 func Load(paths []string, cat *Catalog, showDumps bool) (Loaded, error) {
 	var l Loaded
 	var xml, runDir string
@@ -65,9 +69,11 @@ func Load(paths []string, cat *Catalog, showDumps bool) (Loaded, error) {
 		case !src.HasWall:
 			xml, runDir = "", ""
 		case runDir != dir:
-			if xml, err = LastXML(dir, src.Start); err != nil {
+			var warns []string
+			if xml, warns, err = LastXML(dir, src.Start); err != nil {
 				return Loaded{}, err
 			}
+			l.Problems = append(l.Problems, warns...)
 			runDir = dir
 		}
 		d := Decode(src, Options{Catalog: cat, XML: xml, ShowDumps: showDumps})
