@@ -42,20 +42,23 @@ type BucketRow struct {
 	Values  []AggValue     // per column
 }
 
-// ReportKeys are the report keys events shows for spec: pump, then the
-// XML keys with mode first.
-func ReportKeys(spec *leva.RecordSpec) ([]string, error) {
-	cols, err := Columns(spec)
-	if err != nil {
-		return nil, err
-	}
+// ReportKeys are the report keys events shows for specs: pump, then the
+// XML keys of all specs, each once in first-seen order, with mode first.
+func ReportKeys(specs ...*leva.RecordSpec) ([]string, error) {
 	keys := []string{"pump"}
-	for _, c := range cols[len(MedewiColumns):] {
-		if c.Key == "mode" {
-			keys = slices.Insert(keys, 1, c.Key)
-		} else {
-			keys = append(keys, c.Key)
+	for _, spec := range specs {
+		cols, err := Columns(spec)
+		if err != nil {
+			return nil, err
 		}
+		for _, c := range cols[len(MedewiColumns):] {
+			if !slices.Contains(keys, c.Key) {
+				keys = append(keys, c.Key)
+			}
+		}
+	}
+	if i := slices.Index(keys, "mode"); i > 1 {
+		keys = slices.Insert(slices.Delete(keys, i, i+1), 1, "mode")
 	}
 	return keys, nil
 }

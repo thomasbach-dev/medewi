@@ -58,10 +58,12 @@ with a run selection, reports (the non-standby reports in it), then each
 field's last value under its plain key, or key_agg columns with --agg. Text
 starts a table, header repeated, after each "# PATH" and "# xml: NAME" line.
 With a run selection a row's source is that of the run's first sample.
-Buckets start at run_t 0 per run with a run
-selection, else at multiples of SPAN since the Unix epoch (raw logs) or from
-t 0 (captures), per source; empty buckets are left out. Without --fields:
-pump and every report field (with --agg, text fields only as key_last).
+Buckets start at run_t 0 per run with a run selection, else per source: for
+captures from t 0; for raw logs at multiples of SPAN since the Unix epoch,
+so on UTC: --every 1d starts at 00:00 UTC, and a file's first bucket can
+start before the file, at a negative t. Empty buckets are left out. Without
+--fields: pump and every report field (with --agg, text fields only as
+key_last).
 
 events text: T WALL DIR EVENT, then RUN RUN_T with --run/--run-kind, then
 src=, src_end=, xml= when --fields names them, then report fields as
@@ -100,16 +102,12 @@ that names no run).
 Exit codes: 0 ok, 1 read error, 2 usage error.
 
 Examples:
-  levalog summary captures/                         # what each capture holds
-  levalog events --event notice captures/warmup-ready   # find [READY]
-  levalog runs --kind shot --stats pressure --agg max,tmax,srcmax
-                                                    # peak pressure, when, where
-  levalog events --run 2 --every 1s --fields pressure,pressure_sp
-                                                    # shot, one row per second
-  levalog events --every 60s --agg min,max --fields temperature_pid1,heat_pid_average
-                                                    # warm-up, minute by minute
-  levalog events --run 2 --format csv --fields run_t,pressure | awk -F, 'NR>1 && $2>=8.5{print $1; exit}'
-                                                    # time to 8.5 bar: pipe to any tool`)
+  levalog summary captures/                                      # each capture
+  levalog events --event notice captures/warmup-ready            # find [READY]
+  levalog runs --kind shot --stats pressure --agg max,tmax,srcmax  # peak, when, where
+  levalog events --run 2 --every 1s --fields pressure,pressure_sp  # a shot per second
+  levalog events --every 60s --agg min,max --fields temperature_pid1,heat_pid_average  # warm-up
+  levalog events --run 2 --format csv --fields run_t,pressure | awk -F, 'NR>1 && $2>=8.5{print $1; exit}'  # time to 8.5 bar`)
 }
 
 // envOr returns the first non-empty environment variable of keys, else def.

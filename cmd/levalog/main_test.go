@@ -715,7 +715,7 @@ func TestHelpExplainsColumns(t *testing.T) {
 		if code != 0 {
 			t.Errorf("%q: exit %d", args, code)
 		}
-		for _, w := range []string{"src", "run_t", "medewi adds", "fields", "runs", "events", "UTC", "directory of NAME.xml", "T WALL DIR EVENT", "# xml: NAME", "PEAK_BAR", "do not change the exit code", "needs --run or --run-kind"} {
+		for _, w := range []string{"src", "run_t", "medewi adds", "fields", "runs", "events", "UTC", "directory of NAME.xml", "T WALL DIR EVENT", "# xml: NAME", "PEAK_BAR", "do not change the exit code", "needs --run or --run-kind", "--every 1d starts at 00:00 UTC", "negative t"} {
 			if !strings.Contains(errs, w) {
 				t.Errorf("%q: help does not mention %q", args, w)
 			}
@@ -1074,6 +1074,7 @@ func TestEventsEveryUsage(t *testing.T) {
 		{[]string{"--every", "0"}, "--every"},
 		{[]string{"--every", "1s", "--fields", "t"}, "t"},
 		{[]string{"--every", "1s", "--agg", "avg"}, "tmax"},
+		{[]string{"--every", "1s", "--show-dumps"}, "--show-dumps"},
 	} {
 		args := append(append([]string{"--xml", xml, "events"}, tc.args...), capture)
 		code, _, errs := runCmd(t, args...)
@@ -1127,6 +1128,58 @@ func TestRunsStatsDedup(t *testing.T) {
 	code, out, errs := runCmd(t, "--xml", xml, "runs", "--format", "csv", "--stats", "pressure,pressure", "--agg", "max", capture)
 	if code != 0 || errs != "" || !strings.HasSuffix(strings.Split(out, "\n")[0], ",src,pressure_max") {
 		t.Errorf("exit %d, stderr %q\n%s", code, errs, out)
+	}
+}
+
+// A repeated aggregate is one column: the JSON stays valid.
+func TestAggDedup(t *testing.T) {
+	noEnv(t)
+	xml, capture := statsXML(t), statsCapture(t)
+	for _, args := range [][]string{
+		{"runs", "--stats", "pressure"},
+		{"events", "--every", "10s", "--fields", "pressure"},
+	} {
+		args = append(append([]string{"--xml", xml}, args...), "--format", "jsonl", "--agg", "max,max", capture)
+		code, out, errs := runCmd(t, args...)
+		var row map[string]any
+		if code != 0 || errs != "" || json.Unmarshal([]byte(out), &row) != nil || row["pressure_max"] != 9.5 ||
+			strings.Count(out, "pressure_max") != 1 {
+			t.Errorf("%q: exit %d, stderr %q\n%s", args, code, errs, out)
+		}
+	}
+}
+
+// Without --fields, --every takes the keys of every XML of the input, in
+// first-seen order, mode after pump.
+func TestEventsEveryKeysOfAllXMLs(t *testing.T) {
+	noEnv(t)
+	xmls := t.TempDir()
+	for n, src := range map[string]string{"a.xml": runXML(t), "b.xml": statsXML(t)} {
+		x, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(xmls, n), x, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	capture := t.TempDir()
+	var b strings.Builder
+	for k, data := range [][]byte{
+		[]byte("XML=a\r\n"), append(runReport(step{pump: '-'}), '\r', '\n'),
+		[]byte("XML=b\r\n"), append(runReport(step{pump: '-'}), '\r', '\n'),
+	} {
+		fmt.Fprintf(&b, "{\"t\":%d,\"dir\":\"rx\",\"data\":%q}\n", k*250, base64.StdEncoding.EncodeToString(data))
+	}
+	if err := os.WriteFile(filepath.Join(capture, "log.jsonl"), []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCmd(t, "--xml", xmls, "events", "--format", "csv", "--every", "10s", capture)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	if h := strings.SplitN(out, "\n", 2)[0]; h != "t,wall,src,reports,pump,mode,pressure,pressure_sp,volume" {
+		t.Errorf("header %q", h)
 	}
 }
 
@@ -1226,6 +1279,32 @@ func TestSummaryWindow(t *testing.T) {
 	}
 	if ev := fmt.Sprint(o["events"]); ev != "map[note:1 report:1]" {
 		t.Errorf("events = %s", ev)
+	}
+}
+
+// A run open at the end of the window is read on into later raw logs by
+// summary as by runs, so both classify it alike: its setpoint shows only
+// after the window, which makes it a shot, not a flush.
+func TestSummaryRunOpenAtEnd(t *testing.T) {
+	noEnv(t)
+	xml := runXML(t)
+	steps := idleSteps(4)
+	for i := range 12 {
+		sp := "9.00"
+		if i < 4 {
+			sp = ""
+		}
+		steps = append(steps, step{pump: '*', sp: sp, volume: float64(i)})
+	}
+	dir := runDir(t, 250*time.Millisecond, concat(steps, idleSteps(8))) // one report per file
+	until := "2026-11-10 10:00:01.5 UTC"
+	code, out, errs := runCmd(t, "--xml", xml, "runs", "--dir", dir, "-u", until, "--format", "csv")
+	if code != 0 || !strings.Contains(out, "\n1,shot,") {
+		t.Fatalf("runs: exit %d, stderr %q\n%s", code, errs, out)
+	}
+	code, out, errs = runCmd(t, "--xml", xml, "summary", "--dir", dir, "-u", until)
+	if code != 0 || errs != "" || !strings.Contains(out, "runs: shot=1 flush=0 draw=0 (1)\n") {
+		t.Errorf("summary: exit %d, stderr %q\n%s", code, errs, out)
 	}
 }
 
@@ -1385,8 +1464,9 @@ func TestUsageExamples(t *testing.T) {
 		allowed[k] = true
 	}
 	lines := 0
-	for _, l := range strings.Split(ex, "\n") {
-		if !strings.HasPrefix(l, "  levalog ") {
+	for _, l := range strings.Split(strings.TrimRight(ex, "\n"), "\n") {
+		if !strings.HasPrefix(l, "  levalog ") || !strings.Contains(l, " # ") {
+			t.Errorf("example line %q: want a command with its comment on one line", l)
 			continue
 		}
 		lines++

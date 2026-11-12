@@ -95,12 +95,12 @@ func loadCatalog(xmlPath string, stderr io.Writer) (*logview.Catalog, int) {
 // scanned is what the first pass over an input keeps: no entries, only the
 // runs and the report specs in use.
 type scanned struct {
-	paths    []string // the input, with the raw logs appended to finish runs
-	runs     []logview.Run
-	specs    map[*leva.RecordSpec]bool
-	first    *leva.RecordSpec // the spec of the first decoded report
-	problems []string
-	warns    []string
+	paths     []string // the input, with the raw logs appended to finish runs
+	runs      []logview.Run
+	specs     map[*leva.RecordSpec]bool
+	specOrder []*leva.RecordSpec // the keys of specs, in first-seen order
+	problems  []string
+	warns     []string
 	// Reports in [since, until): all, decoded, decoded with pump marker
 	// *; the XML names of those not decoded for want of an XML.
 	reports, decoded, pumping int
@@ -123,11 +123,9 @@ func scan(paths []string, dir string, detect, extend bool, cat *logview.Catalog,
 			return nil
 		},
 		OnEntry: func(e *logview.Entry) error {
-			if e.Spec != nil {
+			if e.Spec != nil && !sc.specs[e.Spec] {
 				sc.specs[e.Spec] = true
-				if sc.first == nil {
-					sc.first = e.Spec
-				}
+				sc.specOrder = append(sc.specOrder, e.Spec)
 			}
 			if detect {
 				finder.Entry(e)

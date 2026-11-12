@@ -347,7 +347,7 @@ func checkEvery(o *eventsOpts, every, aggGiven bool, stderr io.Writer) ([]logvie
 	for _, c := range []struct {
 		set  bool
 		flag string
-	}{{o.changes, "--changes"}, {o.hideMasked, "--hide-masked"}, {o.rawValues, "--raw-values"}} {
+	}{{o.changes, "--changes"}, {o.hideMasked, "--hide-masked"}, {o.rawValues, "--raw-values"}, {o.showDumps, "--show-dumps"}} {
 		if c.set {
 			return nil, fail(stderr, 2, "%s does not apply to --every", c.flag)
 		}
@@ -361,17 +361,14 @@ func checkEvery(o *eventsOpts, every, aggGiven bool, stderr io.Writer) ([]logvie
 
 // bucketCols are the columns of events --every: each key with each
 // aggregate (plain keys with the default last). Without keys they are
-// pump and the XML keys of the first report; a text field then gets
+// pump and the XML keys of the input's reports; a text field then gets
 // only last.
 func bucketCols(keys []string, aggs []logview.Agg, aggGiven bool, sc scanned, cat *logview.Catalog, stderr io.Writer) ([]logview.BucketCol, int) {
 	implied := len(keys) == 0
 	if implied {
-		keys = []string{"pump"}
-		if sc.first != nil {
-			var err error
-			if keys, err = logview.ReportKeys(sc.first); err != nil {
-				return nil, fail(stderr, 1, "%v", err)
-			}
+		var err error
+		if keys, err = logview.ReportKeys(sc.specOrder...); err != nil {
+			return nil, fail(stderr, 1, "%v", err)
 		}
 	} else if code := checkStats("--fields", keys, aggs, sc.specs, cat, stderr); code != 0 {
 		return nil, code

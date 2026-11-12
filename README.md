@@ -139,6 +139,12 @@ levalog events -s yesterday --run 2 --margin 5s --format csv \
   --fields run_t,pump,pressure,pressure_sp,temperature_pid1,heat_pid,volume
 ```
 
+For statistics, `levalog summary` says what each log or capture holds
+(firmware, XML, modes, READY, runs, masked fields, gaps), `runs --stats
+KEYS --agg LIST` adds per-run aggregates such as `pressure_max`, and
+`events --every SPAN` resamples the reports into one row per bucket;
+`levalog --help` has examples.
+
 `--xml` also takes a directory of `NAME.xml` files; each session uses the
 XML it names, so logs from before a firmware update still decode.
 `levalog --help` has the full column list.

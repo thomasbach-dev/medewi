@@ -27,12 +27,14 @@ func summaryCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
-	// Runs are numbered over the whole input, as runs does.
+	// Runs are numbered over the whole input, as runs does, and a run
+	// open at the end of the input from --dir is read on, as runs does,
+	// so both classify it alike.
 	sc := scanned{paths: paths}
 	if cat != nil {
 		var err error
 		keepAll := func(logview.Run) bool { return true }
-		if sc, err = scan(paths, in.dir, true, false, cat, false, in.since.T, in.until.T, keepAll); err != nil {
+		if sc, err = scan(paths, in.dir, true, in.fromDir(), cat, false, in.since.T, in.until.T, keepAll); err != nil {
 			return fail(stderr, 1, "%v", err)
 		}
 	}
@@ -54,6 +56,7 @@ func summaryCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	}
 	warn(stderr, in.notes)
 	warn(stderr, sc.problems)
+	warn(stderr, sc.warns)
 	if cat == nil {
 		warn(stderr, []string{"no vendor XML (--xml / MEDEWI_XML_PATH): modes, runs and masked are left empty"})
 	} else {
