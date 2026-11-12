@@ -165,7 +165,8 @@ levalog events [OPTIONS] [FILE|DIR ...]
                --changes         print a report only when a projected
                                  report field differs from the last
                                  printed report (t, wall, src, src_end,
-                                 run_t ignored)
+                                 run_t ignored); each run window
+                                 starts anew
   output       --format text|jsonl|csv
                --raw-values      print the raw substrings instead of
                                  parsed numbers
