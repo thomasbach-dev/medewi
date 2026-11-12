@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thomasbach-dev/medewi/brew"
 	"github.com/thomasbach-dev/medewi/fixture"
 )
 
@@ -249,7 +250,7 @@ func TestBucketSkipsStandby(t *testing.T) {
 func TestBucketMissingKey(t *testing.T) {
 	es := []Entry{bucketReport(t, 0, time.Time{}, 0, step{pump: '-'})}
 	es = append(es, es[0])
-	es[1].Spec, es[1].Record, es[1].Offset = nil, nil, 100*time.Millisecond
+	es[1].Spec, es[1].Record, es[1].Offset, es[1].Index = nil, nil, 100*time.Millisecond, 1
 	b := NewBucketer(time.Second, []BucketCol{{Key: "pressure", Agg: Agg{Name: "n"}}}, false)
 	rows := bucketAll(b, []SourceInfo{{Index: 0, Path: "src0"}}, es)
 	if len(rows) != 1 || rows[0].Reports != 2 || *rows[0].Values[0].Num != 1 {
@@ -257,5 +258,71 @@ func TestBucketMissingKey(t *testing.T) {
 	}
 	if m := b.Missing(); len(m) != 1 || !strings.Contains(m[0], "key pressure: 1 report") {
 		t.Errorf("missing %q", m)
+	}
+}
+
+// A capture between two raw logs: rows of raw run 1 that the margin takes
+// from the second raw log come after the capture's run 2, and must land
+// in run 1's buckets, not in a second set of them.
+func TestBucketRunAcrossCapture(t *testing.T) {
+	var l loaded
+	addSource(t, &l, runT0, true, concat(idle(4, 0, 0), pumping(10, "9.0", 9, 4), idle(14, 40, 0)))
+	addSource(t, &l, time.Time{}, false, concat(idle(4, 0, 0), pumping(10, "9.0", 9, 4), idle(14, 40, 0)))
+	addSource(t, &l, runT0.Add(6900*time.Millisecond), true, idle(8, 40, 0))
+	runs := findRuns(l, brew.DefaultConfig(), time.Time{}, time.Time{})
+	if len(runs) != 2 || runs[0].First.Source != 0 || runs[1].First.Source != 1 {
+		t.Fatalf("runs = %+v", runs)
+	}
+	b := NewBucketer(time.Second, lastCols("pressure"), true)
+	added, closed := bucketRuns(l, runs, Selection{Runs: []int{1, 2}, Margin: 4 * time.Second}, b)
+	seen := map[string]bool{}
+	last, reports := 0, 0
+	for _, r := range append(added, closed...) {
+		if r.Run.N < last {
+			t.Errorf("run %d after run %d", r.Run.N, last)
+		}
+		last = r.Run.N
+		k := fmt.Sprint(r.Run.N, *r.RunT)
+		if seen[k] {
+			t.Errorf("run %d bucket %v twice", r.Run.N, *r.RunT)
+		}
+		seen[k] = true
+		if r.Run.N == 1 {
+			reports += r.Reports
+		}
+	}
+	// Run 1 (t0 1 s, last 3.25 s): all 28 reports of the first raw log and
+	// those of the second up to 7.25 s (6.9 and 7.15 s).
+	if reports != 30 {
+		t.Errorf("run 1 reports %d, want 30", reports)
+	}
+}
+
+// A report in two overlapping run windows lacks a key once, not twice.
+func TestBucketMissingKeyOverlap(t *testing.T) {
+	l, runs := twoShots(t)
+	sel := Selection{Runs: []int{1, 2}, Margin: 2500 * time.Millisecond}
+	b := NewBucketer(time.Second, []BucketCol{{Key: "absent", Agg: Agg{Name: "n"}}}, true)
+	bucketRuns(l, runs, sel, b)
+	// Steps 0-34 lie in a window; 13-16 in both.
+	if m := b.Missing(); len(m) != 1 || m[0] != "key absent: 35 reports whose XML lacks it" {
+		t.Errorf("missing %q", m)
+	}
+}
+
+// A capture is one source: its runs are over once a raw log follows, and
+// come out before Close.
+func TestBucketCaptureRunClosesOnNextSource(t *testing.T) {
+	var l loaded
+	addSource(t, &l, time.Time{}, false, concat(idle(4, 0, 0), pumping(10, "9.0", 9, 4), idle(14, 40, 0)))
+	addSource(t, &l, runT0, true, concat(idle(4, 0, 0), pumping(10, "9.0", 9, 4), idle(14, 40, 0)))
+	runs := findRuns(l, brew.DefaultConfig(), time.Time{}, time.Time{})
+	if len(runs) != 2 || runs[0].First.Source != 0 || runs[1].First.Source != 1 {
+		t.Fatalf("runs = %+v", runs)
+	}
+	b := NewBucketer(time.Second, lastCols("pressure"), true)
+	added, closed := bucketRuns(l, runs, Selection{Runs: []int{1, 2}}, b)
+	if len(added) == 0 || added[0].Run.N != 1 || len(closed) == 0 || closed[0].Run.N != 2 {
+		t.Errorf("run 1 not emitted by Add: %d rows from Add, %d from Close", len(added), len(closed))
 	}
 }

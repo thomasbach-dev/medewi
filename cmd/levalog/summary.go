@@ -20,7 +20,7 @@ func summaryCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		return code
 	}
 	paths, code := in.paths(in.since.T, in.until.T, stderr)
-	if code != 0 {
+	if code != 0 || len(paths) == 0 {
 		return code
 	}
 	cat, code := loadCatalog(xmlPath, stderr)
@@ -52,6 +52,7 @@ func summaryCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	if ferr := w.Flush(); err == nil {
 		err = ferr
 	}
+	warn(stderr, in.notes)
 	warn(stderr, sc.problems)
 	if cat == nil {
 		warn(stderr, []string{"no vendor XML (--xml / MEDEWI_XML_PATH): modes, runs and masked are left empty"})

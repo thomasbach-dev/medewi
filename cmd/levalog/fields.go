@@ -40,7 +40,7 @@ func fields(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	var name string
 	var spec *leva.RecordSpec
 	var problems []string
-	srcs, err := sourcePaths(in.args, in.dir, in.since.T, in.until.T, false)
+	srcs, notes, empty, err := sourcePaths(in.args, in.dir, in.since.T, in.until.T, false)
 	switch {
 	case (err != nil || len(srcs) == 0) && in.fromDir() && !fi.IsDir():
 		name = strings.TrimSuffix(filepath.Base(xmlPath), ".xml")
@@ -48,7 +48,9 @@ func fields(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	case err != nil:
 		return fail(stderr, 1, "%v", err)
 	case len(srcs) == 0:
-		return fail(stderr, 1, "no raw logs for this window in %s", in.dir)
+		warn(stderr, notes)
+		warn(stderr, empty[:len(empty)-1])
+		return fail(stderr, 1, "%s", empty[len(empty)-1])
 	default:
 		for _, s := range srcs {
 			if in.window() && !s.raw {
@@ -104,6 +106,7 @@ func fields(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
 	}
+	warn(stderr, notes)
 	warn(stderr, problems)
 	return 0
 }

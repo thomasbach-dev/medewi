@@ -561,11 +561,11 @@ func TestRunsAndEventsAgree(t *testing.T) {
 
 	// A run number that does not exist selects nothing and says so.
 	if code, out, errs := runCmd(t, "--xml", xml, "events", "--dir", dir, "--run", "99"); code != 0 || out != "" ||
-		errs != "levalog: no run 99 in this input\n" {
+		errs != "levalog: --run 99: no such run (runs 1-3)\n" {
 		t.Errorf("--run 99: exit %d, output %q, stderr %q", code, out, errs)
 	}
 	if _, out, errs := runCmd(t, "--xml", xml, "events", "--dir", dir, "--run", "2,7-9"); out == "" ||
-		errs != "levalog: no run 7-9 in this input\n" {
+		errs != "levalog: --run 7-9: no such run (runs 1-3)\n" {
 		t.Errorf("--run 2,7-9: output %d bytes, stderr %q", len(out), errs)
 	}
 
@@ -1196,5 +1196,130 @@ func TestSummaryWindow(t *testing.T) {
 	}
 	if ev := fmt.Sprint(o["events"]); ev != "map[note:1 report:1]" {
 		t.Errorf("events = %s", ev)
+	}
+}
+
+// writeCapture writes a capture log.jsonl into dir/name with one report.
+func writeCapture(t *testing.T, dir, name string) {
+	t.Helper()
+	d := filepath.Join(dir, name)
+	if err := os.MkdirAll(d, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	line := fmt.Sprintf("{\"t\":0,\"dir\":\"rx\",\"data\":%q}\n", base64.StdEncoding.EncodeToString(append(testReport(), '\r', '\n')))
+	if err := os.WriteFile(filepath.Join(d, "log.jsonl"), []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCaptureParentDir(t *testing.T) {
+	noEnv(t)
+	parent := t.TempDir()
+	writeCapture(t, parent, "b")
+	writeCapture(t, parent, "a")
+	if err := os.MkdirAll(filepath.Join(parent, "c"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "c", "log.partial.jsonl"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(parent, "d"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCmd(t, "--xml", synth, "events", parent)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	a, b := strings.Index(out, "# "+filepath.Join(parent, "a", "log.jsonl")+"\n"), strings.Index(out, "# "+filepath.Join(parent, "b", "log.jsonl")+"\n")
+	if a < 0 || b < a {
+		t.Errorf("want a then b:\n%s", out)
+	}
+	want := "levalog: skipped " + filepath.Join(parent, "c") + ": interrupted capture (log.partial.jsonl)\n" +
+		"levalog: skipped " + filepath.Join(parent, "d") + ": not a capture\n"
+	if errs != want {
+		t.Errorf("stderr = %q, want %q", errs, want)
+	}
+	code, out, errs = runCmd(t, "--xml", synth, "summary", "--format", "jsonl", parent)
+	if code != 0 || strings.Count(out, "\n") != 2 || errs != want {
+		t.Errorf("summary: exit %d, stderr %q\n%s", code, errs, out)
+	}
+}
+
+func TestNoLogsNamesDir(t *testing.T) {
+	noEnv(t)
+	empty, other := t.TempDir(), t.TempDir()
+	want := "levalog: no logs in " + empty + " (no log.jsonl, no *.jsonl.gz, no capture subdirectories)\n"
+	for _, sub := range []string{"events", "runs", "summary"} {
+		code, out, errs := runCmd(t, "--xml", synth, sub, "--dir", other, empty)
+		if code != 0 || out != "" || errs != want {
+			t.Errorf("%s: exit %d, output %q, stderr %q, want %q", sub, code, out, errs, want)
+		}
+	}
+	// Without arguments, --dir is the directory read.
+	want = "levalog: no logs in " + other + " (no log.jsonl, no *.jsonl.gz, no capture subdirectories)\n"
+	if code, _, errs := runCmd(t, "--xml", synth, "events", "--dir", other); code != 0 || errs != want {
+		t.Errorf("--dir: exit %d, stderr %q, want %q", code, errs, want)
+	}
+}
+
+func TestCaptureWithSubdirs(t *testing.T) {
+	noEnv(t)
+	dir := t.TempDir()
+	writeCapture(t, dir, ".")
+	writeCapture(t, dir, "sub")
+	code, out, errs := runCmd(t, "--xml", synth, "events", dir)
+	if code != 0 || errs != "" {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	if !strings.HasPrefix(out, "# "+filepath.Join(dir, "log.jsonl")+"\n") || strings.Contains(out, "sub") {
+		t.Errorf("want the capture only:\n%s", out)
+	}
+}
+
+func TestEventsEmptyReason(t *testing.T) {
+	noEnv(t)
+	xml, capture := statsXML(t), statsCapture(t)
+	code, out, errs := runCmd(t, "--xml", xml, "events", "--event", "notice", capture)
+	want := "levalog: 36 events read; --event notice: 36 dropped; 0 left\n"
+	if code != 0 || strings.Contains(out, "notice") || errs != want {
+		t.Errorf("exit %d, stderr %q, want %q\n%s", code, errs, want, out)
+	}
+	code, out, errs = runCmd(t, "--xml", xml, "events", "--every", "1s", "--run-kind", "draw", capture)
+	want = "levalog: 36 events read; --run-kind draw: 36 dropped; --every (reports only): 0 dropped; --every (no standby): 0 dropped; 0 left\n"
+	if code != 0 || strings.Count(out, "\n") > 1 || errs != want {
+		t.Errorf("--every: exit %d, stderr %q, want %q\n%s", code, errs, want, out)
+	}
+	// --fields repeats a key once, as --every and --stats do.
+	_, out, _ = runCmd(t, "--xml", xml, "events", "--fields", "pressure,pressure", "--event", "report", capture)
+	if l := strings.SplitN(out, "\n", 3)[1]; strings.Count(l, "pressure=") != 1 {
+		t.Errorf("--fields pressure,pressure: %q", l)
+	}
+}
+
+func TestRunsEmptyReason(t *testing.T) {
+	noEnv(t)
+	xml := statsXML(t)
+	idle := t.TempDir()
+	var b strings.Builder
+	for k := range 10 {
+		fmt.Fprintf(&b, "{\"t\":%d,\"dir\":\"rx\",\"data\":%q}\n", k*250,
+			base64.StdEncoding.EncodeToString(append(runReport(step{pump: '-'}), '\r', '\n')))
+	}
+	if err := os.WriteFile(filepath.Join(idle, "log.jsonl"), []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCmd(t, "--xml", xml, "runs", idle)
+	if want := "levalog: no runs in 10 reports (pump marker * in 0)\n"; code != 0 || errs != want {
+		t.Errorf("idle: exit %d, stderr %q, want %q\n%s", code, errs, want, out)
+	}
+	code, out, errs = runCmd(t, "--xml", xml, "runs", "--kind", "draw", statsCapture(t))
+	if want := "levalog: no runs of kind draw (of 1 runs)\n"; code != 0 || errs != want {
+		t.Errorf("--kind draw: exit %d, stderr %q, want %q\n%s", code, errs, want, out)
+	}
+	// An XML directory without the session's XML decodes no report.
+	xmls := t.TempDir()
+	code, _, errs = runCmd(t, "--xml", xmls, "runs", idle)
+	if want := "levalog: no runs: no report decoded (no XML for a session that names none)\n"; code != 0 || !strings.HasSuffix(errs, want) {
+		t.Errorf("no XML: exit %d, stderr %q, want suffix %q", code, errs, want)
 	}
 }

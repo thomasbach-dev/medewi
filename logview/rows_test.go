@@ -1,6 +1,7 @@
 package logview
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -225,5 +226,44 @@ func TestRowsChangesResetPerRun(t *testing.T) {
 	}
 	if !found {
 		t.Error("first report of run 1 dropped")
+	}
+}
+
+func TestRowsDrops(t *testing.T) {
+	var l loaded
+	addSource(t, &l, runT0, true, []step{{pump: '-'}, {pump: '?'}, {pump: '*'}, {pump: '?'}, {pump: '-'}, {pump: '-'}})
+	for range 4 {
+		l.Entries = append(l.Entries, Entry{Kind: KindNotice, Raw: []byte("x"), Index: len(l.Entries)})
+	}
+	s := NewSelector(nil, Selection{Events: []Kind{KindReport}, SkipStandby: true})
+	kept := 0
+	for i := range l.Entries {
+		if _, ok := s.Select(&l.Entries[i]); ok {
+			kept++
+		}
+	}
+	want := []Drop{{"--event report", 4}, {"--skip-standby", 2}}
+	if kept != 4 || s.Seen() != 10 || fmt.Sprint(s.Drops()) != fmt.Sprint(want) {
+		t.Errorf("kept %d, seen %d, drops %v; want 4, 10, %v", kept, s.Seen(), s.Drops(), want)
+	}
+
+	// The window, then run selection through SelectAll; only active
+	// filters are listed.
+	l, runs := runsLoaded(t, true)
+	s = NewSelector(runs, Selection{Since: runT0.Add(time.Hour)})
+	for i := range l.Entries {
+		s.SelectAll(&l.Entries[i])
+	}
+	if want := []Drop{{"--since", len(l.Entries)}}; fmt.Sprint(s.Drops()) != fmt.Sprint(want) {
+		t.Errorf("window drops %v, want %v", s.Drops(), want)
+	}
+	s = NewSelector(runs, Selection{Runs: []int{1}, RunKinds: []RunKind{RunDraw}, Changes: true, ChangeKeys: []string{"pressure"}})
+	for i := range l.Entries {
+		s.SelectAll(&l.Entries[i])
+	}
+	inRun := runs[0].Last.Index - runs[0].First.Index + 1
+	want = []Drop{{"--run 1 --run-kind draw", len(l.Entries) - inRun}, {"--changes", inRun - 1}}
+	if fmt.Sprint(s.Drops()) != fmt.Sprint(want) {
+		t.Errorf("run drops %v, want %v", s.Drops(), want)
 	}
 }

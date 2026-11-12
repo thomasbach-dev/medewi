@@ -28,6 +28,7 @@ type input struct {
 	format       string
 	f            logview.Format
 	args         []string
+	notes        []string // directories skipped while resolving the input
 }
 
 func (in *input) register(fs *pflag.FlagSet) {
@@ -54,11 +55,19 @@ func (in *input) window() bool { return !in.since.T.IsZero() || !in.until.T.IsZe
 func (in *input) fromDir() bool { return len(in.args) == 0 }
 
 // paths resolves the input files, selecting raw logs for [since, until).
-// Code 0 means ok; otherwise the error is printed.
+// Code 0 means ok; otherwise the error is printed. With no file to read it
+// prints why and returns none with code 0. The notes on skipped
+// directories are left in in.notes for after the output.
 func (in *input) paths(since, until time.Time, stderr io.Writer) ([]string, int) {
-	srcs, err := sourcePaths(in.args, in.dir, since, until, in.window())
+	srcs, notes, empty, err := sourcePaths(in.args, in.dir, since, until, in.window())
 	if err != nil {
 		return nil, fail(stderr, 1, "%v", err)
+	}
+	in.notes = notes
+	if len(srcs) == 0 {
+		warn(stderr, notes)
+		warn(stderr, empty)
+		return nil, 0
 	}
 	out := make([]string, 0, len(srcs))
 	for _, s := range srcs {
@@ -91,6 +100,10 @@ type scanned struct {
 	first    *leva.RecordSpec // the spec of the first decoded report
 	problems []string
 	warns    []string
+	// Reports in [since, until): all, decoded, decoded with pump marker
+	// *; the XML names of those not decoded for want of an XML.
+	reports, decoded, pumping int
+	noXML                     []string
 }
 
 // scan decodes paths one file at a time and collects the report specs and,
@@ -117,6 +130,18 @@ func scan(paths []string, dir string, detect, extend bool, cat *logview.Catalog,
 			}
 			if detect {
 				finder.Entry(e)
+			}
+			if e.Kind == logview.KindReport && (!e.HasWall || inWindow(e.Wall, since, until)) {
+				sc.reports++
+				switch {
+				case e.Record != nil:
+					sc.decoded++
+					if len(e.Raw) > 2 && e.Raw[2] == '*' {
+						sc.pumping++
+					}
+				case e.Spec == nil && !slices.Contains(sc.noXML, e.XML):
+					sc.noXML = append(sc.noXML, e.XML)
+				}
 			}
 			return nil
 		},
@@ -158,6 +183,11 @@ func scan(paths []string, dir string, detect, extend bool, cat *logview.Catalog,
 	}
 }
 
+// inWindow reports whether t lies in [since, until); a zero bound is open.
+func inWindow(t, since, until time.Time) bool {
+	return (since.IsZero() || !t.Before(since)) && (until.IsZero() || t.Before(until))
+}
+
 // source is one file to decode: a raw log (start from its name) or a
 // capture log.jsonl.
 type source struct {
@@ -166,14 +196,18 @@ type source struct {
 	start time.Time
 }
 
-// sourcePaths resolves the FILE|DIR arguments, or the raw logs in dir that
-// overlap the window when there are none, and sorts them by start time
-// (captures, which have none, first and in argument order). A directory
-// argument holding log.jsonl is a capture; any other is a raw-log
-// directory. With neighbours, the raw logs just before and after those a
-// directory selects are added too, so run detection sees a run that
-// crosses into or out of the window from a file outside it.
-func sourcePaths(args []string, dir string, since, until time.Time, neighbours bool) ([]source, error) {
+// sourcePaths resolves the FILE|DIR arguments, or dir when there are
+// none, and sorts the files by start time (captures, which have none,
+// first and in argument order). A directory is, in this order: a capture
+// (holding log.jsonl; its subdirectories are ignored), a raw-log directory
+// (holding raw logs, of which those overlapping the window are read), or
+// the parent of captures: its direct subdirectories holding log.jsonl, in
+// name order. Other subdirectories of a parent are skipped with a note.
+// With neighbours, the raw logs just before and after those a directory
+// selects are added too, so run detection sees a run that crosses into or
+// out of the window from a file outside it. empty says why a directory
+// gave no file.
+func sourcePaths(args []string, dir string, since, until time.Time, neighbours bool) (srcs []source, notes, empty []string, err error) {
 	var paths []string
 	if len(args) == 0 {
 		args = []string{dir}
@@ -181,35 +215,85 @@ func sourcePaths(args []string, dir string, since, until time.Time, neighbours b
 	for _, a := range args {
 		fi, err := os.Stat(a)
 		if err != nil {
-			return nil, err
+			return nil, nil, nil, err
 		}
 		if !fi.IsDir() {
 			paths = append(paths, a)
 			continue
 		}
-		capture := filepath.Join(a, "log.jsonl")
-		if _, err := os.Stat(capture); err == nil {
-			paths = append(paths, capture)
+		if isCapture(a) {
+			paths = append(paths, filepath.Join(a, "log.jsonl"))
 			continue
 		}
-		sel, err := logview.Select(a, since, until)
+		all, err := logview.Select(a, time.Time{}, time.Time{})
 		if err != nil {
-			return nil, err
+			return nil, nil, nil, err
 		}
-		if neighbours && len(sel) > 0 {
-			if sel, err = withNeighbours(a, sel); err != nil {
-				return nil, err
+		if len(all) > 0 {
+			sel, err := logview.Select(a, since, until)
+			if err != nil {
+				return nil, nil, nil, err
 			}
+			if neighbours && len(sel) > 0 {
+				if sel, err = withNeighbours(a, sel); err != nil {
+					return nil, nil, nil, err
+				}
+			}
+			if len(sel) == 0 {
+				empty = append(empty, "no raw logs for this window in "+a)
+			}
+			paths = append(paths, sel...)
+			continue
 		}
-		paths = append(paths, sel...)
+		caps, skipped, err := captureSubdirs(a)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		notes = append(notes, skipped...)
+		if len(caps) == 0 {
+			empty = append(empty, fmt.Sprintf("no logs in %s (no log.jsonl, no *.jsonl.gz, no capture subdirectories)", a))
+		}
+		paths = append(paths, caps...)
 	}
-	out := make([]source, 0, len(paths))
+	srcs = make([]source, 0, len(paths))
 	for _, p := range paths {
 		start, ok := rawlog.FileStart(filepath.Base(p))
-		out = append(out, source{path: p, raw: ok, start: start})
+		srcs = append(srcs, source{path: p, raw: ok, start: start})
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].start.Before(out[j].start) })
-	return out, nil
+	sort.SliceStable(srcs, func(i, j int) bool { return srcs[i].start.Before(srcs[j].start) })
+	return srcs, notes, empty, nil
+}
+
+// isCapture reports whether dir holds a capture's log.jsonl.
+func isCapture(dir string) bool { return fileExists(filepath.Join(dir, "log.jsonl")) }
+
+// captureSubdirs returns the log.jsonl of each direct subdirectory of dir
+// that is a capture, in name order, and a note for each other one.
+func captureSubdirs(dir string) (logs, skipped []string, err error) {
+	entries, err := os.ReadDir(dir) // sorted by name
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, e := range entries {
+		sub := filepath.Join(dir, e.Name())
+		if fi, err := os.Stat(sub); err != nil || !fi.IsDir() {
+			continue
+		}
+		switch {
+		case isCapture(sub):
+			logs = append(logs, filepath.Join(sub, "log.jsonl"))
+		case fileExists(filepath.Join(sub, "log.partial.jsonl")):
+			skipped = append(skipped, "skipped "+sub+": interrupted capture (log.partial.jsonl)")
+		default:
+			skipped = append(skipped, "skipped "+sub+": not a capture")
+		}
+	}
+	return logs, skipped, nil
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 // withNeighbours adds the raw logs of dir just before and after sel, a

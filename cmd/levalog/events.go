@@ -110,10 +110,7 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		}
 		sel.Events = append(sel.Events, logview.Kind(k))
 	}
-	keys := splitList(o.fields)
-	if every {
-		keys = dedup(keys)
-	}
+	keys := dedup(splitList(o.fields))
 	if xmlPath == "" {
 		for _, c := range []struct {
 			set  bool
@@ -156,11 +153,8 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		}
 	}
 	paths, code := in.paths(since, until, stderr)
-	if code != 0 {
+	if code != 0 || len(paths) == 0 {
 		return code
-	}
-	if len(paths) == 0 {
-		return fail(stderr, 0, "no raw logs for this window in %s", in.dir)
 	}
 	cat, code := loadCatalog(xmlPath, stderr)
 	if code != 0 {
@@ -189,15 +183,7 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 			sel.Runs = append(sel.Runs, r.N)
 		}
 	}
-	for _, rr := range runSel {
-		if !slices.ContainsFunc(sel.Runs, func(n int) bool { return rr.lo <= n && n <= rr.hi }) {
-			name := strconv.Itoa(rr.lo)
-			if rr.hi != rr.lo {
-				name += "-" + strconv.Itoa(rr.hi)
-			}
-			_, _ = fmt.Fprintf(stderr, "levalog: no run %s in this input\n", name)
-		}
-	}
+	noRun := missingRuns(runSel, sel.Runs, sc.runs)
 	if bad := unknownKeys(keys, sc.specs, cat); len(bad) > 0 {
 		return fail(stderr, 2, "--fields: unknown keys %s (see levalog fields)", strings.Join(bad, ", "))
 	}
@@ -211,7 +197,7 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		if code != 0 {
 			return code
 		}
-		return eventsEvery(paths, cat, sc, sel, o, cols, byRun, in.f, stdout, stderr)
+		return eventsEvery(paths, cat, sc, sel, o, cols, byRun, in.f, in.notes, noRun, stdout, stderr)
 	}
 
 	out := bufio.NewWriter(stdout)
@@ -220,6 +206,7 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	})
 	selector := logview.NewSelector(sc.runs, sel)
 	problems := sc.problems
+	rows := 0
 	if !byRun || len(sel.Runs) > 0 || len(sel.RunKinds) > 0 { // --run naming no run prints nothing
 		s := logview.Stream{
 			Catalog: cat, ShowDumps: o.showDumps,
@@ -229,6 +216,7 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 			},
 			OnEntry: func(e *logview.Entry) error {
 				if r, ok := selector.Select(e); ok {
+					rows++
 					return w.Write(r)
 				}
 				return nil
@@ -243,13 +231,62 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	if ferr := out.Flush(); err == nil {
 		err = ferr
 	}
+	warn(stderr, in.notes)
 	warn(stderr, problems)
 	warn(stderr, sc.warns)
 	warn(stderr, w.Warnings())
+	warn(stderr, noRun)
+	if rows == 0 && len(noRun) == 0 && err == nil {
+		warn(stderr, []string{dropReason(selector, o, false)})
+	}
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
 	}
 	return 0
+}
+
+// missingRuns says, for each --run item that names no run of the input,
+// that there is no such run, with the runs there are.
+func missingRuns(runSel runSet, selected []int, runs []logview.Run) []string {
+	var out []string
+	for _, rr := range runSel {
+		if slices.ContainsFunc(selected, func(n int) bool { return rr.lo <= n && n <= rr.hi }) {
+			continue
+		}
+		name := strconv.Itoa(rr.lo)
+		if rr.hi != rr.lo {
+			name += "-" + strconv.Itoa(rr.hi)
+		}
+		have := "no runs"
+		switch {
+		case len(runs) == 1:
+			have = "run " + strconv.Itoa(runs[0].N)
+		case len(runs) > 1:
+			have = fmt.Sprintf("runs %d-%d", runs[0].N, runs[len(runs)-1].N)
+		}
+		out = append(out, fmt.Sprintf("--run %s: no such run (%s)", name, have))
+	}
+	return out
+}
+
+// dropReason says why events printed no row: the events read, what each
+// filter dropped and what was left. With every, the filters --every
+// implies are named after it.
+func dropReason(s *logview.Selector, o eventsOpts, every bool) string {
+	parts := []string{fmt.Sprintf("%d events read", s.Seen())}
+	left := s.Seen()
+	for _, d := range s.Drops() {
+		name := d.Filter
+		switch {
+		case every && name == "--event report" && o.event == "":
+			name = "--every (reports only)"
+		case every && name == "--skip-standby" && !o.skipStandby:
+			name = "--every (no standby)"
+		}
+		parts = append(parts, fmt.Sprintf("%s: %d dropped", name, d.N))
+		left -= d.N
+	}
+	return strings.Join(append(parts, fmt.Sprintf("%d left", left)), "; ")
 }
 
 func kindList() string {
@@ -358,16 +395,18 @@ func bucketCols(keys []string, aggs []logview.Agg, aggGiven bool, sc scanned, ca
 
 // eventsEvery streams the input into buckets and writes them.
 func eventsEvery(paths []string, cat *logview.Catalog, sc scanned, sel logview.Selection, o eventsOpts,
-	cols []logview.BucketCol, byRun bool, f logview.Format, stdout, stderr io.Writer,
+	cols []logview.BucketCol, byRun bool, f logview.Format, notes, noRun []string, stdout, stderr io.Writer,
 ) int {
 	out := bufio.NewWriter(stdout)
 	w := logview.NewBucketWriter(out, f, cols, byRun, time.Local)
 	b := logview.NewBucketer(o.every, cols, byRun)
+	n := 0
 	write := func(rows []logview.BucketRow) error {
 		for _, r := range rows {
 			if err := w.Write(r); err != nil {
 				return err
 			}
+			n++
 		}
 		return nil
 	}
@@ -401,9 +440,14 @@ func eventsEvery(paths []string, cat *logview.Catalog, sc scanned, sel logview.S
 	if ferr := out.Flush(); err == nil {
 		err = ferr
 	}
+	warn(stderr, notes)
 	warn(stderr, problems)
 	warn(stderr, sc.warns)
 	warn(stderr, b.Missing())
+	warn(stderr, noRun)
+	if n == 0 && len(noRun) == 0 && err == nil {
+		warn(stderr, []string{dropReason(selector, o, true)})
+	}
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
 	}

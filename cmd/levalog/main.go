@@ -29,8 +29,10 @@ func usage(w io.Writer) {
   summary  what each source holds: firmware, XML, events, modes, READY, runs, masked fields, gaps
 
 Input, for all subcommands: FILE|DIR ... are raw logs (*.jsonl.gz) or captures
-(log.jsonl, plain or gzip). A DIR is either a capture directory (containing
-log.jsonl) or a raw-log directory. Without FILE or DIR, the raw logs in
+(log.jsonl, plain or gzip). A DIR is a capture directory (containing
+log.jsonl), a raw-log directory, or else the parent of capture directories:
+its subdirectories holding log.jsonl, in name order (others are skipped
+with a note). Without FILE or DIR, the raw logs in
 --dir that overlap the window. -s/--since T (inclusive) and -u/--until T
 (exclusive) take a systemd.time(7) timestamp in local time: "2026-11-10
 10:40", "10:40", "-5min", "yesterday", with an optional " UTC"; they need
@@ -87,7 +89,9 @@ one per XML name a session reports (MC? XML=NAME). It defaults to
 $MEDEWID_XML_PATH, then $MEDEWI_XML_PATH. Without it events shows reports
 raw; fields and runs need it. --dir defaults to $MEDEWID_RAW_DIR, then
 `+defaultRawDir+`. Problems (a missing XML, unparseable values) go to stderr
-as "levalog: ..." lines after the output and do not change the exit code.
+as "levalog: ..." lines after the output and do not change the exit code;
+so does the reason for an empty result (what each filter dropped, a --run
+that names no run).
 Exit codes: 0 ok, 1 read error, 2 usage error.`)
 }
 

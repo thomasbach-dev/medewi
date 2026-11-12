@@ -4,6 +4,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/thomasbach-dev/medewi/leva"
@@ -69,6 +70,73 @@ type Selector struct {
 	lastRun  *Run // the run of the last printed report
 	lastSig  []byte
 	sig      []byte
+
+	seen  int
+	drops [nFilters]int
+}
+
+// The filters of a Selection, in the order they apply.
+const (
+	filterWindow = iota
+	filterRuns
+	filterEvents
+	filterStandby
+	filterChanges
+	nFilters
+)
+
+// Drop is what one filter of a Selection dropped: the entries that
+// survived the filters before it and not this one.
+type Drop struct {
+	Filter string // the filter as its flags read, e.g. "--event report"
+	N      int
+}
+
+// Seen is the number of entries Select and SelectAll were given.
+func (s *Selector) Seen() int { return s.seen }
+
+// Drops lists what each active filter dropped, in the order they apply:
+// window, run selection, event kinds, standby, changes.
+func (s *Selector) Drops() []Drop {
+	sel := &s.sel
+	var out []Drop
+	add := func(f int, active bool, name string) {
+		if active {
+			out = append(out, Drop{Filter: name, N: s.drops[f]})
+		}
+	}
+	var window []string
+	if !sel.Since.IsZero() {
+		window = append(window, "--since")
+	}
+	if !sel.Until.IsZero() {
+		window = append(window, "--until")
+	}
+	add(filterWindow, !s.byRun && len(window) > 0, strings.Join(window, "/"))
+	var runs []string
+	if len(sel.Runs) > 0 {
+		ns := make([]string, len(sel.Runs))
+		for i, n := range sel.Runs {
+			ns[i] = strconv.Itoa(n)
+		}
+		runs = append(runs, "--run "+strings.Join(ns, ","))
+	}
+	if len(sel.RunKinds) > 0 {
+		ks := make([]string, len(sel.RunKinds))
+		for i, k := range sel.RunKinds {
+			ks[i] = string(k)
+		}
+		runs = append(runs, "--run-kind "+strings.Join(ks, ","))
+	}
+	add(filterRuns, s.byRun, strings.Join(runs, " "))
+	ks := make([]string, len(sel.Events))
+	for i, k := range sel.Events {
+		ks[i] = string(k)
+	}
+	add(filterEvents, len(sel.Events) > 0, "--event "+strings.Join(ks, ","))
+	add(filterStandby, sel.SkipStandby, "--skip-standby")
+	add(filterChanges, sel.Changes, "--changes")
+	return out
 }
 
 // NewSelector returns a Selector for runs, as RunFinder.Runs returns them
@@ -107,12 +175,14 @@ func (s *Selector) window(e *Entry) (*window, time.Duration) {
 
 // Select returns the row for e and whether the Selection keeps it.
 func (s *Selector) Select(e *Entry) (Row, bool) {
+	s.seen++
 	row := Row{Entry: e}
 	if w, t := s.window(e); w != nil {
 		d := t - w.t0
 		row.Run, row.RunT = w.run, &d
 	}
 	if s.byRun && row.Run == nil {
+		s.drops[filterRuns]++
 		return Row{}, false
 	}
 	if !s.keep(e, row.Run) {
@@ -132,6 +202,7 @@ func (s *Selector) SelectAll(e *Entry) []Row {
 		}
 		return nil
 	}
+	s.seen++
 	ws := s.wins[timeline(e.HasWall, e.Source)]
 	t := PointOf(e).at()
 	var out []Row
@@ -141,23 +212,31 @@ func (s *Selector) SelectAll(e *Entry) []Row {
 		d := t - ws[k].t0
 		out = append(out, Row{Entry: e, Run: ws[k].run, RunT: &d})
 	}
-	if len(out) == 0 || !s.keep(e, out[0].Run) {
+	if len(out) == 0 {
+		s.drops[filterRuns]++
+		return nil
+	}
+	if !s.keep(e, out[0].Run) {
 		return nil
 	}
 	return out
 }
 
-// keep applies the filters after run selection to e, in run (or nil).
+// keep applies the filters other than run selection to e, in run (or
+// nil), and counts what each drops.
 func (s *Selector) keep(e *Entry, run *Run) bool {
 	sel := &s.sel
 	if !s.byRun && e.HasWall && (!sel.Since.IsZero() && e.Wall.Before(sel.Since) || !sel.Until.IsZero() && !e.Wall.Before(sel.Until)) {
+		s.drops[filterWindow]++
 		return false
 	}
 	if len(sel.Events) > 0 && !slices.Contains(sel.Events, e.Kind) {
+		s.drops[filterEvents]++
 		return false
 	}
 	if e.Kind == KindReport {
 		if sel.SkipStandby && len(e.Raw) > 2 && e.Raw[2] == '?' {
+			s.drops[filterStandby]++
 			return false
 		}
 		if sel.Changes && e.Spec != nil && e.Record != nil {
@@ -168,6 +247,7 @@ func (s *Selector) keep(e *Entry, run *Run) bool {
 			}
 			s.sig = sk.sig(s.sig[:0], e)
 			if e.Spec == s.lastSpec && run == s.lastRun && string(s.sig) == string(s.lastSig) {
+				s.drops[filterChanges]++
 				return false
 			}
 			s.lastSpec, s.lastRun = e.Spec, run

@@ -89,11 +89,12 @@ type Bucketer struct {
 	cur     *bucket       // without byRun
 	runs    []*runBuckets // with byRun: open runs, in run order
 	missing map[string]int
+	lastIdx int // Entry.Index of the last report counted in missing
 }
 
 // NewBucketer returns a Bucketer for buckets of every with cols.
 func NewBucketer(every time.Duration, cols []BucketCol, byRun bool) *Bucketer {
-	b := &Bucketer{every: every, cols: cols, byRun: byRun, sources: map[int]SourceInfo{}, missing: map[string]int{}}
+	b := &Bucketer{every: every, cols: cols, byRun: byRun, sources: map[int]SourceInfo{}, missing: map[string]int{}, lastIdx: -1}
 	for _, c := range cols {
 		i := slices.Index(b.keys, c.Key)
 		if i < 0 {
@@ -130,7 +131,7 @@ func (b *Bucketer) Add(r Row) []BucketRow {
 			return nil
 		}
 		at = *r.RunT
-		out = b.closeRuns(r.Run.N, e.Index)
+		out = b.closeRuns(r.Run.N, e)
 		bk = b.runBucket(r.Run, e, floorDiv(int64(at), int64(b.every)))
 	} else {
 		t := int64(e.Offset)
@@ -148,10 +149,15 @@ func (b *Bucketer) Add(r Row) []BucketRow {
 	}
 	bk.reports++
 	src := srcRef(e.Path, e.Src)
+	// A report in two overlapping run windows comes twice: count it once.
+	first := e.Index != b.lastIdx
+	b.lastIdx = e.Index
 	for i, k := range b.keys {
 		v, ok := FieldOf(e, k)
 		if !ok {
-			b.missing[k]++
+			if first {
+				b.missing[k]++
+			}
 			continue
 		}
 		bk.accs[i].Add(v, at, src)
@@ -193,15 +199,24 @@ func (b *Bucketer) closeCur() []BucketRow {
 	return []BucketRow{r}
 }
 
-// closeRuns emits the open runs before run n that did not hold entry
-// index: SelectAll gives an entry's rows in run order, so such a run got
-// no row for this entry and, windows being ordered, gets none later.
-// Those runs are a prefix of the open ones.
-func (b *Bucketer) closeRuns(n, index int) []BucketRow {
+// closeRuns emits the open runs before run n that are over by entry e.
+// On e's timeline, a run is over when it did not hold e: SelectAll gives
+// an entry's rows in run order, so such a run got no row for e and,
+// windows being ordered, gets none later. A run on another timeline is
+// over only when that is a capture's, a source the input has left; a run
+// on the wall clock may continue in a later raw log. The closed runs are a
+// prefix of the open ones, so buckets come out in run order.
+func (b *Bucketer) closeRuns(n int, e *Entry) []BucketRow {
 	var out []BucketRow
+	etl := timeline(e.HasWall, e.Source)
 	k := 0
-	for ; k < len(b.runs) && b.runs[k].run.N < n && b.runs[k].last < index; k++ {
-		out = append(out, b.emitRun(b.runs[k])...)
+	for ; k < len(b.runs) && b.runs[k].run.N < n; k++ {
+		rb := b.runs[k]
+		tl := timeline(rb.run.First.HasWall, rb.run.First.Source)
+		if tl == etl && rb.last >= e.Index || tl != etl && tl == timeline(true, 0) {
+			break
+		}
+		out = append(out, b.emitRun(rb)...)
 	}
 	b.runs = b.runs[k:]
 	return out

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -55,11 +56,8 @@ func runsCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		return needXML(stderr, "runs")
 	}
 	paths, code := in.paths(in.since.T, in.until.T, stderr)
-	if code != 0 {
+	if code != 0 || len(paths) == 0 {
 		return code
-	}
-	if len(paths) == 0 {
-		return fail(stderr, 0, "no raw logs for this window in %s", in.dir)
 	}
 	cat, code := loadCatalog(xmlPath, stderr)
 	if code != 0 {
@@ -90,15 +88,43 @@ func runsCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	if ferr := w.Flush(); err == nil {
 		err = ferr
 	}
+	warn(stderr, in.notes)
 	warn(stderr, sc.problems)
 	warn(stderr, sc.warns)
 	if opt.Stats != nil {
 		warn(stderr, opt.Stats.Missing())
 	}
+	if len(runs) == 0 {
+		warn(stderr, []string{noRuns(sc, kinds)})
+	}
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
 	}
 	return 0
+}
+
+// noRuns says why runs found none: no run at all in the reports, or none
+// of the kinds asked for.
+func noRuns(sc scanned, kinds []logview.RunKind) string {
+	switch {
+	case len(sc.runs) > 0:
+		ks := make([]string, len(kinds))
+		for i, k := range kinds {
+			ks[i] = string(k)
+		}
+		return fmt.Sprintf("no runs of kind %s (of %d runs)", strings.Join(ks, ","), len(sc.runs))
+	case sc.decoded == 0 && len(sc.noXML) > 0:
+		names := make([]string, len(sc.noXML))
+		for i, n := range sc.noXML {
+			names[i] = n
+			if n == "" {
+				names[i] = "a session that names none"
+			}
+		}
+		return "no runs: no report decoded (no XML for " + strings.Join(names, ", ") + ")"
+	default:
+		return fmt.Sprintf("no runs in %d reports (pump marker * in %d)", sc.decoded, sc.pumping)
+	}
 }
 
 // checkStats validates the keys of flag (--stats, --fields): report fields
