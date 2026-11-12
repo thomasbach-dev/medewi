@@ -88,6 +88,7 @@ type scanned struct {
 	paths    []string // the input, with the raw logs appended to finish runs
 	runs     []logview.Run
 	specs    map[*leva.RecordSpec]bool
+	first    *leva.RecordSpec // the spec of the first decoded report
 	problems []string
 	warns    []string
 }
@@ -110,6 +111,9 @@ func scan(paths []string, dir string, detect, extend bool, cat *logview.Catalog,
 		OnEntry: func(e *logview.Entry) error {
 			if e.Spec != nil {
 				sc.specs[e.Spec] = true
+				if sc.first == nil {
+					sc.first = e.Spec
+				}
 			}
 			if detect {
 				finder.Entry(e)

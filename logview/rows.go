@@ -107,25 +107,58 @@ func (s *Selector) window(e *Entry) (*window, time.Duration) {
 
 // Select returns the row for e and whether the Selection keeps it.
 func (s *Selector) Select(e *Entry) (Row, bool) {
-	sel := &s.sel
 	row := Row{Entry: e}
 	if w, t := s.window(e); w != nil {
 		d := t - w.t0
 		row.Run, row.RunT = w.run, &d
 	}
-	if s.byRun {
-		if row.Run == nil {
-			return Row{}, false
-		}
-	} else if e.HasWall && (!sel.Since.IsZero() && e.Wall.Before(sel.Since) || !sel.Until.IsZero() && !e.Wall.Before(sel.Until)) {
+	if s.byRun && row.Run == nil {
 		return Row{}, false
 	}
-	if len(sel.Events) > 0 && !slices.Contains(sel.Events, e.Kind) {
+	if !s.keep(e, row.Run) {
 		return Row{}, false
+	}
+	return row, true
+}
+
+// SelectAll returns one row per selected run window holding e (several
+// where margins overlap), in run order, when the Selection keeps e.
+// Without run selection it returns the row Select gives, or none.
+// Changes compares within the earliest of those runs.
+func (s *Selector) SelectAll(e *Entry) []Row {
+	if !s.byRun {
+		if r, ok := s.Select(e); ok {
+			return []Row{r}
+		}
+		return nil
+	}
+	ws := s.wins[timeline(e.HasWall, e.Source)]
+	t := PointOf(e).at()
+	var out []Row
+	// Windows are ordered by lo and hi alike: those holding t are a
+	// contiguous range starting at the first whose hi reaches t.
+	for k := sort.Search(len(ws), func(i int) bool { return ws[i].hi >= t }); k < len(ws) && ws[k].lo <= t; k++ {
+		d := t - ws[k].t0
+		out = append(out, Row{Entry: e, Run: ws[k].run, RunT: &d})
+	}
+	if len(out) == 0 || !s.keep(e, out[0].Run) {
+		return nil
+	}
+	return out
+}
+
+// keep applies the filters after run selection to e, in run (or nil).
+func (s *Selector) keep(e *Entry, run *Run) bool {
+	sel := &s.sel
+	if !s.byRun && e.HasWall && (!sel.Since.IsZero() && e.Wall.Before(sel.Since) || !sel.Until.IsZero() && !e.Wall.Before(sel.Until)) {
+		return false
+	}
+	if len(sel.Events) > 0 && !slices.Contains(sel.Events, e.Kind) {
+		return false
 	}
 	if e.Kind == KindReport {
 		if sel.SkipStandby && len(e.Raw) > 2 && e.Raw[2] == '?' {
-			return Row{}, false
+			return false
 		}
 		if sel.Changes && e.Spec != nil && e.Record != nil {
 			sk := s.cache[e.Spec]
@@ -134,14 +167,14 @@ func (s *Selector) Select(e *Entry) (Row, bool) {
 				s.cache[e.Spec] = sk
 			}
 			s.sig = sk.sig(s.sig[:0], e)
-			if e.Spec == s.lastSpec && row.Run == s.lastRun && string(s.sig) == string(s.lastSig) {
-				return Row{}, false
+			if e.Spec == s.lastSpec && run == s.lastRun && string(s.sig) == string(s.lastSig) {
+				return false
 			}
-			s.lastSpec, s.lastRun = e.Spec, row.Run
+			s.lastSpec, s.lastRun = e.Spec, run
 			s.lastSig = append(s.lastSig[:0], s.sig...)
 		}
 	}
-	return row, true
+	return true
 }
 
 // specKeys lists what --changes compares for one spec.

@@ -47,6 +47,14 @@ tmin/tmax are run_t, srcmin/srcmax the src of that report, and n counts the
 unmasked values. events --margin SPAN (default 0) widens each run window on both
 sides and needs --run or --run-kind.
 
+events --every SPAN [--agg LIST] prints one row per bucket of SPAN instead:
+t (bucket start), wall, run and run_t with a run selection, reports (the
+non-standby reports in it), then each field's last value under its plain key,
+or key_agg columns with --agg. Buckets start at run_t 0 per run with a run
+selection, else at multiples of SPAN since the Unix epoch (raw logs) or from
+t 0 (captures), per source; empty buckets are left out. Without --fields:
+pump and every report field, text fields only as key_last.
+
 events text: T WALL DIR EVENT, then RUN RUN_T with --run/--run-kind, then
 src=, src_end=, xml= when --fields names them, then report fields as
 key=value (pump and mode first) or the line's text. Comment lines: "# PATH"

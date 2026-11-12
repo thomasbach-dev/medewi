@@ -153,11 +153,7 @@ func WriteRuns(w io.Writer, f Format, runs []Run, opt RunsOptions) error {
 				n, r.Kind, orDash(start), e.Offset.Seconds(), seconds(r.Duration), orDash(peak), vol,
 				yesNo(r.Truncated), orDash(r.XML), src)
 			for _, v := range stats {
-				s := aggText(v)
-				if v.Num == nil && v.Str == nil {
-					s = "?"
-				}
-				_, _ = fmt.Fprintf(tw, "\t%s", s)
+				_, _ = fmt.Fprintf(tw, "\t%s", aggTextCell(v))
 			}
 			_, _ = fmt.Fprintln(tw)
 		case cw != nil:
@@ -182,14 +178,7 @@ func WriteRuns(w io.Writer, f Format, runs []Run, opt RunsOptions) error {
 			o.strOrNull("xml", r.XML)
 			o.str("src", src)
 			for i, v := range stats {
-				switch {
-				case v.Num != nil:
-					o.raw(statCols[i], FormatNum(*v.Num))
-				case v.Str != nil:
-					o.str(statCols[i], *v.Str)
-				default:
-					o.raw(statCols[i], "null")
-				}
+				o.agg(statCols[i], v)
 			}
 			if _, err := w.Write(o.line()); err != nil {
 				return err
@@ -215,4 +204,29 @@ func aggText(v AggValue) string {
 		return *v.Str
 	}
 	return ""
+}
+
+// aggTextCell is an aggregate as one text-table token: ? when empty or
+// an empty string, a string quoted when it holds blanks.
+func aggTextCell(v AggValue) string {
+	s := aggText(v)
+	switch {
+	case s == "":
+		return "?"
+	case v.Str != nil:
+		return textQuote(s)
+	}
+	return s
+}
+
+// agg adds v: a number, a string, or null when empty.
+func (o *jsonObj) agg(k string, v AggValue) {
+	switch {
+	case v.Num != nil:
+		o.raw(k, FormatNum(*v.Num))
+	case v.Str != nil:
+		o.str(k, *v.Str)
+	default:
+		o.raw(k, "null")
+	}
 }

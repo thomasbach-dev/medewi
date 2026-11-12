@@ -991,3 +991,111 @@ func TestRunsStatsGenlever(t *testing.T) {
 		}
 	}
 }
+
+func TestEventsEvery(t *testing.T) {
+	noEnv(t)
+	xml, capture := statsXML(t), statsCapture(t)
+	code, out, errs := runCmd(t, "--xml", xml, "events", "--every", "1s", "--fields", "pressure", "--agg", "max", capture)
+	if code != 0 || errs != "" {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	var got []string
+	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
+		got = append(got, strings.Join(strings.Fields(l), " "))
+	}
+	want := []string{
+		"t wall reports pressure_max",
+		"0.000 - 4 0", "1.000 - 4 0", "2.000 - 4 6", "3.000 - 4 9.5", "4.000 - 4 9",
+		"5.000 - 4 0", "6.000 - 4 0", "7.000 - 4 0", "8.000 - 4 0",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+
+	// Default: plain keys, last value; duplicate keys collapse.
+	code, out, errs = runCmd(t, "--xml", xml, "events", "--format", "csv", "--every", "2s",
+		"--fields", "pressure,mode,pressure", "--run", "1", capture)
+	if code != 0 || errs != "" {
+		t.Fatalf("csv: exit %d, stderr %q", code, errs)
+	}
+	ls := strings.Split(strings.TrimSpace(out), "\n")
+	if ls[0] != "t,wall,run,run_t,reports,pressure,mode" || ls[1] != "2,,1,0,8,9.2,PID" || len(ls) != 3 {
+		t.Errorf("csv:\n%s", out)
+	}
+
+	// No --fields: pump and every XML key, text fields only as _last.
+	code, out, errs = runCmd(t, "--xml", xml, "events", "--format", "jsonl", "--every", "10s", "--agg", "max", capture)
+	if code != 0 || errs != "" {
+		t.Fatalf("jsonl: exit %d, stderr %q", code, errs)
+	}
+	want1 := `{"t":0,"wall":null,"reports":36,"pump_last":"-","mode_last":"PID","pressure_max":9.5,"pressure_sp_max":9,"volume_max":11}`
+	if strings.TrimSpace(out) != want1 {
+		t.Errorf("jsonl:\n%s\nwant\n%s", out, want1)
+	}
+}
+
+func TestEventsEveryUsage(t *testing.T) {
+	noEnv(t)
+	xml, capture := statsXML(t), statsCapture(t)
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--every", "1s", "--event", "notice"}, "--event"},
+		{[]string{"--every", "1s", "--changes"}, "--changes"},
+		{[]string{"--agg", "max"}, "--every"},
+		{[]string{"--every", "1s", "--fields", "mode", "--agg", "max"}, "mode"},
+		{[]string{"--every", "0"}, "--every"},
+		{[]string{"--every", "1s", "--fields", "t"}, "t"},
+		{[]string{"--every", "1s", "--agg", "avg"}, "tmax"},
+	} {
+		args := append(append([]string{"--xml", xml, "events"}, tc.args...), capture)
+		code, _, errs := runCmd(t, args...)
+		if code != 2 || !strings.Contains(errs, tc.want) {
+			t.Errorf("%q: exit %d, stderr %q; want 2 naming %q", tc.args, code, errs, tc.want)
+		}
+	}
+	code, _, errs := runCmd(t, "events", "--every", "1s", capture)
+	if code != 2 || !strings.Contains(errs, "--every") {
+		t.Errorf("without XML: exit %d, stderr %q", code, errs)
+	}
+	code, _, errs = runCmd(t, "--xml", xml, "events", "--every", "1s", "--event", "report", capture)
+	if code != 0 || errs != "" {
+		t.Errorf("--event report: exit %d, stderr %q", code, errs)
+	}
+}
+
+func TestEventsEveryGenlever(t *testing.T) {
+	xml := os.Getenv("MEDEWI_XML_PATH")
+	if xml == "" {
+		t.Skip("MEDEWI_XML_PATH not set")
+	}
+	noEnv(t)
+	code, out, errs := runCmd(t, "--xml", xml, "events", "--run", "2", "--every", "1s", "--fields", "pressure",
+		"../../testdata/fixtures/shot-genlever")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	if errs != "" {
+		t.Errorf("stderr %q", errs)
+	}
+	ls := strings.Split(strings.TrimSpace(out), "\n")
+	if got := strings.Join(strings.Fields(ls[0]), " "); got != "t wall run run_t reports pressure" {
+		t.Errorf("header %q", got)
+	}
+	if got := len(ls) - 1; got != 45 {
+		t.Errorf("rows = %d, want 45", got)
+	}
+	if got := strings.Join(strings.Fields(ls[1]), " "); got != "108.384 - 2 0.000 4 0.64" {
+		t.Errorf("first row %q", got)
+	}
+}
+
+func TestRunsStatsDedup(t *testing.T) {
+	noEnv(t)
+	xml, capture := statsXML(t), statsCapture(t)
+	code, out, errs := runCmd(t, "--xml", xml, "runs", "--format", "csv", "--stats", "pressure,pressure", "--agg", "max", capture)
+	if code != 0 || errs != "" || !strings.HasSuffix(strings.Split(out, "\n")[0], ",src,pressure_max") {
+		t.Errorf("exit %d, stderr %q\n%s", code, errs, out)
+	}
+}

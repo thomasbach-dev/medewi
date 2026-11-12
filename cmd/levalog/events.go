@@ -56,7 +56,8 @@ func parseRuns(s string) (runSet, error) {
 // eventsOpts are the flags of events beyond the input.
 type eventsOpts struct {
 	run, runKind, event, fields string
-	margin                      time.Duration
+	agg                         string
+	margin, every               time.Duration
 	skipStandby, hideMasked     bool
 	changes, rawValues          bool
 	showDumps                   bool
@@ -78,10 +79,20 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&o.changes, "changes", false, "print a report only when a projected report field changed (each run window starts anew)")
 	fs.BoolVar(&o.rawValues, "raw-values", false, "print the raw substrings instead of parsed values")
 	fs.BoolVar(&o.showDumps, "show-dumps", false, "print MCu/MCm dump lines instead of redacting them")
+	fs.Var(systime.NewSpan(&o.every), "every", "one row per bucket of this systemd.time span, aggregating the non-standby reports")
+	fs.StringVar(&o.agg, "agg", "last", "aggregates per bucket for --every (columns key_agg; default plain keys, last value): "+
+		"n, first, last, min, max, mean, median, pNN, sd, tmin, tmax, srcmin, srcmax")
 	if code, done := parse(fs, args, stderr); done {
 		return code
 	}
 	if code := in.check(fs, stderr); code != 0 {
+		return code
+	}
+
+	every := fs.Changed("every")
+	aggGiven := fs.Changed("agg")
+	aggs, code := checkEvery(&o, every, aggGiven, stderr)
+	if code != 0 {
 		return code
 	}
 
@@ -90,7 +101,6 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, 2, "--run: %v", err)
 	}
-	code := 0
 	if sel.RunKinds, code = parseRunKinds(o.runKind, "--run-kind", stderr); code != 0 {
 		return code
 	}
@@ -104,6 +114,9 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		sel.Events = append(sel.Events, logview.Kind(k))
 	}
 	keys := splitList(o.fields)
+	if every {
+		keys = dedup(keys)
+	}
 	if xmlPath == "" {
 		for _, c := range []struct {
 			set  bool
@@ -113,6 +126,7 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 			{o.run != "", "--run"},
 			{o.runKind != "", "--run-kind"},
 			{o.changes, "--changes"},
+			{every, "--every"},
 			{in.f == logview.FormatCSV, "--format csv"},
 		} {
 			if c.set {
@@ -121,7 +135,10 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		}
 	}
 	sel.Since, sel.Until, sel.Margin = in.since.T, in.until.T, o.margin
-	sel.SkipStandby, sel.Changes = o.skipStandby, o.changes
+	sel.SkipStandby, sel.Changes = o.skipStandby || every, o.changes
+	if every {
+		sel.Events = []logview.Kind{logview.KindReport}
+	}
 	byRun := len(runSel) > 0 || len(sel.RunKinds) > 0
 	if o.margin != 0 && !byRun {
 		return fail(stderr, 2, "--margin needs --run or --run-kind")
@@ -164,7 +181,7 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	// one pass streams.
 	detect := cat != nil && (byRun || in.f != logview.FormatText)
 	var sc scanned
-	if detect || len(keys) > 0 {
+	if detect || len(keys) > 0 || every {
 		if sc, err = scan(paths, in.dir, detect, byRun && in.fromDir(), cat, o.showDumps, in.since.T, in.until.T, keep); err != nil {
 			return fail(stderr, 1, "%v", err)
 		}
@@ -191,6 +208,13 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		if k == "pump" || !isMedewiKey(k) {
 			sel.ChangeKeys = append(sel.ChangeKeys, k)
 		}
+	}
+	if every {
+		cols, code := bucketCols(keys, aggs, aggGiven, sc, cat, stderr)
+		if code != 0 {
+			return code
+		}
+		return eventsEvery(paths, cat, sc, sel, o, cols, byRun, in.f, stdout, stderr)
 	}
 
 	out := bufio.NewWriter(stdout)
@@ -267,4 +291,124 @@ func unknownKeys(keys []string, specs map[*leva.RecordSpec]bool, cat *logview.Ca
 		}
 	}
 	return bad
+}
+
+// checkEvery validates --every, --agg and the flags --every excludes; it
+// returns the aggregates of --agg.
+func checkEvery(o *eventsOpts, every, aggGiven bool, stderr io.Writer) ([]logview.Agg, int) {
+	if !every {
+		if aggGiven {
+			return nil, fail(stderr, 2, "--agg needs --every")
+		}
+		return nil, 0
+	}
+	if o.every <= 0 {
+		return nil, fail(stderr, 2, "--every: want a span above 0, not %q", systime.FormatSpan(o.every))
+	}
+	for _, k := range splitList(o.event) {
+		if logview.Kind(k) != logview.KindReport {
+			return nil, fail(stderr, 2, "--event %s: --every aggregates reports only", k)
+		}
+	}
+	for _, c := range []struct {
+		set  bool
+		flag string
+	}{{o.changes, "--changes"}, {o.hideMasked, "--hide-masked"}, {o.rawValues, "--raw-values"}} {
+		if c.set {
+			return nil, fail(stderr, 2, "%s does not apply to --every", c.flag)
+		}
+	}
+	aggs, err := logview.ParseAggs(o.agg)
+	if err != nil {
+		return nil, fail(stderr, 2, "--agg: %v", err)
+	}
+	return aggs, 0
+}
+
+// bucketCols are the columns of events --every: each key with each
+// aggregate (plain keys with the default last). Without keys they are
+// pump and the XML keys of the first report; a text field then gets
+// only last.
+func bucketCols(keys []string, aggs []logview.Agg, aggGiven bool, sc scanned, cat *logview.Catalog, stderr io.Writer) ([]logview.BucketCol, int) {
+	implied := len(keys) == 0
+	if implied {
+		keys = []string{"pump"}
+		if sc.first != nil {
+			var err error
+			if keys, err = logview.ReportKeys(sc.first); err != nil {
+				return nil, fail(stderr, 1, "%v", err)
+			}
+		}
+	} else if code := checkStats("--fields", keys, aggs, sc.specs, cat, stderr); code != 0 {
+		return nil, code
+	}
+	last := logview.Agg{Name: "last"}
+	var cols []logview.BucketCol
+	for _, k := range keys {
+		switch {
+		case !aggGiven:
+			cols = append(cols, logview.BucketCol{Key: k, Agg: last, Plain: true})
+		case implied && isTextKey(k, sc.specs, cat):
+			cols = append(cols, logview.BucketCol{Key: k, Agg: last})
+		default:
+			for _, a := range aggs {
+				cols = append(cols, logview.BucketCol{Key: k, Agg: a})
+			}
+		}
+	}
+	return cols, 0
+}
+
+// eventsEvery streams the input into buckets and writes them.
+func eventsEvery(paths []string, cat *logview.Catalog, sc scanned, sel logview.Selection, o eventsOpts,
+	cols []logview.BucketCol, byRun bool, f logview.Format, stdout, stderr io.Writer,
+) int {
+	out := bufio.NewWriter(stdout)
+	w := logview.NewBucketWriter(out, f, cols, byRun, time.Local)
+	b := logview.NewBucketer(o.every, cols, byRun)
+	write := func(rows []logview.BucketRow) error {
+		for _, r := range rows {
+			if err := w.Write(r); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	selector := logview.NewSelector(sc.runs, sel)
+	problems := sc.problems
+	var err error
+	if !byRun || len(sel.Runs) > 0 || len(sel.RunKinds) > 0 { // --run naming no run prints nothing
+		s := logview.Stream{
+			Catalog: cat,
+			OnSource: func(si logview.SourceInfo) error {
+				return write(b.Source(si))
+			},
+			OnEntry: func(e *logview.Entry) error {
+				for _, r := range selector.SelectAll(e) {
+					if err := write(b.Add(r)); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		}
+		err = s.Add(paths...)
+		problems = s.Problems
+	}
+	if err == nil {
+		err = write(b.Close())
+	}
+	if cerr := w.Close(); err == nil {
+		err = cerr
+	}
+	if ferr := out.Flush(); err == nil {
+		err = ferr
+	}
+	warn(stderr, problems)
+	warn(stderr, sc.warns)
+	warn(stderr, b.Missing())
+	if err != nil {
+		return fail(stderr, 1, "%v", err)
+	}
+	return 0
 }

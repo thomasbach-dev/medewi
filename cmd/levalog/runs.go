@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"io"
-	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -44,7 +43,7 @@ func runsCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
-	statKeys := splitList(stats)
+	statKeys := dedup(splitList(stats))
 	if fs.Changed("agg") && len(statKeys) == 0 {
 		return fail(stderr, 2, "--agg needs --stats")
 	}
@@ -74,7 +73,7 @@ func runsCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	runs := slices.DeleteFunc(sc.runs, func(r logview.Run) bool { return !keep(r) })
 	opt := logview.RunsOptions{Loc: time.Local}
 	if len(statKeys) > 0 {
-		if code := checkStats(statKeys, aggs, sc.specs, cat, stderr); code != 0 {
+		if code := checkStats("--stats", statKeys, aggs, sc.specs, cat, stderr); code != 0 {
 			return code
 		}
 		opt.Stats = logview.NewRunStats(runs, statKeys, aggs)
@@ -102,9 +101,9 @@ func runsCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// checkStats validates the --stats keys: report fields of the input's XML
-// or pump, and no numeric aggregate on a text field.
-func checkStats(keys []string, aggs []logview.Agg, specs map[*leva.RecordSpec]bool, cat *logview.Catalog, stderr io.Writer) int {
+// checkStats validates the keys of flag (--stats, --fields): report fields
+// of the input's XML or pump, and no numeric aggregate on a text field.
+func checkStats(flag string, keys []string, aggs []logview.Agg, specs map[*leva.RecordSpec]bool, cat *logview.Catalog, stderr io.Writer) int {
 	var bad []string
 	for _, k := range keys {
 		if k != "pump" && isMedewiKey(k) {
@@ -113,18 +112,10 @@ func checkStats(keys []string, aggs []logview.Agg, specs map[*leva.RecordSpec]bo
 	}
 	bad = append(bad, unknownKeys(keys, specs, cat)...)
 	if len(bad) > 0 {
-		return fail(stderr, 2, "--stats: unknown report fields %s (see levalog fields)", strings.Join(bad, ", "))
-	}
-	all := maps.Clone(specs)
-	if spec, _ := cat.Lookup(""); spec != nil {
-		all[spec] = true
+		return fail(stderr, 2, "%s: unknown report fields %s (see levalog fields)", flag, strings.Join(bad, ", "))
 	}
 	for _, k := range keys {
-		text := k == "pump"
-		for spec := range all {
-			text = text || logview.IsTextKey(spec, k)
-		}
-		if !text {
+		if !isTextKey(k, specs, cat) {
 			continue
 		}
 		for _, a := range aggs {
@@ -134,4 +125,30 @@ func checkStats(keys []string, aggs []logview.Agg, specs map[*leva.RecordSpec]bo
 		}
 	}
 	return 0
+}
+
+// isTextKey reports whether key is a text field in any of specs or the
+// catalog's default spec.
+func isTextKey(key string, specs map[*leva.RecordSpec]bool, cat *logview.Catalog) bool {
+	if key == "pump" {
+		return true
+	}
+	for spec := range specs {
+		if logview.IsTextKey(spec, key) {
+			return true
+		}
+	}
+	spec, _ := cat.Lookup("")
+	return spec != nil && logview.IsTextKey(spec, key)
+}
+
+// dedup drops repeated keys, keeping the first.
+func dedup(keys []string) []string {
+	var out []string
+	for _, k := range keys {
+		if !slices.Contains(out, k) {
+			out = append(out, k)
+		}
+	}
+	return out
 }
