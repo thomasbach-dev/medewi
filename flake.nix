@@ -151,7 +151,10 @@
 
       # `levalog` in the dev shell always runs the working tree's code: it
       # builds ./cmd/levalog from the repo root into a cache, then execs it
-      # with the caller's arguments and working directory.
+      # with the caller's arguments and working directory. The cache is
+      # keyed on the repo path, so worktrees do not overwrite each other's
+      # binary, and the build goes to a temporary file moved into place, so
+      # a concurrent call never execs a half-written one.
       devShells.${system}.default =
         let
           levalogDev = pkgs.writeShellScriptBin "levalog" ''
@@ -161,9 +164,17 @@
               echo "levalog: medewi repo not found (run from it, or set MEDEWI_REPO)" >&2
               exit 1
             fi
-            bin=''${XDG_CACHE_HOME:-$HOME/.cache}/medewi/levalog
-            ${pkgs.go}/bin/go build -C "$repo" -o "$bin" ./cmd/levalog || exit 1
-            exec "$bin" "$@"
+            key=$(printf '%s' "$repo" | ${pkgs.coreutils}/bin/sha256sum | ${pkgs.coreutils}/bin/cut -c1-12)
+            cache=''${XDG_CACHE_HOME:-$HOME/.cache}/medewi/$key
+            ${pkgs.coreutils}/bin/mkdir -p "$cache" || exit 1
+            tmp=$(${pkgs.coreutils}/bin/mktemp -d "$cache/build.XXXXXX") || exit 1
+            if ! ${pkgs.go}/bin/go build -C "$repo" -o "$tmp/levalog" ./cmd/levalog; then
+              ${pkgs.coreutils}/bin/rm -rf "$tmp"
+              exit 1
+            fi
+            ${pkgs.coreutils}/bin/mv -f "$tmp/levalog" "$cache/levalog"
+            ${pkgs.coreutils}/bin/rmdir "$tmp"
+            exec "$cache/levalog" "$@"
           '';
         in
         pkgs.mkShell {
