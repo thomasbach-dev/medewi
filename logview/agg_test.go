@@ -228,3 +228,16 @@ func TestAccTimesMarked(t *testing.T) {
 		t.Errorf("csv tmax = %q, want 2", got)
 	}
 }
+
+// On ties, tmin/tmax and srcmin/srcmax name the first occurrence.
+func TestAccTiesFirst(t *testing.T) {
+	c := fill(2, 1, 3, 1, 3)
+	wantNum(t, c, "tmin", 2)
+	wantNum(t, c, "tmax", 3)
+	if s := res(t, c, "srcmin").Str; s == nil || *s != "f:2" {
+		t.Errorf("srcmin = %v, want f:2", s)
+	}
+	if s := res(t, c, "srcmax").Str; s == nil || *s != "f:3" {
+		t.Errorf("srcmax = %v, want f:3", s)
+	}
+}

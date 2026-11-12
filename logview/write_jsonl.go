@@ -56,24 +56,32 @@ type jsonWriter struct {
 	w io.Writer
 }
 
+// want reports whether optional column k is shown; idColumns, event and
+// glued always are.
 func (j *jsonWriter) want(k string) bool {
-	return len(j.opt.Fields) == 0 || k == "src" || k == "event" || slices.Contains(j.opt.Fields, k)
+	return len(j.opt.Fields) == 0 || slices.Contains(j.opt.Fields, k)
 }
 
 func (j *jsonWriter) Write(r Row) error {
 	e := r.Entry
 	var o jsonObj
-	if j.want("t") {
-		o.raw("t", seconds(e.Offset))
-	}
-	if j.want("wall") {
-		if e.HasWall {
-			o.str("wall", utcWall(e.Wall))
-		} else {
-			o.raw("wall", "null")
-		}
+	o.raw("t", seconds(e.Offset))
+	if e.HasWall {
+		o.str("wall", utcWall(e.Wall))
+	} else {
+		o.raw("wall", "null")
 	}
 	o.str("src", srcRef(e.Path, e.Src))
+	if r.Run != nil {
+		o.raw("run", strconv.Itoa(r.Run.N))
+	} else {
+		o.raw("run", "null")
+	}
+	if r.RunT != nil {
+		o.raw("run_t", seconds(*r.RunT))
+	} else {
+		o.raw("run_t", "null")
+	}
 	if j.want("src_end") {
 		if e.SrcEnd != e.Src {
 			o.str("src_end", srcRef(e.Path, e.SrcEnd))
@@ -86,20 +94,6 @@ func (j *jsonWriter) Write(r Row) error {
 	}
 	o.str("event", string(e.Kind))
 	o.raw("glued", strconv.FormatBool(e.Glued)) // always, so keys never shift
-	if j.want("run") {
-		if r.Run != nil {
-			o.raw("run", strconv.Itoa(r.Run.N))
-		} else {
-			o.raw("run", "null")
-		}
-	}
-	if j.want("run_t") {
-		if r.RunT != nil {
-			o.raw("run_t", seconds(*r.RunT))
-		} else {
-			o.raw("run_t", "null")
-		}
-	}
 	if j.want("xml") {
 		o.strOrNull("xml", e.XML)
 	}

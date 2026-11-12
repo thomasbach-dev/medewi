@@ -204,7 +204,7 @@ func TestJSONLReport(t *testing.T) {
 	if m["run"] != 1.0 || m["run_t"] != 0.25 || m["event"] != "report" || m["glued"] != false || m["xml"] != "x1" || m["field_4"] != "SOAK" {
 		t.Errorf("medewi: %v", m)
 	}
-	if !strings.HasPrefix(out, `{"t":712.3,"wall":"2026-11-10T07:58:12.300Z","src":"p:3","src_end":null,"dir":"rx","event":"report","glued":false,"run":1,"run_t":0.25,"xml":"x1","pump":true,"mode":"PID",`) {
+	if !strings.HasPrefix(out, `{"t":712.3,"wall":"2026-11-10T07:58:12.300Z","src":"p:3","run":1,"run_t":0.25,"src_end":null,"dir":"rx","event":"report","glued":false,"xml":"x1","pump":true,"mode":"PID",`) {
 		t.Errorf("key order: %s", out)
 	}
 }
@@ -253,8 +253,15 @@ func TestJSONLFields(t *testing.T) {
 	out, _ := writeRows(t, FormatJSONL, WriterOptions{Fields: []string{"pressure"}},
 		Row{Entry: wReport(t, '*', " 9.00", "?????", "")})
 	m := decodeJSON(t, out)
-	if len(m) != 4 || m["src"] != "p:3" || m["event"] != "report" || m["glued"] != false || m["pressure"] != 9.0 {
+	if len(m) != 8 || m["src"] != "p:3" || m["event"] != "report" || m["glued"] != false || m["pressure"] != 9.0 {
 		t.Errorf("got %v", m)
+	}
+	// The identifying columns lead, also when --fields names them, once.
+	out, _ = writeRows(t, FormatJSONL, WriterOptions{Fields: []string{"pressure", "run_t", "t"}},
+		Row{Entry: wReport(t, '*', " 9.00", "?????", "")})
+	want := `{"t":712.3,"wall":"2026-11-10T07:58:12.300Z","src":"p:3","run":null,"run_t":null,"event":"report","glued":false,"pressure":9}` + "\n"
+	if out != want {
+		t.Errorf("got %s\nwant %s", out, want)
 	}
 }
 
@@ -275,7 +282,8 @@ func TestCSVHeaderAndRows(t *testing.T) {
 		Row{Entry: &note},
 		Row{Entry: wReport(t, '*', " 9.00", "?????", ""), Run: run, RunT: &rt},
 		Row{Entry: wReport(t, '-', " 1.50", "?????", "")})
-	want := "run_t,pump,pressure,pressure_sp\n0.5,1,9,\n,0,1.5,\n"
+	want := "t,wall,src,run,run_t,pump,pressure,pressure_sp\n" +
+		"712.3,2026-11-10T07:58:12.300Z,p:3,1,0.5,1,9,\n712.3,2026-11-10T07:58:12.300Z,p:3,,,0,1.5,\n"
 	if out != want {
 		t.Errorf("got %q\nwant %q", out, want)
 	}
@@ -283,7 +291,7 @@ func TestCSVHeaderAndRows(t *testing.T) {
 
 func TestCSVDefaultHeader(t *testing.T) {
 	out, _ := writeRows(t, FormatCSV, WriterOptions{}, Row{Entry: wReport(t, '?', " 9.00", " 9.00", "a,b")})
-	want := "t,wall,src,src_end,run,run_t,pump,mode,temperature_pid1,pressure,pressure_sp,field_4\n" +
+	want := "t,wall,src,run,run_t,src_end,pump,mode,temperature_pid1,pressure,pressure_sp,field_4\n" +
 		"712.3,2026-11-10T07:58:12.300Z,p:3,,,,,PID,93.5,9,9,\"a,b\"\n"
 	if out != want {
 		t.Errorf("got %q\nwant %q", out, want)
@@ -318,7 +326,8 @@ func TestCSVMissingKeyAndSkips(t *testing.T) {
 	out, w := writeRows(t, FormatCSV, WriterOptions{Fields: []string{"pressure", "temperature_pid1"}},
 		Row{Entry: wReport(t, '-', " 9.00", "?????", "")}, Row{Entry: &other}, Row{Entry: &other},
 		Row{Entry: &bad}, Row{Entry: &raw}, Row{Entry: &raw})
-	if want := "pressure,temperature_pid1\n9,93.5\n1,\n1,\n"; out != want {
+	if want := "t,wall,src,run,run_t,pressure,temperature_pid1\n712.3,2026-11-10T07:58:12.300Z,p:3,,,9,93.5\n" +
+		"0,,:0,,,1,\n0,,:0,,,1,\n"; out != want {
 		t.Errorf("got %q\nwant %q", out, want)
 	}
 	want := []string{
@@ -340,8 +349,8 @@ func TestCSVLatin1Valid(t *testing.T) {
 }
 
 func TestCSVEmpty(t *testing.T) {
-	out, _ := writeRows(t, FormatCSV, WriterOptions{Fields: []string{"t", "pressure"}})
-	if out != "t,pressure\n" {
+	out, _ := writeRows(t, FormatCSV, WriterOptions{Fields: []string{"pressure", "t"}})
+	if out != "t,wall,src,run,run_t,pressure\n" {
 		t.Errorf("got %q", out)
 	}
 }
@@ -494,7 +503,7 @@ func TestRunTNoNegativeZero(t *testing.T) {
 		t.Errorf("jsonl: %s", out)
 	}
 	out, _ = writeRows(t, FormatCSV, WriterOptions{Fields: []string{"run_t"}}, r)
-	if out != "run_t\n0\n" {
+	if out != "t,wall,src,run,run_t\n712.3,2026-11-10T07:58:12.300Z,p:3,1,0\n" {
 		t.Errorf("csv: %q", out)
 	}
 }
@@ -522,7 +531,7 @@ func TestWriteRunsDefaultText(t *testing.T) {
 func TestWriteRunsStats(t *testing.T) {
 	l, runs := twoShots(t)
 	aggs, _ := ParseAggs("n,max")
-	st := NewRunStats(runs, []string{"pressure"}, aggs)
+	st := NewRunStats(runs, []string{"pressure"}, [][]Agg{aggs})
 	// Run 2 gets no values: n 0, max empty.
 	for i := range l.Entries {
 		if l.Entries[i].Index < 20 {

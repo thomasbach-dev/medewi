@@ -70,11 +70,14 @@ func runsCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	}
 	runs := slices.DeleteFunc(sc.runs, func(r logview.Run) bool { return !keep(r) })
 	opt := logview.RunsOptions{Loc: time.Local}
+	var textNotes []string
 	if len(statKeys) > 0 {
-		if code := checkStats("--stats", statKeys, aggs, sc.specs, cat, stderr); code != 0 {
+		if code := checkStats("--stats", statKeys, sc.specs, cat, stderr); code != 0 {
 			return code
 		}
-		opt.Stats = logview.NewRunStats(runs, statKeys, aggs)
+		var keyAggs [][]logview.Agg
+		keyAggs, textNotes = aggsPerKey(statKeys, aggs, sc.specs, cat)
+		opt.Stats = logview.NewRunStats(runs, statKeys, keyAggs)
 		s := logview.Stream{Catalog: cat, OnEntry: func(e *logview.Entry) error {
 			opt.Stats.Entry(e)
 			return nil
@@ -91,6 +94,7 @@ func runsCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	warn(stderr, in.notes)
 	warn(stderr, sc.problems)
 	warn(stderr, sc.warns)
+	warn(stderr, textNotes)
 	if opt.Stats != nil {
 		warn(stderr, opt.Stats.Missing())
 	}
@@ -128,8 +132,8 @@ func noRuns(sc scanned, kinds []logview.RunKind) string {
 }
 
 // checkStats validates the keys of flag (--stats, --fields): report fields
-// of the input's XML or pump, and no numeric aggregate on a text field.
-func checkStats(flag string, keys []string, aggs []logview.Agg, specs map[*leva.RecordSpec]bool, cat *logview.Catalog, stderr io.Writer) int {
+// of the input's XML, or pump.
+func checkStats(flag string, keys []string, specs map[*leva.RecordSpec]bool, cat *logview.Catalog, stderr io.Writer) int {
 	var bad []string
 	for _, k := range keys {
 		if k != "pump" && isMedewiKey(k) {
@@ -140,17 +144,23 @@ func checkStats(flag string, keys []string, aggs []logview.Agg, specs map[*leva.
 	if len(bad) > 0 {
 		return fail(stderr, 2, "%s: unknown report fields %s (see levalog fields)", flag, strings.Join(bad, ", "))
 	}
+	return 0
+}
+
+// aggsPerKey returns the aggregates of each key: aggs, except that a text
+// field gets only last when aggs holds a numeric aggregate. notes names
+// each such field, for after the output.
+func aggsPerKey(keys []string, aggs []logview.Agg, specs map[*leva.RecordSpec]bool, cat *logview.Catalog) (perKey [][]logview.Agg, notes []string) {
+	numeric := slices.ContainsFunc(aggs, logview.Agg.Numeric)
 	for _, k := range keys {
-		if !isTextKey(k, specs, cat) {
+		if numeric && isTextKey(k, specs, cat) {
+			perKey = append(perKey, []logview.Agg{{Name: "last"}})
+			notes = append(notes, fmt.Sprintf("%s is text: only %s_last", k, k))
 			continue
 		}
-		for _, a := range aggs {
-			if a.Numeric() {
-				return fail(stderr, 2, "--agg %s: %s is a text field (n, first and last only)", a.Name, k)
-			}
-		}
+		perKey = append(perKey, aggs)
 	}
-	return 0
+	return perKey, notes
 }
 
 // isTextKey reports whether key is a text field in any of specs or the

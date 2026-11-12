@@ -38,19 +38,26 @@ with a note). Without FILE or DIR, the raw logs in
 10:40", "10:40", "-5min", "yesterday", with an optional " UTC"; they need
 raw logs. --format is text (default), jsonl or csv. fields lists the XML in
 effect at the end of the input (with --xml FILE and no readable input, that
-file). runs numbers the runs that start in the window, from 1; events
---run N names the same run. Run detection also reads the raw log just before
-and after the window, and a selected run is printed whole.
+file). runs numbers the runs that start in the window, from 1, counting
+over the whole input given; events --run N with the same input names the
+same run, so to address a run of one capture, pass that capture. Run
+detection also reads the raw log just before and after the window, and a
+selected run is printed whole.
 
 runs prints RUN KIND START T DURATION PEAK_BAR VOLUME_ML TRUNCATED XML SRC,
-all of the run's first sample (START is empty for captures, PEAK_BAR for
-draws). runs --stats KEYS [--agg LIST] appends key_agg columns aggregated
-over the non-standby reports of each run window (first to last sample).
---agg takes n, first, last, min, max, mean, median, pNN, sd, tmin, tmax,
-srcmin, srcmax (default n,min,max,mean for runs); tmin/tmax are the run_t of
-the minimum/maximum, srcmin/srcmax its src, and n counts the unmasked
-values. events --margin SPAN (default 0) widens each run window on both
-sides and needs --run or --run-kind.
+all of the run's first sample (PEAK_BAR is empty for draws). START is its
+wall time; for a capture, the manifest's recorded time (taken when levacap
+wrote it, just after its last event) less the time from the run to the
+capture's last event; empty for a capture without one. runs --stats KEYS
+[--agg LIST] appends key_agg columns aggregated over the non-standby
+reports of each run window (first to last sample). --agg takes n, first,
+last, min, max, mean, median, pNN, sd, tmin, tmax, srcmin, srcmax (default
+n,min,max,mean for runs); tmin/tmax are the run_t of the minimum/maximum,
+srcmin/srcmax its src, each of the first occurrence on ties, and n counts
+the unmasked values. A text field (pump, mode, ...) named with a numeric
+aggregate gets only key_last and a note, here and in events --every.
+events --margin SPAN (default 0) widens each run window on both sides and
+needs --run or --run-kind.
 
 events --every SPAN [--agg LIST] prints one row per bucket of SPAN instead:
 t (bucket start), wall, src (jsonl and csv: the source path), run and run_t
@@ -69,9 +76,11 @@ events text: T WALL DIR EVENT, then RUN RUN_T with --run/--run-kind, then
 src=, src_end=, xml= when --fields names them, then report fields as
 key=value (pump and mode first) or the line's text. Comment lines: "# PATH"
 when the source changes, followed by "# notes: ..." for a capture with
-manifest notes, and "# xml: NAME" when the XML changes. jsonl: one object
-per event, always with src, event and glued (also with --fields); csv:
-reports only, with a header row.
+manifest notes, and "# xml: NAME" when the XML changes. --fields selects
+the data columns; csv and jsonl always start with t wall src run run_t
+(run and run_t empty or null outside a run window), naming them in
+--fields does not repeat them. jsonl: one object per event, always with
+event and glued too; csv: reports only, with a header row.
 
 Columns medewi adds; everything after them is the machine's data (report
 fields from the XML, frame fields, or the raw text of other lines):
@@ -107,7 +116,7 @@ Examples:
   levalog runs --kind shot --stats pressure --agg max,tmax,srcmax  # peak, when, where
   levalog events --run 2 --every 1s --fields pressure,pressure_sp  # a shot per second
   levalog events --every 60s --agg min,max --fields temperature_pid1,heat_pid_average  # warm-up
-  levalog events --run 2 --format csv --fields run_t,pressure | awk -F, 'NR>1 && $2>=8.5{print $1; exit}'  # time to 8.5 bar`)
+  levalog events --run 2 --format csv --fields pressure | awk -F, 'NR>1 && $6>=8.5{print $5; exit}'  # time to 8.5 bar`)
 }
 
 // envOr returns the first non-empty environment variable of keys, else def.

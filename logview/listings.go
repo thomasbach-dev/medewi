@@ -106,8 +106,8 @@ type RunsOptions struct {
 
 // WriteRuns lists runs: RUN KIND START T DURATION PEAK_BAR VOLUME_ML
 // TRUNCATED XML SRC, all of the run's first sample, then the Stats
-// columns (lowercase also in text). START is the wall time in Loc (text)
-// or UTC (jsonl, csv), absent for captures.
+// columns (lowercase also in text). START is Run.Start in Loc (text) or
+// UTC (jsonl, csv), absent when unknown.
 func WriteRuns(w io.Writer, f Format, runs []Run, opt RunsOptions) error {
 	loc := opt.Loc
 	if loc == nil {
@@ -132,10 +132,10 @@ func WriteRuns(w io.Writer, f Format, runs []Run, opt RunsOptions) error {
 	for _, r := range runs {
 		e := r.First
 		start, peak := "", ""
-		if e.HasWall {
-			start = utcWall(e.Wall)
+		if !r.Start.IsZero() {
+			start = utcWall(r.Start)
 			if tw != nil {
-				start = e.Wall.In(loc).Format(wallLayout)
+				start = r.Start.In(loc).Format(wallLayout)
 			}
 		}
 		if r.PeakBar != nil {

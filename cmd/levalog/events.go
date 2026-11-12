@@ -71,7 +71,7 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	fs.Var(systime.NewSpan(&o.margin), "margin", "widen each run window on both sides (systemd.time span, default 0; needs --run or --run-kind)")
 	fs.StringVar(&o.event, "event", "", "only these event kinds, comma-separated: "+kindList())
 	fs.BoolVar(&o.skipStandby, "skip-standby", false, "drop reports whose pump marker is ?")
-	fs.StringVar(&o.fields, "fields", "", "only these columns, by key (see levalog fields), in this order")
+	fs.StringVar(&o.fields, "fields", "", "only these data columns, by key (see levalog fields), in this order; csv/jsonl always start with t wall src run run_t")
 	fs.BoolVar(&o.hideMasked, "hide-masked", false, "text: omit masked report fields")
 	fs.BoolVar(&o.changes, "changes", false, "print a report only when a projected report field changed (each run window starts anew)")
 	fs.BoolVar(&o.rawValues, "raw-values", false, "print the raw substrings instead of parsed values")
@@ -193,11 +193,11 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		}
 	}
 	if every {
-		cols, code := bucketCols(keys, aggs, aggGiven, sc, cat, stderr)
+		cols, textNotes, code := bucketCols(keys, aggs, aggGiven, sc, cat, stderr)
 		if code != 0 {
 			return code
 		}
-		return eventsEvery(paths, cat, sc, sel, o, cols, byRun, in.f, in.notes, noRun, stdout, stderr)
+		return eventsEvery(paths, cat, sc, sel, o, cols, byRun, in.f, append(in.notes, textNotes...), noRun, stdout, stderr)
 	}
 
 	out := bufio.NewWriter(stdout)
@@ -362,32 +362,36 @@ func checkEvery(o *eventsOpts, every, aggGiven bool, stderr io.Writer) ([]logvie
 // bucketCols are the columns of events --every: each key with each
 // aggregate (plain keys with the default last). Without keys they are
 // pump and the XML keys of the input's reports; a text field then gets
-// only last.
-func bucketCols(keys []string, aggs []logview.Agg, aggGiven bool, sc scanned, cat *logview.Catalog, stderr io.Writer) ([]logview.BucketCol, int) {
+// only last, and so does a named one when --agg holds a numeric
+// aggregate (notes says so).
+func bucketCols(keys []string, aggs []logview.Agg, aggGiven bool, sc scanned, cat *logview.Catalog, stderr io.Writer) (cols []logview.BucketCol, notes []string, code int) {
 	implied := len(keys) == 0
 	if implied {
 		var err error
 		if keys, err = logview.ReportKeys(sc.specOrder...); err != nil {
-			return nil, fail(stderr, 1, "%v", err)
+			return nil, nil, fail(stderr, 1, "%v", err)
 		}
-	} else if code := checkStats("--fields", keys, aggs, sc.specs, cat, stderr); code != 0 {
-		return nil, code
+	} else if code := checkStats("--fields", keys, sc.specs, cat, stderr); code != 0 {
+		return nil, nil, code
 	}
 	last := logview.Agg{Name: "last"}
-	var cols []logview.BucketCol
-	for _, k := range keys {
+	perKey, notes := aggsPerKey(keys, aggs, sc.specs, cat)
+	if implied { // implied text fields get last without a note
+		notes = nil
+	}
+	for i, k := range keys {
 		switch {
 		case !aggGiven:
 			cols = append(cols, logview.BucketCol{Key: k, Agg: last, Plain: true})
 		case implied && isTextKey(k, sc.specs, cat):
 			cols = append(cols, logview.BucketCol{Key: k, Agg: last})
 		default:
-			for _, a := range aggs {
+			for _, a := range perKey[i] {
 				cols = append(cols, logview.BucketCol{Key: k, Agg: a})
 			}
 		}
 	}
-	return cols, 0
+	return cols, notes, 0
 }
 
 // eventsEvery streams the input into buckets and writes them.

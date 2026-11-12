@@ -56,6 +56,10 @@ type Run struct {
 	PeakBar     *float64 // nil for draws
 	VolumeML    float64
 	XML         string // session XML of the first sample
+	// Start is the wall time of First: its Wall in a raw log; in a
+	// capture estimated from the manifest's recorded time, which levacap
+	// takes just after the last event. Zero when unknown.
+	Start time.Time
 }
 
 // RunFinder finds runs in a decoded input, entry by entry: it feeds every
@@ -158,7 +162,7 @@ func (f *RunFinder) feed(e *Entry) {
 		f.close(*res.Closed, false)
 	}
 	if res.Opened {
-		f.cur = &Run{First: p, XML: e.XML}
+		f.cur = &Run{First: p, XML: e.XML, Start: f.startOf(p)}
 	}
 	if len(res.Points) > 0 && f.cur != nil {
 		f.cur.Last = p
@@ -167,6 +171,18 @@ func (f *RunFinder) feed(e *Entry) {
 		// A draw starts at a later sample, if at all.
 		f.fed = f.fed[:0]
 	}
+}
+
+// startOf is the wall time of p, a point of the current source (see
+// Run.Start).
+func (f *RunFinder) startOf(p Point) time.Time {
+	switch {
+	case p.HasWall:
+		return p.Wall
+	case f.src.Recorded.IsZero() || p.Source != f.src.Index:
+		return time.Time{}
+	}
+	return f.src.Recorded.Add(p.Offset - f.src.Last)
 }
 
 // draw records a finished wand draw, placed on the first fed samples at its
@@ -179,7 +195,7 @@ func (f *RunFinder) draw(w brew.WaterDraw) {
 		}
 		if first >= 0 && s.at.Equal(w.EndedAt) {
 			r := Run{Kind: RunDraw, First: f.fed[first].p, Last: s.p, Duration: w.Duration, VolumeML: w.VolumeML}
-			r.XML = f.fed[first].xml
+			r.XML, r.Start = f.fed[first].xml, f.startOf(r.First)
 			f.runs = append(f.runs, r)
 			break
 		}

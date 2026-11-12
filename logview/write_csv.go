@@ -7,8 +7,23 @@ import (
 	"strconv"
 )
 
+// idColumns are the columns that lead every csv and jsonl row of events,
+// whatever --fields says: where the line is and which run holds it.
+var idColumns = []string{"t", "wall", "src", "run", "run_t"}
+
 // csvMedewi are the medewi columns CSV prints before the report fields.
-var csvMedewi = []string{"t", "wall", "src", "src_end", "run", "run_t", "pump"}
+var csvMedewi = append(slices.Clone(idColumns), "src_end", "pump")
+
+// csvHeader is the header for fields: idColumns, then fields without them.
+func csvHeader(fields []string) []string {
+	h := slices.Clone(idColumns)
+	for _, k := range fields {
+		if !slices.Contains(h, k) {
+			h = append(h, k)
+		}
+	}
+	return h
+}
 
 type csvWriter struct {
 	base
@@ -35,8 +50,8 @@ func (c *csvWriter) Write(r Row) error {
 		return err
 	}
 	if c.header == nil {
-		c.header = c.opt.Fields
-		if len(c.header) == 0 {
+		c.header = csvHeader(c.opt.Fields)
+		if len(c.opt.Fields) == 0 {
 			c.header = append(slices.Clone(csvMedewi), sc.keys...)
 			c.set = sc.set
 		}
@@ -105,8 +120,8 @@ func (c *csvWriter) cell(r Row, sc *specCols, k string) string {
 
 func (c *csvWriter) Close() error {
 	if c.header == nil {
-		h := c.opt.Fields
-		if len(h) == 0 {
+		h := csvHeader(c.opt.Fields)
+		if len(c.opt.Fields) == 0 {
 			h = csvMedewi
 		}
 		if err := c.cw.Write(h); err != nil {

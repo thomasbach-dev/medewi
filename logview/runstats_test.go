@@ -61,7 +61,7 @@ func TestRunStatsPerRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := NewRunStats(runs, []string{"pressure"}, aggs)
+	s := NewRunStats(runs, []string{"pressure"}, [][]Agg{aggs})
 	feed(s, l)
 	if h := strings.Join(s.Header(), " "); h != "pressure_n pressure_max pressure_tmax pressure_srcmax" {
 		t.Errorf("header %q", h)
@@ -94,14 +94,14 @@ func TestRunStatsMaskedAndStandby(t *testing.T) {
 	standby.Raw[2] = '?'
 
 	aggs, _ := ParseAggs("n,max")
-	s := NewRunStats(runs, []string{"pressure"}, aggs)
+	s := NewRunStats(runs, []string{"pressure"}, [][]Agg{aggs})
 	feed(s, l)
 	if got := strings.Join(aggStrings(s.Values(1)), " "); got != "1 1" {
 		t.Errorf("run 1 = %q, want only the 1 bar report", got)
 	}
 
 	// All values masked: n is 0, max empty.
-	s = NewRunStats(runs, []string{"pressure"}, aggs)
+	s = NewRunStats(runs, []string{"pressure"}, [][]Agg{aggs})
 	for i := range l.Entries {
 		if i != 4 {
 			s.Entry(&l.Entries[i])
@@ -118,7 +118,7 @@ func TestRunStatsMissingKey(t *testing.T) {
 	in := l.Entries[5]
 	in.Source, in.Path, in.Record, in.Spec, in.XML = 1, "raw1", nil, nil, ""
 	aggs, _ := ParseAggs("n")
-	s := NewRunStats(runs, []string{"pressure"}, aggs)
+	s := NewRunStats(runs, []string{"pressure"}, [][]Agg{aggs})
 	feed(s, l)
 	s.Entry(&in)
 	if got := aggStrings(s.Values(1)); got[0] != "3" {

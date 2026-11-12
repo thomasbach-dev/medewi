@@ -650,7 +650,7 @@ func TestEventsCSV(t *testing.T) {
 	if code != 0 || errs != "" {
 		t.Fatalf("exit %d, stderr %q", code, errs)
 	}
-	want := "t,wall,src,pump,temperature_pid1,heat_pid\n10,2026-11-10T10:00:10.000Z," + files[0] + ":3,1,93.5,50\n"
+	want := "t,wall,src,run,run_t,pump,temperature_pid1,heat_pid\n10,2026-11-10T10:00:10.000Z," + files[0] + ":3,1,0,1,93.5,50\n"
 	if out != want {
 		t.Errorf("csv:\n got %q\nwant %q", out, want)
 	}
@@ -735,12 +735,12 @@ func TestEventsFixtureCSV(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q", code, errs)
 	}
 	lines := strings.Split(out, "\n")
-	if len(lines) < 3 || lines[0] != "run_t,pump,pressure" {
+	if len(lines) < 3 || lines[0] != "t,wall,src,run,run_t,pump,pressure" {
 		t.Fatalf("csv:\n%s", out[:min(len(out), 300)])
 	}
 	row := strings.Split(lines[1], ",")
-	if row[0] != "0" || row[1] != "1" {
-		t.Errorf("first row = %q, want run_t 0 and pump 1", lines[1])
+	if row[3] != "2" || row[4] != "0" || row[5] != "1" {
+		t.Errorf("first row = %q, want run 2, run_t 0 and pump 1", lines[1])
 	}
 }
 
@@ -939,6 +939,30 @@ func TestRunsStats(t *testing.T) {
 	}
 }
 
+// A capture's run START is placed by the manifest's recorded time, taken
+// when levacap wrote the capture, just after its last event.
+func TestRunsCaptureStart(t *testing.T) {
+	noEnv(t)
+	xml, capture := statsXML(t), statsCapture(t)
+	_, out, _ := runCmd(t, "--xml", xml, "runs", "--format", "csv", capture)
+	if row := strings.Split(strings.Split(out, "\n")[1], ","); row[2] != "" {
+		t.Errorf("no manifest: start %q, want empty", row[2])
+	}
+	m := `{"scenario":"shot","recorded":"2026-11-02T08:46:33.5+01:00"}`
+	if err := os.WriteFile(filepath.Join(capture, "manifest.json"), []byte(m), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Last event at 8.75 s, the run's first sample at 2 s.
+	code, out, errs := runCmd(t, "--xml", xml, "runs", "--format", "jsonl", capture)
+	if code != 0 || !strings.Contains(out, `"start":"2026-11-02T07:46:26.750Z","t":2,`) {
+		t.Errorf("exit %d, stderr %q\n%s", code, errs, out)
+	}
+	_, out, _ = runCmd(t, "--xml", xml, "runs", capture)
+	if !strings.Contains(out, " 2026-11-02 ") {
+		t.Errorf("text START without a date:\n%s", out)
+	}
+}
+
 func TestRunsStatsUsage(t *testing.T) {
 	noEnv(t)
 	xml, capture := statsXML(t), statsCapture(t)
@@ -951,8 +975,6 @@ func TestRunsStatsUsage(t *testing.T) {
 		{[]string{"--stats", "nosuch"}, 2, "levalog fields"},
 		{[]string{"--stats", "src"}, 2, "src"},
 		{[]string{"--stats", "pressure", "--agg", "avg"}, 2, "tmax"},
-		{[]string{"--stats", "mode", "--agg", "max"}, 2, "mode"},
-		{[]string{"--stats", "pump", "--agg", "mean"}, 2, "pump"},
 		{[]string{"--stats", "mode", "--agg", "last"}, 0, ""},
 	} {
 		args := append(append([]string{"--xml", xml, "runs"}, tc.args...), capture)
@@ -960,6 +982,18 @@ func TestRunsStatsUsage(t *testing.T) {
 		if code != tc.code || !strings.Contains(errs, tc.want) || (tc.code == 0 && errs != "") {
 			t.Errorf("%q: exit %d, stderr %q; want %d naming %q", tc.args, code, errs, tc.code, tc.want)
 		}
+	}
+	// A text field with a numeric aggregate gets only key_last, and a note.
+	code, out, errs := runCmd(t, "--xml", xml, "runs", "--format", "csv", "--stats", "pressure,pump,mode",
+		"--agg", "n,max", capture)
+	if code != 0 || errs != "levalog: pump is text: only pump_last\nlevalog: mode is text: only mode_last\n" {
+		t.Errorf("text with max: exit %d, stderr %q", code, errs)
+	}
+	if h := strings.SplitN(out, "\n", 2)[0]; !strings.HasSuffix(h, ",src,pressure_n,pressure_max,pump_last,mode_last") {
+		t.Errorf("text with max: header %q", h)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(out), ",12,9.5,*,PID") {
+		t.Errorf("text with max:\n%s", out)
 	}
 }
 
@@ -1070,7 +1104,6 @@ func TestEventsEveryUsage(t *testing.T) {
 		{[]string{"--every", "1s", "--event", "notice"}, "--event"},
 		{[]string{"--every", "1s", "--changes"}, "--changes"},
 		{[]string{"--agg", "max"}, "--every"},
-		{[]string{"--every", "1s", "--fields", "mode", "--agg", "max"}, "mode"},
 		{[]string{"--every", "0"}, "--every"},
 		{[]string{"--every", "1s", "--fields", "t"}, "t"},
 		{[]string{"--every", "1s", "--agg", "avg"}, "tmax"},
@@ -1089,6 +1122,15 @@ func TestEventsEveryUsage(t *testing.T) {
 	code, _, errs = runCmd(t, "--xml", xml, "events", "--every", "1s", "--event", "report", capture)
 	if code != 0 || errs != "" {
 		t.Errorf("--event report: exit %d, stderr %q", code, errs)
+	}
+	// A text field with a numeric aggregate gets only key_last, and a note.
+	code, out, errs := runCmd(t, "--xml", xml, "events", "--format", "csv", "--every", "10s",
+		"--fields", "mode,pressure", "--agg", "max", capture)
+	if code != 0 || errs != "levalog: mode is text: only mode_last\n" {
+		t.Errorf("mode with max: exit %d, stderr %q", code, errs)
+	}
+	if h := strings.SplitN(out, "\n", 2)[0]; h != "t,wall,src,reports,mode_last,pressure_max" {
+		t.Errorf("mode with max: header %q", h)
 	}
 }
 

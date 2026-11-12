@@ -9,7 +9,7 @@ import (
 // its first sample to its last (no margin).
 type RunStats struct {
 	keys    []string
-	aggs    []Agg
+	aggs    [][]Agg // per key
 	sel     *Selector
 	byRun   map[*Run]int // run -> index in accs
 	byN     map[int]int  // Run.N -> index in accs
@@ -18,8 +18,8 @@ type RunStats struct {
 }
 
 // NewRunStats returns a RunStats over runs (as RunFinder.Runs returns
-// them) for keys and aggs.
-func NewRunStats(runs []Run, keys []string, aggs []Agg) *RunStats {
+// them) for keys, with aggs[i] the aggregates of keys[i].
+func NewRunStats(runs []Run, keys []string, aggs [][]Agg) *RunStats {
 	s := &RunStats{
 		keys: keys, aggs: aggs,
 		byRun: map[*Run]int{}, byN: map[int]int{}, missing: map[string]int{},
@@ -31,7 +31,7 @@ func NewRunStats(runs []Run, keys []string, aggs []Agg) *RunStats {
 		s.byRun[&runs[i]], s.byN[runs[i].N] = i, i
 		s.accs[i] = make([]Acc, len(keys))
 		for j := range keys {
-			s.accs[i][j] = NewAcc(aggs)
+			s.accs[i][j] = NewAcc(aggs[j])
 		}
 	}
 	s.sel = NewSelector(runs, Selection{Runs: all})
@@ -61,9 +61,9 @@ func (s *RunStats) Entry(e *Entry) {
 
 // Header returns the column names, <key>_<agg>, keys first.
 func (s *RunStats) Header() []string {
-	out := make([]string, 0, len(s.keys)*len(s.aggs))
-	for _, k := range s.keys {
-		for _, a := range s.aggs {
+	var out []string
+	for i, k := range s.keys {
+		for _, a := range s.aggs[i] {
 			out = append(out, k+"_"+a.Name)
 		}
 	}
@@ -78,9 +78,9 @@ func (s *RunStats) Values(n int) []AggValue {
 	} else {
 		accs = make([]Acc, len(s.keys))
 	}
-	out := make([]AggValue, 0, len(s.keys)*len(s.aggs))
+	var out []AggValue
 	for i := range s.keys {
-		for _, a := range s.aggs {
+		for _, a := range s.aggs[i] {
 			out = append(out, accs[i].Result(a))
 		}
 	}
