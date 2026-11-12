@@ -94,7 +94,7 @@ func TestConformRefuses2323(t *testing.T) {
 
 func TestCaptureRefuses2323(t *testing.T) {
 	var out, errb bytes.Buffer
-	code := run([]string{"capture", "--scenario", "commands", "--addr", "127.0.0.1:2323", "--out", t.TempDir()}, strings.NewReader(""), &out, &errb)
+	code := run([]string{"capture", "--commands", "--addr", "127.0.0.1:2323", "--out", t.TempDir()}, strings.NewReader(""), &out, &errb)
 	if code != 1 || !strings.Contains(errb.String(), "2323") {
 		t.Errorf("exit %d stderr %q", code, errb.String())
 	}
@@ -109,11 +109,11 @@ func TestCaptureWritesLogAndManifest(t *testing.T) {
 	t.Setenv("MEDEWI_XML_PATH", xml)
 	dir := t.TempDir()
 	var out, errb bytes.Buffer
-	code := run([]string{"capture", "--scenario", "commands", "--addr", s.Addr().String(), "--out", dir}, strings.NewReader(""), &out, &errb)
+	code := run([]string{"capture", "--commands", "--addr", s.Addr().String(), "--out", dir}, strings.NewReader(""), &out, &errb)
 	if code != 0 {
 		t.Fatalf("exit %d stderr %s", code, errb.String())
 	}
-	f, err := os.Open(filepath.Join(dir, "commands", "log.jsonl"))
+	f, err := os.Open(filepath.Join(dir, "log.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestCaptureWritesLogAndManifest(t *testing.T) {
 	if rx == 0 {
 		t.Error("no rx events")
 	}
-	m, err := fixture.LoadManifest(filepath.Join(dir, "commands", "manifest.json"))
+	m, err := fixture.LoadManifest(filepath.Join(dir, "manifest.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,11 +155,19 @@ func TestCaptureStreamStopsOnEnter(t *testing.T) {
 	s := startSim(t, sim.Config{})
 	dir := t.TempDir()
 	var out, errb bytes.Buffer
-	code := run([]string{"capture", "--scenario", "stream", "--addr", s.Addr().String(), "--out", dir}, strings.NewReader("\n"), &out, &errb)
+	code := run([]string{"capture", "--addr", s.Addr().String(), "--out", dir, "--notes", "pulled a shot"}, strings.NewReader("\n"), &out, &errb)
 	if code != 0 {
 		t.Fatalf("exit %d stderr %s", code, errb.String())
 	}
-	f, err := os.Open(filepath.Join(dir, "stream", "log.jsonl"))
+	m, err := fixture.LoadManifest(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Scenario != "stream" || !strings.HasPrefix(m.Notes, "pulled a shot") {
+		t.Errorf("manifest scenario %q notes %q; want stream, notes first", m.Scenario, m.Notes)
+	}
+	// No LCD sampling unless asked for: no MC@ below.
+	f, err := os.Open(filepath.Join(dir, "log.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,8 +198,26 @@ func TestUsage(t *testing.T) {
 	if run(nil, strings.NewReader(""), &out, &errb) != 2 {
 		t.Error("want exit 2")
 	}
-	if run([]string{"capture", "--scenario", "bogus"}, strings.NewReader(""), &out, &errb) != 2 {
-		t.Error("bogus scenario want exit 2")
+	if run([]string{"capture", "--scenario", "stream", "--out", t.TempDir()}, strings.NewReader(""), &out, &errb) != 2 {
+		t.Error("the removed --scenario flag: want exit 2")
+	}
+}
+
+func TestCaptureUsageErrors(t *testing.T) {
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"no --out":              {[]string{"capture", "--addr", "127.0.0.1:1"}, "--out"},
+		"commands with display": {[]string{"capture", "--commands", "--display-every", "10s", "--addr", "127.0.0.1:1", "--out", "x"}, "--commands"},
+		"display-for too long":  {[]string{"capture", "--display-every", "1s", "--display-for", "1s", "--addr", "127.0.0.1:1", "--out", "x"}, "--display-for"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var out, errb bytes.Buffer
+			if code := run(tc.args, strings.NewReader(""), &out, &errb); code != 2 || !strings.Contains(errb.String(), tc.want) {
+				t.Errorf("exit %d stderr %q; want 2 mentioning %s", code, errb.String(), tc.want)
+			}
+		})
 	}
 }
 
@@ -201,7 +227,7 @@ func TestCaptureRefusesOverwriteAndForce(t *testing.T) {
 	t.Cleanup(func() { cmdWait = old })
 	s := startSim(t, sim.Config{})
 	dir := t.TempDir()
-	args := []string{"capture", "--scenario", "commands", "--addr", s.Addr().String(), "--out", dir}
+	args := []string{"capture", "--commands", "--addr", s.Addr().String(), "--out", dir}
 	var out, errb bytes.Buffer
 	if code := run(args, strings.NewReader(""), &out, &errb); code != 0 {
 		t.Fatalf("first run exit %d: %s", code, errb.String())
@@ -224,7 +250,7 @@ func TestFailedCaptureWritesPartialAndKeepsGood(t *testing.T) {
 	t.Cleanup(func() { cmdTimeout = oldT })
 	s := startSim(t, sim.Config{})
 	dir := t.TempDir()
-	good := filepath.Join(dir, "commands")
+	good := dir
 	if err := os.MkdirAll(good, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +268,7 @@ func TestFailedCaptureWritesPartialAndKeepsGood(t *testing.T) {
 		_ = s2.Stop() // connection dies mid-scenario
 	}()
 	var out, errb bytes.Buffer
-	code := run([]string{"capture", "--scenario", "commands", "--addr", s2.Addr().String(), "--out", dir, "--force"}, strings.NewReader(""), &out, &errb)
+	code := run([]string{"capture", "--commands", "--addr", s2.Addr().String(), "--out", dir, "--force"}, strings.NewReader(""), &out, &errb)
 	if code != 1 {
 		t.Fatalf("exit %d, want 1; stderr %s", code, errb.String())
 	}
@@ -270,13 +296,13 @@ func TestCaptureMissingXMLWarns(t *testing.T) {
 	s := startSimResponses(t, map[string][]string{"MCh": {"h"}, "MC?": {"nothing"}, "MCu": {"u"}, "MCm": {"m"}, "MCb": {"b"}, "MCf": {"f"}})
 	dir := t.TempDir()
 	var out, errb bytes.Buffer
-	if code := run([]string{"capture", "--scenario", "commands", "--addr", s.Addr().String(), "--out", dir}, strings.NewReader(""), &out, &errb); code != 0 {
+	if code := run([]string{"capture", "--commands", "--addr", s.Addr().String(), "--out", dir}, strings.NewReader(""), &out, &errb); code != 0 {
 		t.Fatalf("exit %d: %s", code, errb.String())
 	}
 	if !strings.Contains(errb.String(), "no XML=") {
 		t.Errorf("stderr %q", errb.String())
 	}
-	m, err := fixture.LoadManifest(filepath.Join(dir, "commands", "manifest.json"))
+	m, err := fixture.LoadManifest(filepath.Join(dir, "manifest.json"))
 	if err != nil || !strings.Contains(m.Notes, "MC? returned no XML= line") {
 		t.Errorf("manifest %+v err %v", m, err)
 	}
@@ -288,7 +314,7 @@ func TestWriteOutputFailureLeavesGoodFilesUntouched(t *testing.T) {
 	t.Cleanup(func() { cmdWait = old })
 	s := startSim(t, sim.Config{})
 	dir := t.TempDir()
-	scen := filepath.Join(dir, "commands")
+	scen := dir
 	// A directory squatting on the manifest temp name makes the manifest write
 	// fail after the log temp file was written.
 	if err := os.MkdirAll(filepath.Join(scen, ".manifest.json.tmp"), 0o755); err != nil {
@@ -300,7 +326,7 @@ func TestWriteOutputFailureLeavesGoodFilesUntouched(t *testing.T) {
 		}
 	}
 	var out, errb bytes.Buffer
-	code := run([]string{"capture", "--scenario", "commands", "--addr", s.Addr().String(), "--out", dir, "--force"}, strings.NewReader(""), &out, &errb)
+	code := run([]string{"capture", "--commands", "--addr", s.Addr().String(), "--out", dir, "--force"}, strings.NewReader(""), &out, &errb)
 	if code != 1 {
 		t.Errorf("exit %d, want 1", code)
 	}
@@ -316,7 +342,7 @@ func TestCaptureBadXMLPathFailsBeforeDial(t *testing.T) {
 	s := startSim(t, sim.Config{TripwireAddr: "127.0.0.1:0"})
 	t.Setenv("MEDEWI_XML_PATH", filepath.Join(t.TempDir(), "missing.xml"))
 	var out, errb bytes.Buffer
-	code := run([]string{"capture", "--scenario", "commands", "--addr", s.Addr().String(), "--out", t.TempDir()}, strings.NewReader(""), &out, &errb)
+	code := run([]string{"capture", "--commands", "--addr", s.Addr().String(), "--out", t.TempDir()}, strings.NewReader(""), &out, &errb)
 	if code != 1 {
 		t.Errorf("exit %d, want 1", code)
 	}
@@ -363,13 +389,13 @@ func TestCaptureDisplayRecordsFramesAndMarks(t *testing.T) {
 	// One mark; a mistyped line must not stop; an empty line does.
 	in := &slowReader{lines: []string{"m\n", "M\n", "\n"}, gap: 250 * time.Millisecond}
 	code := run([]string{
-		"capture", "--scenario", "display", "--addr", s.Addr().String(), "--out", dir,
+		"capture", "--addr", s.Addr().String(), "--out", dir,
 		"--display-every", "200ms", "--display-for", "50ms",
 	}, in, &out, &errb)
 	if code != 0 {
 		t.Fatalf("exit %d stderr %s", code, errb.String())
 	}
-	f, err := os.Open(filepath.Join(dir, "display", "log.jsonl"))
+	f, err := os.Open(filepath.Join(dir, "log.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +420,7 @@ func TestCaptureDisplayRecordsFramesAndMarks(t *testing.T) {
 	if !strings.Contains(rx.String(), frame) {
 		t.Error("display frame not recorded")
 	}
-	m, err := fixture.LoadManifest(filepath.Join(dir, "display", "manifest.json"))
+	m, err := fixture.LoadManifest(filepath.Join(dir, "manifest.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,8 +442,8 @@ func TestCaptureDisplayRecordsFramesAndMarks(t *testing.T) {
 // the operator's Enter: on 2026-11-04 a display capture kept "recording" for
 // minutes after the machine had hung up.
 func TestCaptureStreamLostConnectionStopsAtOnce(t *testing.T) {
-	for _, scenario := range []string{"stream", "display"} {
-		t.Run(scenario, func(t *testing.T) {
+	for name, every := range map[string]string{"stream": "0", "display": "100ms"} {
+		t.Run(name, func(t *testing.T) {
 			s := startSim(t, sim.Config{Responses: map[string][]string{"MC?": {"XML=synthetic"}}})
 			go func() {
 				time.Sleep(1500 * time.Millisecond)
@@ -430,8 +456,8 @@ func TestCaptureStreamLostConnectionStopsAtOnce(t *testing.T) {
 			done := make(chan int, 1)
 			go func() {
 				done <- run([]string{
-					"capture", "--scenario", scenario, "--addr", s.Addr().String(), "--out", dir,
-					"--display-every", "100ms", "--display-for", "30ms",
+					"capture", "--addr", s.Addr().String(), "--out", dir,
+					"--display-every", every, "--display-for", "30ms",
 				}, stdin, &out, &errb)
 			}()
 			select {
@@ -446,7 +472,7 @@ func TestCaptureStreamLostConnectionStopsAtOnce(t *testing.T) {
 			if !regexp.MustCompile(`connection lost|write`).MatchString(errb.String()) {
 				t.Errorf("stderr %q does not report the lost connection", errb.String())
 			}
-			if _, err := os.Stat(filepath.Join(dir, scenario, "log.partial.jsonl")); err != nil {
+			if _, err := os.Stat(filepath.Join(dir, "log.partial.jsonl")); err != nil {
 				t.Error(err)
 			}
 		})
@@ -472,7 +498,7 @@ func (r *slowReader) Read(p []byte) (int, error) {
 func TestSingleDashLongFlagRejected(t *testing.T) {
 	for _, args := range [][]string{
 		{"conform", "-addr", "127.0.0.1:1"},
-		{"capture", "--scenario", "commands", "-addr", "127.0.0.1:1"},
+		{"capture", "--commands", "-addr", "127.0.0.1:1"},
 		{"session-reset", "-addr", "127.0.0.1:1"},
 	} {
 		var out, errb bytes.Buffer
@@ -499,7 +525,7 @@ func TestDisplayFlagsAreSpans(t *testing.T) {
 	var out, errb bytes.Buffer
 	// Parses (then fails on the missing target), not on the flag values.
 	t.Setenv(envAddr, "")
-	code := run([]string{"capture", "--scenario", "display", "--display-every", "10s", "--display-for", "500ms"}, strings.NewReader(""), &out, &errb)
+	code := run([]string{"capture", "--display-every", "10s", "--display-for", "500ms", "--out", t.TempDir()}, strings.NewReader(""), &out, &errb)
 	if code != 2 || !strings.Contains(errb.String(), "no target") {
 		t.Errorf("exit %d, stderr %q; want no target", code, errb.String())
 	}

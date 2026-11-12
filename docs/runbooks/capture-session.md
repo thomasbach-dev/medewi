@@ -12,7 +12,7 @@ Below, `levacap ...` means `go run ./cmd/levacap ...`.
 
 1. **Whitelist.** The only commands ever sent are `MCh MC? MCu MCm MCb MCf`
    plus stream control `MCr` (start reports) and `MC ` (MC + space, stop
-   reports and reset state), and `MC@` (display mirror, scenario `display`).
+   reports and reset state), and `MC@` (display mirror, with `--display-every`).
    Nothing else; in particular never the display protocol's button codes
    (`MC` + a raw byte), which press keys on the machine. Do not type extra commands by
    hand on port 23 during a capture.
@@ -92,42 +92,49 @@ end. (`MC ` also resets current machine state; that is accepted.)
 
 ## 2. Capture scenarios, in order
 
-Each scenario is written to `<out>/<scenario>/` (default `captures/<scenario>/`) with
-`log.jsonl` (raw JSON Lines, base64 bytes, timestamps) and `manifest.json`
-(firmware banner, XML name, XML sha256, address, notes).
+Each capture is written straight into its `--out` directory (required; one
+directory per capture, named after what it holds): `log.jsonl` (raw JSON
+Lines, base64 bytes, timestamps) and `manifest.json` (firmware banner, XML
+name, XML sha256, address, notes). `levalog` reads such a directory as is.
 
 ```sh
-go run ./cmd/levacap capture --scenario commands        # 1. each whitelist command once
-go run ./cmd/levacap capture --scenario stream          # 2. idle report stream
-go run ./cmd/levacap capture --scenario stream --out captures/warmup   # 3. warmup
-go run ./cmd/levacap capture --scenario shot            # 4. a real shot
-go run ./cmd/levacap capture --scenario shot --out captures/shot2      # 5. second shot
-go run ./cmd/levacap capture --scenario display --out captures/warmup-display  # 6. warm-up to READY
+D=$(date +%F)
+go run ./cmd/levacap capture --commands --out "private/commands-$D"           # 1. each whitelist command once
+go run ./cmd/levacap capture --out "captures/idle-$D" --notes "idle, warm"    # 2. idle report stream
+go run ./cmd/levacap capture --out "captures/warmup-$D" --notes "cold start"  # 3. warmup
+go run ./cmd/levacap capture --out "captures/shot-$D" --notes "double, SOAK"  # 4. a real shot
+go run ./cmd/levacap capture --out "captures/ready-$D" --display-every 10s \
+  --notes "warm-up to READY"                                                  # 6. warm-up to READY
 ```
 
-1. **commands** — sends `MCh MC? MCu MCm MCb MCf` with a 1 s pause between
-   them. Quiescent machine. The `MCu`/`MCm` output goes to private storage
-   (rule 3), nothing from this directory is committed without review.
-2. **stream, idle ~60 s** — machine idle and warm. `levacap` starts `MCr`,
-   prints "press Enter to stop"; wait about 60 s, press Enter. It then sends
-   `MC `.
+Every recording is the same: `levacap` starts `MCr`, records until an empty
+line, then sends `MC `. Type `m` + Enter to mark a moment; marks land in the
+manifest notes as milliseconds since start. `--notes` says what was
+recorded. LCD sampling is off unless `--display-every` is given.
+
+1. **commands** (`--commands`) — sends `MCh MC? MCu MCm MCb MCf` with a 1 s
+   pause between them. Quiescent machine. The `MCu`/`MCm` output goes to
+   private storage (rule 3), nothing from this directory is committed
+   without review.
+2. **stream, idle ~60 s** — machine idle and warm; wait about 60 s, press
+   Enter.
 3. **warmup, a few minutes** — switch the machine on from cold and record
-   while it heats; Enter when settled. (Use a different `--out` per run,
-   because the scenario name decides the subdirectory.)
-4. **shots, 1 or 2** — scenario `shot` prints "pull the shot now, press Enter
-   when done". Start recording, pull a real shot, press Enter afterwards.
-6. **warm-up to READY, with the display (20–30 min)** — scenario `display`
+   while it heats; Enter when settled.
+4. **shots, 1 or 2** — start recording, pull a real shot, press Enter
+   afterwards. One directory per shot.
+6. **warm-up to READY, with the display (20–30 min)** — `--display-every 10s`
    records the report stream (`MCr`) and samples the LCD mirror (`MC@`, 10
    frames/s): the machine sends only one of the two at a time, so `levacap`
-   switches to `MC@` for 500 ms every 10 s and back to `MCr` (tune with
-   `--display-every`, `--display-for`). About 1.2 KB/s. Start it while the
+   switches to `MC@` for 500 ms every 10 s and back to `MCr` (`--display-for`
+   tunes the 500 ms). Reports are missing while the mirror is on, so use it
+   only where the LCD matters. About 1.2 KB/s. Start it while the
    machine is in standby or eco (cold is best), then wake the machine. Type `m` + Enter when you hear the
    three READY beeps (and at anything else worth finding again); the marks
    land in the manifest notes as milliseconds since start. An empty line
    stops: `MC ` ends both streams. Purpose: the exact READY moment from the
    display next to the full report data, to build the daemon's readiness
    heuristic.
-7. **optional: second-client fan-out** — while a `stream` capture runs, open
+7. **optional: second-client fan-out** — while a capture runs, open
    `nc rancilio 23` in another terminal, only read, then disconnect. Note in
    `manifest.json` whether both clients saw the same lines. This also covers
    the 4/5-client question below if you are willing to try.
@@ -138,7 +145,7 @@ Behavior of the tool you need to know:
   in the target directory, `levacap` exits 1 with "refusing to overwrite";
   use a different `--out` or `--force` (only when you meant to replace a
   *complete* capture).
-- **Ctrl-C is a clean stop for `stream`, `shot` and `display`.** Once recording has
+- **Ctrl-C is a clean stop for a recording.** Once recording has
   started, Ctrl-C does exactly what Enter does: `levacap` sends `MC `, writes a
   complete `log.jsonl` and `manifest.json`, and exits 0. Ctrl-C during the
   banner wait aborts without writing any files (exit 1). Ctrl-C during the
@@ -203,7 +210,7 @@ every firmware flash, before anything else talks to the machine:
    (nothing from here is committed):
    ```sh
    PREFLASH_DIR="private/preflash-$(date +%F)"
-   go run ./cmd/levacap capture --scenario commands --out "$PREFLASH_DIR"
+   go run ./cmd/levacap capture --commands --out "$PREFLASH_DIR"
    ```
    Then flash per the vendor procedure (`rancilio.org`, "Update").
    `levacap` never goes near port 2323.

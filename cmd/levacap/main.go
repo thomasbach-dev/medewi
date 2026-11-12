@@ -48,7 +48,7 @@ var cmdWait = time.Second
 var cmdTimeout = 10 * time.Second
 
 // safeCommands is the complete, read-only command whitelist capture may send
-// in the "commands" scenario. Do not add anything else.
+// by capture --commands. Do not add anything else.
 var safeCommands = []string{"MCh", "MC?", "MCu", "MCm", "MCb", "MCf"}
 
 func main() {
@@ -80,7 +80,10 @@ func usage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, `usage: levacap <subcommand> [flags]
 
   conform [--addr host:port] [--max readonly|stream] [--yes]
-  capture --scenario commands|stream|shot|display [--addr host:port] [--out captures/]
+  capture --out DIR [--notes TEXT] [--display-every SPAN [--display-for SPAN]] [--addr host:port]
+                                     record the report stream into DIR until Enter
+  capture --commands --out DIR [--addr host:port]
+                                     each whitelist command once (license key inside: private)
   session-reset [--addr host:port]   stop a stream another client left on
 
 Target defaults to $MEDEWI_MACHINE_ADDR; decode spec from $MEDEWI_XML_PATH.`)
@@ -203,22 +206,26 @@ func formatResult(r conformance.Result) string {
 
 func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs, addr := newFlagSet("capture", stderr)
-	scenario := fs.String("scenario", "", "scenario: commands|stream|shot|display (required)")
-	out := fs.String("out", "captures", "output directory")
+	outDir := ""
+	fs.StringVar(&outDir, "out", "", "capture directory, e.g. captures/shot-2026-11-12 (required); log.jsonl and manifest.json go straight into it")
+	commands := fs.Bool("commands", false, "send each whitelist command once (MCh MC? MCu MCm MCb MCf) instead of recording the report stream; the output holds the license key: private storage only")
+	userNotes := fs.String("notes", "", "free text for the manifest: what was recorded")
 	force := fs.Bool("force", false, "overwrite an existing complete capture")
-	sample := displaySample{every: 10 * time.Second, dur: 500 * time.Millisecond}
-	fs.Var(systime.NewSpan(&sample.every), "display-every", "display scenario: switch to the LCD mirror this often")
-	fs.Var(systime.NewSpan(&sample.dur), "display-for", "display scenario: stay on the LCD mirror this long per sample")
+	sample := displaySample{dur: 500 * time.Millisecond}
+	fs.Var(systime.NewSpan(&sample.every), "display-every", "also sample the LCD mirror (MC@) this often; 0 = off (default); costs report samples meanwhile")
+	fs.Var(systime.NewSpan(&sample.dur), "display-for", "with --display-every: stay on the LCD mirror this long per sample")
 	if code, ok := parseFlags(fs, args, stderr); !ok {
 		return code
 	}
-	switch *scenario {
-	case "commands", "stream", "shot", "display":
-	default:
-		_, _ = fmt.Fprintf(stderr, "levacap: --scenario must be one of commands, stream, shot, display (got %q)\n", *scenario)
+	if outDir == "" {
+		_, _ = fmt.Fprintln(stderr, "levacap: --out is required: the capture directory, e.g. captures/shot-2026-11-12")
 		return 2
 	}
-	if sample.every <= 0 || sample.dur <= 0 || sample.dur >= sample.every {
+	if *commands && sample.every > 0 {
+		_, _ = fmt.Fprintln(stderr, "levacap: --commands records no stream; --display-every needs the stream")
+		return 2
+	}
+	if sample.every > 0 && (sample.dur <= 0 || sample.dur >= sample.every) {
 		_, _ = fmt.Fprintln(stderr, "levacap: need 0 < --display-for < --display-every")
 		return 2
 	}
@@ -226,8 +233,11 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "levacap: no target: set $%s or pass --addr\n", envAddr)
 		return 2
 	}
+	scenario := "stream"
+	if *commands {
+		scenario = "commands"
+	}
 
-	outDir := filepath.Join(*out, *scenario)
 	if !*force {
 		for _, n := range []string{"log.jsonl", "manifest.json"} {
 			// Any stat result other than "does not exist" counts as exists.
@@ -289,7 +299,7 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	xmlName := ""
 	var marks []int64
 	capErr := func() error {
-		if *scenario == "commands" {
+		if *commands {
 			return captureCommands(ctx, c, &xmlName)
 		}
 		name, err := queryXMLName(ctx, c)
@@ -297,12 +307,15 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return err
 		}
 		xmlName = name
-		marks, err = captureStream(ctx, c, *scenario, sample, start, stdin, stdout)
+		marks, err = captureStream(ctx, c, sample, start, stdin, stdout)
 		return err
 	}()
 
 	var notes []string
-	if *scenario == "display" {
+	if *userNotes != "" {
+		notes = append(notes, *userNotes)
+	}
+	if sample.every > 0 {
 		notes = append(notes, fmt.Sprintf("display sampled %v every %v", sample.dur, sample.every))
 	}
 	if len(marks) > 0 {
@@ -325,7 +338,7 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	mu.Lock()
 	snapshot := append([]fixture.Event(nil), events...)
 	mu.Unlock()
-	if err := writeOutput(outDir, logName, manName, *scenario, *addr, c.ID(), xmlName, xmlSHA, strings.Join(notes, "; "), snapshot); err != nil {
+	if err := writeOutput(outDir, logName, manName, scenario, *addr, c.ID(), xmlName, xmlSHA, strings.Join(notes, "; "), snapshot); err != nil {
 		_, _ = fmt.Fprintf(stderr, "levacap: %v\n", err)
 		return 1
 	}
@@ -421,7 +434,7 @@ func captureCommands(ctx context.Context, c *leva.Conn, xmlName *string) error {
 	return nil
 }
 
-// displaySample is how the "display" scenario interleaves the LCD mirror
+// displaySample is how a capture with --display-every interleaves the LCD mirror
 // with the report stream: the machine sends only one of the two at a time.
 type displaySample struct {
 	every, dur time.Duration
@@ -462,7 +475,7 @@ func ignoreCanceled(ctx context.Context, err error) error {
 // captureStream records the report stream (for "display" interleaved with
 // LCD mirror samples) until an empty line or EOF on stdin. A line "m"
 // records a mark: milliseconds since start, e.g. when the READY beeps sound.
-func captureStream(ctx context.Context, c *leva.Conn, scenario string, sample displaySample, start time.Time, stdin io.Reader, stdout io.Writer) ([]int64, error) {
+func captureStream(ctx context.Context, c *leva.Conn, sample displaySample, start time.Time, stdin io.Reader, stdout io.Writer) ([]int64, error) {
 	reports, err := c.StartReports(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("start reports: %w", err)
@@ -491,10 +504,7 @@ func captureStream(ctx context.Context, c *leva.Conn, scenario string, sample di
 		}
 		return nil
 	}
-	switch scenario {
-	case "shot":
-		_, _ = fmt.Fprintln(stdout, "recording: pull the shot now, press Enter when done")
-	case "display":
+	if sample.every > 0 {
 		sctx, cancel := context.WithCancel(ctx)
 		sampled = make(chan struct{})
 		var sampleErr error
@@ -510,8 +520,8 @@ func captureStream(ctx context.Context, c *leva.Conn, scenario string, sample di
 			return errors.Join(sampleErr, stopReports())
 		}
 		_, _ = fmt.Fprintf(stdout, "recording reports, display every %v: type m + Enter to mark a moment, Enter to stop\n", sample.every)
-	default:
-		_, _ = fmt.Fprintln(stdout, "recording report stream: press Enter to stop")
+	} else {
+		_, _ = fmt.Fprintln(stdout, "recording reports: type m + Enter to mark a moment, Enter to stop")
 	}
 	var (
 		mu    sync.Mutex

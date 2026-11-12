@@ -42,7 +42,7 @@ func TestCaptureStreamOnExitsWithHint(t *testing.T) {
 	s := startSim(t, sim.Config{})
 	leaveStreamOn(t, s)
 	var out, errb bytes.Buffer
-	code := run([]string{"capture", "--scenario", "commands", "--addr", s.Addr().String(), "--out", t.TempDir()},
+	code := run([]string{"capture", "--commands", "--addr", s.Addr().String(), "--out", t.TempDir()},
 		strings.NewReader(""), &out, &errb)
 	if code != 1 {
 		t.Fatalf("exit %d, want 1", code)
