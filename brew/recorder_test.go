@@ -330,3 +330,79 @@ func TestKindTruncated(t *testing.T) {
 		}
 	}
 }
+
+func TestDrawTimes(t *testing.T) {
+	h := newHarness(t)
+	h.feed(Sample{Volume: f(0)})
+	h.now = t0
+	for i, v := range []float64{10, 20, 30} {
+		h.now = t0.Add(time.Duration(i) * time.Second)
+		h.feed(Sample{Volume: f(v)})
+	}
+	h.now = t0.Add(3 * time.Second)
+	for range 12 {
+		h.feed(Sample{Volume: f(30)})
+	}
+	if len(h.water) != 1 {
+		t.Fatalf("water = %+v, want one draw", h.water)
+	}
+	w := h.water[0]
+	if !w.StartedAt.Equal(t0) || !w.EndedAt.Equal(t0.Add(2*time.Second)) {
+		t.Errorf("StartedAt=%v EndedAt=%v, want 0s and 2s", w.StartedAt.Sub(t0), w.EndedAt.Sub(t0))
+	}
+	if w.Duration != 2*time.Second {
+		t.Errorf("Duration = %v, want 2s", w.Duration)
+	}
+}
+
+func TestAbortKeepsNormalKind(t *testing.T) {
+	h := newHarness(t)
+	h.repeat(20, Sample{Pumping: true, PressureSP: f(9)})
+	s := h.r.Abort(TruncatedLost)
+	if s == nil || s.Kind != TruncatedLost || s.Normal != Shot {
+		t.Fatalf("Abort = %+v, want Kind truncated-lost, Normal shot", s)
+	}
+}
+
+func TestCloseSetsNormal(t *testing.T) {
+	h := newHarness(t)
+	h.repeat(20, Sample{Pumping: true})
+	h.idle(4*time.Second, nil)
+	if len(h.closed) != 1 || h.closed[0].Kind != Flush || h.closed[0].Normal != Flush {
+		t.Fatalf("closed = %+v, want Kind and Normal flush", h.closed)
+	}
+}
+
+func TestDrawing(t *testing.T) {
+	h := newHarness(t)
+	h.feed(Sample{Volume: f(0)})
+	if h.r.Drawing() {
+		t.Fatal("drawing before any growth")
+	}
+	h.feed(Sample{Volume: f(10)})
+	if !h.r.Drawing() {
+		t.Fatal("not drawing after growth")
+	}
+	h.idle(3*time.Second, f(10))
+	if h.r.Drawing() || len(h.water) != 1 {
+		t.Errorf("drawing %v after the quiet period, water %+v", h.r.Drawing(), h.water)
+	}
+}
+
+func TestClone(t *testing.T) {
+	h := newHarness(t)
+	h.feed(Sample{Volume: f(0)})
+	h.repeat(4, Sample{Pumping: true, Volume: f(5)})
+	c := h.r.Clone()
+	if s := c.Abort(TruncatedLost); s == nil || s.Kind != TruncatedLost {
+		t.Fatalf("clone abort = %+v, want a truncated brew", s)
+	}
+	if !h.r.Open() {
+		t.Fatal("aborting the clone closed the original")
+	}
+	h.repeat(4, Sample{Pumping: true, Volume: f(9)})
+	h.idle(4*time.Second, f(9))
+	if len(h.closed) != 1 || h.closed[0].VolumeML != 9 {
+		t.Errorf("closed = %+v, want one 9 ml brew", h.closed)
+	}
+}

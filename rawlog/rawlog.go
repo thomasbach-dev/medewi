@@ -37,6 +37,10 @@ const (
 	maxNoticeLine = 32
 	nameLayout    = "20060102T150405.000Z"
 	nameSuffix    = ".jsonl.gz"
+
+	// XMLNotePrefix starts the note that names the session's vendor XML;
+	// every file of the session begins with it once Session.SetXML ran.
+	XMLNotePrefix = "xml: "
 )
 
 // Config configures a Log. Zero values select the documented defaults.
@@ -82,6 +86,7 @@ type item struct {
 	dir  fixture.Dir
 	data []byte
 	end  bool // session closed
+	xml  bool // data is the session's XML note: the writer remembers it
 }
 
 // Log writes the traffic of successive sessions to files in a directory.
@@ -293,6 +298,24 @@ func (s *Session) Note(text string) {
 	s.l.enqueue(item{sess: s, at: now, dir: fixture.Note, data: []byte(text)})
 }
 
+// SetXML names the vendor XML of this session: it queues the note
+// "xml: NAME" now, and every later file of the session starts with that
+// note (at t=0). Calling it again replaces the name. It never blocks and
+// does no I/O. After Session.Close or Log.Close it does nothing.
+func (s *Session) SetXML(name string) {
+	if s == nil || s.l.closed.Load() {
+		return
+	}
+	now := s.l.cfg.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	s.flushNote(now)
+	s.l.enqueue(item{sess: s, at: now, dir: fixture.Note, data: []byte(XMLNotePrefix + name), xml: true})
+}
+
 // tx updates the reply window from the commands in p (all of them: a
 // write may carry several); the caller holds s.mu. MCu/MCm (any suffix)
 // are dump commands: they close the window and start the quiet period. The
@@ -460,6 +483,7 @@ type writer struct {
 
 	seq   uint64 // current session
 	ended bool   // its end marker was seen
+	xml   []byte // the session's XML note, repeated at the top of each file
 
 	f       *os.File
 	path    string // name of f
@@ -477,7 +501,7 @@ func (w *writer) handle(it item) {
 		return // no longer the current session
 	case it.sess.seq > w.seq:
 		_ = w.finish()
-		w.seq, w.ended, w.broken = it.sess.seq, false, false
+		w.seq, w.ended, w.broken, w.xml = it.sess.seq, false, false, nil
 	}
 	if it.end {
 		_ = w.finish()
@@ -489,6 +513,9 @@ func (w *writer) handle(it item) {
 
 func (w *writer) write(it item) {
 	cfg := &w.l.cfg
+	if it.xml {
+		w.xml = it.data
+	}
 	if w.f != nil && it.at.Sub(w.start) >= cfg.RotateEvery {
 		_ = w.finish()
 	}
@@ -500,6 +527,9 @@ func (w *writer) write(it item) {
 		if err := w.open(it.at); err != nil {
 			w.fail(err, it.at)
 			return
+		}
+		if it.xml {
+			return // open wrote this very note at t=0
 		}
 	}
 	if cfg.writeHook != nil {
@@ -538,6 +568,13 @@ func (w *writer) open(at time.Time) error {
 		w.enc = json.NewEncoder(w.gz)
 		w.dirty = false
 		w.prune(path)
+		if w.xml != nil {
+			// Before the triggering event, so a file read alone knows its XML.
+			if err := w.enc.Encode(fixture.Event{Dir: fixture.Note, Data: w.xml}); err != nil {
+				return err
+			}
+			w.dirty = true
+		}
 		return nil
 	}
 	return fmt.Errorf("no free file name near %s", at.UTC().Format(nameLayout))

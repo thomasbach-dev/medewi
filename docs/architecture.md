@@ -66,8 +66,12 @@ flowchart LR
   edit history. Exports to LLM-friendly text.
 - **Raw traffic log** — the daemon also keeps the last days of machine
   traffic as gzip JSON-lines files (`rawlog/`), minus license-key replies.
-  `levalog decode` turns them (and levacap captures) back into readable
-  lines for troubleshooting.
+  `levalog events` turns them (and levacap captures) back into readable
+  lines for troubleshooting; `levalog fields`, `runs` (with `--stats`)
+  and `summary` list the report fields, the pump runs with statistics, and
+  what each source holds. The handshake
+  names the session's XML; `rawlog` repeats it as an `xml:` note at the top
+  of each later file.
 
 ## Deployment modes
 
@@ -104,7 +108,8 @@ a truncated kind naming the cause (`truncated-lost`, `truncated-released`,
 - `store/` — SQLite persistence of brews and their curves. Settings
   backups are files that `medewictl backup` writes, not database rows.
 - `rawlog/` — raw traffic log: gzip'd per-session JSON lines, allowlist
-  that keeps license-key replies out, retention, marks as notes.
+  that keeps license-key replies out, retention, marks as notes, the
+  session's XML name as an `xml:` note in every file.
 - `daemon/` — connection supervision, HTTP API, metrics, ops panel
   (`panel.html`, embedded), power control, machine READY (`[READY]`),
   display sampling and marks.
@@ -114,13 +119,19 @@ a truncated kind naming the cause (`truncated-lost`, `truncated-released`,
   (also a cut or still-written gzip), selects raw logs for a time window,
   reassembles and classifies lines (reports via the vendor XML, display
   frames, banners, glued records) and redacts `MCu`/`MCm` dumps with the
-  same rules as `rawlog`. Kept out of `main` so a later remote reader
-  (#30) can reuse it.
+  same rules as `rawlog`. It also names the report fields (stable keys
+  from the XML), finds pump runs and wand draws with `brew.Recorder`,
+  picks the XML per session, and filters, projects and formats events as
+  text, JSON Lines or CSV. It streams: a `Stream` decodes one file at a
+  time and hands on entry by entry, so memory stays bounded by one file;
+  `levalog` reads its input twice when it needs the runs first (a
+  `RunFinder` pass keeps only run metadata, a `Selector` pass writes).
+  Kept out of `main` so a later remote reader (#30) can reuse it.
 - `systime/` — the `systemd.time(7)` subset every command accepts for
   timestamps and spans, plus pflag values for them
   ([CLI conventions](cli-conventions.md)).
-- `cmd/levalog` — `levalog decode` over `logview`, installed on brewhost
-  by the module.
+- `cmd/levalog` — `levalog fields`, `runs`, `events` (with `--every`) and
+  `summary` over `logview`, installed on brewhost by the module.
 - `nix/module.nix` — the `nixosModules.medewid` service.
 
 ## Build order

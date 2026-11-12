@@ -54,6 +54,27 @@ capture that teaches something new, and mark hypotheses as such.
 - `Selected profile` names the profile (e.g. `SOAK 1.0b`); the dose buttons
   (`[1] DBL ESPR`, `[2] ESPRESSO` in the menu) do not show in the reports.
 
+## Pressure band
+
+- Hypothesis: `pressure_band_min` and `pressure_band_max` are the lowest
+  and highest raw sensor reading within one report interval (~250 ms),
+  and `pressure` is their average. The manual does not define the fields.
+- Evidence: in all 644 reports of the `shot-genlever` fixture,
+  `pressure_band_min` ≤ `pressure` ≤ `pressure_band_max`. At rest the
+  band is sensor noise (e.g. 0.00 … 0.03 … 0.11 bar); near 10 bar it is
+  e.g. 9.80 … 9.90 … 9.94, with a median width of about 0.3 bar above
+  3 bar.
+- Fits the manual: it says the sensor is sampled several times a second
+  and the samples averaged, and its sensor-noise value is the spread of
+  the readings (max − min). A firmware changelog entry fixed the band
+  ignoring the user-set pressure offset. The Status Monitor XML draws it
+  as a band around the pressure curve, hidden by default.
+- Use: the width shows pressure jitter within a report (pump pulsation,
+  sensor noise); a narrowing band means the pressure regulation settled.
+  It is not the profile target (that is `pressure_sp`).
+- To confirm: a profiled shot should widen the band during phase control
+  (marker `*`, `pressure_sp` set) and shrink it to noise with the pump off.
+
 ## Warm-up program (run menu)
 
 Observed 2026-11-05 from a cold start (boiler 34 °C):
@@ -64,6 +85,13 @@ Observed 2026-11-05 from a cold start (boiler 34 °C):
 3. Pump pulses (marker `*`, no `Pressure SP`): about one per minute, then
    every 15–30 s in the last two minutes, mostly 2–4 s and 10–20 ml; one
    21 s pulse reached 12.2 bar. 285 ml in total.
+   (`levalog runs` on the same capture gives 12.75 bar for that pulse.)
+   The `Volume` field does **not** reset between the pulses: it counts on
+   through the whole program (15, 31, 50 … 285 ml), unlike the reset at
+   every pump start outside programs. The first shot after the program
+   starts from 0 again. One run only; whether the program or the pulse
+   length decides this is open. Per-pulse volume is the difference from
+   the previous pulse.
 4. After the program the manual asks to vent the boiler through the wand
    (air collects above boiling point).
 

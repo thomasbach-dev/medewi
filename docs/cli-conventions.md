@@ -15,7 +15,7 @@ tools predictable for the operator on brewhost and for scripts.
 - Use the `=` form for a value that starts with a dash in scripts and
   docs (`--since=-5min`), so a reader never wonders whether it is a flag.
 - Subcommands: global options come before the subcommand
-  (`levalog --xml F decode …`, `medewictl --url U status`); the global
+  (`levalog --xml F events …`, `medewictl --url U status`); the global
   flag set stops at the first non-option (`SetInterspersed(false)`).
 
 ## Time ranges
@@ -25,7 +25,7 @@ Commands that select a time window take `--since`/`-s` and
 into both:
 
 ```sh
-sudo levalog decode -s '10:40' -u '10:45'
+sudo levalog events -s '10:40' -u '10:45'
 journalctl -u medewid -S '10:40' -U '10:45'
 ```
 
@@ -50,7 +50,7 @@ hand-written format. The supported subset:
   journalctl.
 
 Examples: `medewictl release --until +1h30min`,
-`levalog decode --since=-10min`, `levalog decode -s '2026-11-10 10:40 UTC'`.
+`levalog events --since=-10min`, `levalog events -s '2026-11-10 10:40 UTC'`.
 
 ## Environment variables
 

@@ -960,3 +960,86 @@ func TestBytesCountsClosedFiles(t *testing.T) {
 		t.Errorf("Bytes = %d, want at least the closed file's %d", got, info.Size())
 	}
 }
+
+// xmlNotes returns the texts of the XML notes of evs.
+func xmlNotes(evs []fixture.Event) []string {
+	var out []string
+	for _, e := range evs {
+		if e.Dir == fixture.Note && strings.HasPrefix(string(e.Data), XMLNotePrefix) {
+			out = append(out, string(e.Data))
+		}
+	}
+	return out
+}
+
+func TestSetXMLNoteNow(t *testing.T) {
+	l, dir := openLog(t, Config{})
+	s := l.Session()
+	s.SetXML("leva!-TEST")
+	s.Close()
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	files := readDir(t, dir)
+	if len(files) != 1 {
+		t.Fatalf("files = %d", len(files))
+	}
+	if got := xmlNotes(files[0]); !eq(got, []string{"xml: leva!-TEST"}) {
+		t.Errorf("notes = %q, want one", got)
+	}
+}
+
+func TestSetXMLRepeatedAfterRotation(t *testing.T) {
+	clk := newClock()
+	l, dir := openLog(t, Config{Now: clk.Now, RotateEvery: time.Hour})
+	s := l.Session()
+	s.SetXML("leva!-TEST")
+	s.Tap("rx", []byte("{a}\r\n"))
+	clk.Advance(61 * time.Minute)
+	s.Tap("rx", []byte("{b}\r\n"))
+	s.Close()
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	files := readDir(t, dir)
+	if len(files) != 2 {
+		t.Fatalf("files = %d", len(files))
+	}
+	f := files[1]
+	if len(f) != 2 || f[0].Dir != fixture.Note || f[0].T != 0 ||
+		string(f[0].Data) != "xml: leva!-TEST" || string(f[1].Data) != "{b}\r\n" {
+		t.Errorf("second file = %+v", f)
+	}
+}
+
+func TestSetXMLReplacedAndOtherSessionUnaffected(t *testing.T) {
+	clk := newClock()
+	l, dir := openLog(t, Config{Now: clk.Now, RotateEvery: time.Hour})
+	s := l.Session()
+	s.SetXML("one")
+	s.SetXML("two")
+	clk.Advance(61 * time.Minute)
+	s.Tap("rx", []byte("{b}\r\n"))
+	s.Close()
+	s2 := l.Session()
+	s2.Tap("rx", []byte("{c}\r\n"))
+	s2.Close()
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	files := readDir(t, dir)
+	if len(files) != 3 {
+		t.Fatalf("files = %d", len(files))
+	}
+	if got := xmlNotes(files[1]); !eq(got, []string{"xml: two"}) {
+		t.Errorf("rotated file notes = %q", got)
+	}
+	if got := xmlNotes(files[2]); len(got) != 0 {
+		t.Errorf("next session's file carries %q", got)
+	}
+}
+
+func TestSetXMLNilSafe(*testing.T) {
+	var s *Session
+	s.SetXML("x")
+}

@@ -68,11 +68,11 @@ func TestCaptureRetriesSwallowedMCq(t *testing.T) {
 	addr := swallowingMachine(t)
 	dir := t.TempDir()
 	var out, errb bytes.Buffer
-	if code := run([]string{"capture", "--scenario", "stream", "--addr", addr, "--out", dir},
+	if code := run([]string{"capture", "--addr", addr, "--out", dir},
 		strings.NewReader("\n"), &out, &errb); code != 0 {
 		t.Fatalf("exit %d, stderr %s", code, errb.String())
 	}
-	m, err := fixture.LoadManifest(filepath.Join(dir, "stream", "manifest.json"))
+	m, err := fixture.LoadManifest(filepath.Join(dir, "manifest.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

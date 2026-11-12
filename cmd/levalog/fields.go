@@ -1,0 +1,113 @@
+package main
+
+import (
+	"bufio"
+	"io"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	"github.com/thomasbach-dev/medewi/leva"
+	"github.com/thomasbach-dev/medewi/logview"
+)
+
+// fields lists the columns of the XML in effect at the end of the input:
+// the last entry's, else the one its file starts with. With --xml FILE and
+// no readable --dir input it lists that file.
+func fields(args []string, xmlPath string, stdout, stderr io.Writer) int {
+	var in input
+	fs := subFlags("fields", stderr)
+	in.register(fs)
+	if code, done := parse(fs, args, stderr); done {
+		return code
+	}
+	if code := in.check(fs, stderr); code != 0 {
+		return code
+	}
+	if xmlPath == "" {
+		return needXML(stderr, "fields")
+	}
+	cat, code := loadCatalog(xmlPath, stderr)
+	if code != 0 {
+		return code
+	}
+	fi, err := os.Stat(xmlPath)
+	if err != nil {
+		return fail(stderr, 1, "--xml: %v", err)
+	}
+
+	var name string
+	var spec *leva.RecordSpec
+	var problems []string
+	srcs, notes, empty, err := sourcePaths(in.args, in.dir, in.since.T, in.until.T, false)
+	switch {
+	case (err != nil || len(srcs) == 0) && in.fromDir() && !fi.IsDir():
+		name = strings.TrimSuffix(filepath.Base(xmlPath), ".xml")
+		spec, _ = cat.Lookup("")
+	case err != nil:
+		return fail(stderr, 1, "%v", err)
+	case len(srcs) == 0:
+		warn(stderr, notes)
+		warn(stderr, empty[:len(empty)-1])
+		return fail(stderr, 1, "%s", empty[len(empty)-1])
+	default:
+		notes = append(notes, empty...)
+		for _, s := range srcs {
+			if in.window() && !s.raw {
+				return fail(stderr, 2, "--since/--until need raw logs with wall time; %s is a capture", s.path)
+			}
+		}
+		// The last source alone: Load looks back through its directory for
+		// the XML in effect when it starts.
+		last := srcs[len(srcs)-1].path
+		var src logview.SourceInfo
+		var entries int
+		s := logview.Stream{
+			Catalog: cat,
+			OnSource: func(si logview.SourceInfo) error {
+				src = si
+				return nil
+			},
+			OnEntry: func(e *logview.Entry) error {
+				name, spec = e.XML, e.Spec
+				entries++
+				return nil
+			},
+		}
+		if err := s.Add(last); err != nil {
+			return fail(stderr, 1, "%v", err)
+		}
+		problems = s.Problems
+		if entries == 0 && src.HasWall {
+			var warns []string
+			if name, warns, err = logview.LastXML(filepath.Dir(src.Path), src.Start); err != nil {
+				return fail(stderr, 1, "%v", err)
+			}
+			problems = append(problems, warns...)
+		}
+		if spec == nil {
+			var prob string
+			if spec, prob = cat.Lookup(name); spec == nil {
+				msg := last + ": " + prob
+				warn(stderr, slices.DeleteFunc(problems, func(p string) bool { return p == msg }))
+				return fail(stderr, 1, "%s", msg)
+			}
+		}
+	}
+	cols, err := logview.Columns(spec)
+	if err != nil {
+		return fail(stderr, 1, "%v", err)
+	}
+	w := bufio.NewWriter(stdout)
+	err = logview.WriteColumns(w, in.f, name, cols)
+	if ferr := w.Flush(); err == nil {
+		err = ferr
+	}
+	if err != nil {
+		return fail(stderr, 1, "%v", err)
+	}
+	warn(stderr, notes)
+	warn(stderr, problems)
+	return 0
+}

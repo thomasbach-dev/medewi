@@ -49,7 +49,7 @@ means the TCP side works and the controller does not answer.
 ## 3. Read the wire
 
 ```sh
-sudo levalog decode -s "$SINCE" -u "$UNTIL"
+sudo levalog events -s "$SINCE" -u "$UNTIL"
 ```
 
 `sudo` is needed because the raw-log directory (`/var/lib/medewid/raw`) is

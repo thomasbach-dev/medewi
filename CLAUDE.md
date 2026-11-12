@@ -25,6 +25,7 @@ operator procedures in [docs/runbooks/](docs/runbooks/),
 nix develop                       # toolchain (go, gopls, golangci-lint, gofumpt)
 nix develop --command go test -race ./leva/ -run TestName -v   # one test
 go run ./cmd/levasim --fixtures testdata/fixtures/shot-genlever # replay a real shot
+levalog summary captures/   # in nix develop: levalog runs the working tree's code
 ```
 
 Every command follows [docs/cli-conventions.md](docs/cli-conventions.md):
@@ -126,6 +127,7 @@ Details and evidence: [docs/machine-behaviour.md](docs/machine-behaviour.md).
   drives the pump, `-` otherwise, `?` in standby. Wand draws (hot-water
   switch, wired past leva!) show flow with marker `-`. Pressure rises to
   the OPV with the pump off (thermal expansion) — not a pump signal.
-  The Volume field resets to 0 at each leva! pump start and keeps
-  counting during wand draws; the Flow rate field is a decaying estimate
+  The Volume field resets to 0 at each leva! pump start (but not between
+  the pump pulses of the warm-up program: it counts on through the
+  program) and keeps counting during wand draws; the Flow rate field is a decaying estimate
   that lingers for seconds after the pump stops.

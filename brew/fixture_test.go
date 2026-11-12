@@ -39,23 +39,7 @@ func replayFixture(t *testing.T, spec *leva.RecordSpec, name string) (closed []S
 		if err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		opt := func(name string) *float64 {
-			if v, ok := rec.Float(name); ok {
-				return &v
-			}
-			return nil
-		}
-		res := r.Feed(Sample{
-			At:         at,
-			Pumping:    payload[2] == '*',
-			Temp:       opt("Temperature PID1"),
-			Setpoint:   opt("Setpoint PID"),
-			Pressure:   opt("Pressure"),
-			PressureSP: opt("Pressure SP"),
-			Flow:       opt("Flow rate"),
-			Heat:       opt("Heat PID"),
-			Volume:     opt("Volume"),
-		})
+		res := r.Feed(SampleFrom(rec, payload, at))
 		if res.Closed != nil {
 			closed = append(closed, *res.Closed)
 		}

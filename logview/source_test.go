@@ -203,3 +203,33 @@ func TestSelect(t *testing.T) {
 		t.Error("missing dir: want error")
 	}
 }
+
+func TestOpenLines(t *testing.T) {
+	var buf bytes.Buffer
+	evs := []fixture.Event{{T: 1, Dir: fixture.RX, Data: []byte("a")}, {T: 2, Dir: fixture.TX, Data: []byte("b")}}
+	if err := fixture.WriteLog(&buf, evs); err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.SplitAfter(buf.Bytes(), []byte("\n"))
+	data := bytes.Join([][]byte{lines[0], []byte("\n"), lines[1]}, nil)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "log.jsonl")
+	if err := os.WriteFile(p, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(src.Lines, []int{1, 3}) {
+		t.Errorf("Lines = %v, want [1 3]", src.Lines)
+	}
+	// Raw logs, gzip: one line per event.
+	gz := filepath.Join(dir, "20261110T094200.000Z.jsonl.gz")
+	if err := os.WriteFile(gz, gzipEvents(t, 3), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if src, err = Open(gz); err != nil || !reflect.DeepEqual(src.Lines, []int{1, 2, 3}) {
+		t.Errorf("raw Lines = %v, err %v", src.Lines, err)
+	}
+}

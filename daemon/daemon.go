@@ -33,20 +33,6 @@ import (
 	"github.com/thomasbach-dev/medewi/watch"
 )
 
-// Export names from the vendor XML. A name missing from the spec is warned
-// about once at startup and its value stays unknown.
-const (
-	fieldTemp       = "Temperature PID1"
-	fieldSetpoint   = "Setpoint PID"
-	fieldHeat       = "Heat PID"
-	fieldPressure   = "Pressure"
-	fieldPressureSP = "Pressure SP" // without it every brew is a flush
-	fieldFlow       = "Flow rate"   // factor-scaled to ml/s
-	fieldVolume     = "Volume"
-)
-
-var fieldNames = []string{fieldTemp, fieldSetpoint, fieldHeat, fieldPressure, fieldPressureSP, fieldFlow, fieldVolume}
-
 const (
 	defaultSettle     = 1500 * time.Millisecond
 	defaultMinBackoff = time.Second
@@ -229,7 +215,7 @@ func (d *Daemon) checkFields() {
 	for _, v := range d.cfg.Spec.Values {
 		have[v.Name] = true
 	}
-	for _, n := range fieldNames {
+	for _, n := range brew.FieldNames {
 		if !have[n] {
 			slog.Warn("spec lacks field; its value stays unknown", "field", n)
 		}
@@ -333,6 +319,7 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	if !ok {
 		return false
 	}
+	rs.SetXML(name)
 	if name != d.cfg.SpecName {
 		slog.Error("machine XML does not match the loaded spec; not starting reports",
 			"machine", name, "spec", d.cfg.SpecName)
@@ -490,7 +477,7 @@ func (d *Daemon) handle(ctx context.Context, raw []byte) {
 		d.emit(ctx, ev)
 	}
 
-	smp := sample(rec, payload, time.Now())
+	smp := brew.SampleFrom(rec, payload, time.Now())
 	res := d.rec.Feed(smp)
 	// With both set, Closed is the previous brew and Points the new one's.
 	if res.Closed != nil {
@@ -521,27 +508,6 @@ func (d *Daemon) handle(ctx context.Context, raw []byte) {
 			s.MachineReady = false
 		}
 	})
-}
-
-// sample builds a brew sample; Pumping is the pump marker, payload byte 2.
-func sample(rec leva.Record, payload []byte, at time.Time) brew.Sample {
-	f := func(name string) *float64 {
-		if v, ok := rec.Float(name); ok {
-			return &v
-		}
-		return nil
-	}
-	return brew.Sample{
-		At:         at,
-		Pumping:    len(payload) > 2 && payload[2] == '*',
-		Temp:       f(fieldTemp),
-		Setpoint:   f(fieldSetpoint),
-		Pressure:   f(fieldPressure),
-		PressureSP: f(fieldPressureSP),
-		Flow:       f(fieldFlow),
-		Heat:       f(fieldHeat),
-		Volume:     f(fieldVolume),
-	}
 }
 
 // begin stores a newly opened brew. On error the brew goes unrecorded.

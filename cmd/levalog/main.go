@@ -1,24 +1,17 @@
-// Command levalog decodes medewid's raw traffic logs and levacap captures
-// into one text line per event. It only reads files; it never talks to the
-// machine.
+// Command levalog reads medewid's raw traffic logs and levacap captures: it
+// lists the report fields (fields), the pump runs and wand draws (runs) and
+// the events (events), as text, JSON Lines or CSV. It only reads files; it
+// never talks to the machine.
 package main
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"sort"
-	"time"
+	"strings"
 
 	"github.com/spf13/pflag"
-
-	"github.com/thomasbach-dev/medewi/leva"
-	"github.com/thomasbach-dev/medewi/logview"
-	"github.com/thomasbach-dev/medewi/rawlog"
-	"github.com/thomasbach-dev/medewi/systime"
 )
 
 const defaultRawDir = "/var/lib/medewid/raw"
@@ -28,19 +21,102 @@ func main() {
 }
 
 func usage(w io.Writer) {
-	_, _ = fmt.Fprintln(w, `usage: levalog [--xml F] <subcommand>
+	_, _ = fmt.Fprintln(w, `usage: levalog [--xml F] SUBCOMMAND [OPTIONS] [FILE|DIR ...]
 
-  decode [--dir D] [-s|--since T] [-u|--until T] [--show-dumps] [FILE|DIR ...]
-      print one line per event of raw logs (*.jsonl.gz) or captures
-      (log.jsonl, plain or gzip). A DIR is either a capture directory
-      (containing log.jsonl) or a raw-log directory. Without FILE or DIR,
-      the raw logs in --dir that overlap the window. T is a systemd.time(7)
-      timestamp in local time: "2026-11-10 10:40", "10:40", "-5min",
-      "yesterday", with an optional " UTC". --since/--until need raw logs.
+  fields   list the report fields: key, name, unit, factor, offset, source
+  runs     list pump runs (shot, flush) and wand draws, numbered
+  events   print events, with selection, projection and formats
+  summary  what each source holds: firmware, XML, events, modes, READY, runs, masked fields, gaps
 
---xml defaults to $MEDEWID_XML_PATH, then $MEDEWI_XML_PATH; without it
-reports are shown raw. --dir defaults to $MEDEWID_RAW_DIR, then
-`+defaultRawDir+`. Exit codes: 0 ok, 1 read error, 2 usage error.`)
+Input, for all subcommands: FILE|DIR ... are raw logs (*.jsonl.gz) or captures
+(log.jsonl, plain or gzip). A DIR is a capture directory (containing
+log.jsonl), a raw-log directory, or else the parent of capture directories:
+its subdirectories holding log.jsonl, in name order (others are skipped
+with a note). Without FILE or DIR, the raw logs in
+--dir that overlap the window. -s/--since T (inclusive) and -u/--until T
+(exclusive) take a systemd.time(7) timestamp in local time: "2026-11-10
+10:40", "10:40", "-5min", "yesterday", with an optional " UTC"; they need
+raw logs. --format is text (default), jsonl or csv. fields lists the XML in
+effect at the end of the input (with --xml FILE and no readable input, that
+file). runs numbers the runs that start in the window, from 1, counting
+over the whole input given; events --run N with the same input names the
+same run, so to address a run of one capture, pass that capture. Run
+detection also reads the raw log just before and after the window, and a
+selected run is printed whole.
+
+runs prints RUN KIND START T DURATION PEAK_BAR VOLUME_ML TRUNCATED XML SRC,
+all of the run's first sample (PEAK_BAR is empty for draws). START is its
+wall time; for a capture, the manifest's recorded time (taken when levacap
+wrote it, just after its last event) less the time from the run to the
+capture's last event; empty for a capture without one. runs --stats KEYS
+[--agg LIST] appends key_agg columns aggregated over the non-standby
+reports of each run window (first to last sample). --agg takes n, first,
+last, min, max, mean, median, pNN, sd, tmin, tmax, srcmin, srcmax (default
+n,min,max,mean for runs); tmin/tmax are the run_t of the minimum/maximum,
+srcmin/srcmax its src, each of the first occurrence on ties, and n counts
+the unmasked values. A text field (pump, mode, ...) named with a numeric
+aggregate gets only key_last and a note, here and in events --every.
+events --margin SPAN (default 0) widens each run window on both sides and
+needs --run or --run-kind.
+
+events --every SPAN [--agg LIST] prints one row per bucket of SPAN instead:
+t (bucket start), wall, src (jsonl and csv: the source path), run and run_t
+with a run selection, reports (the non-standby reports in it), then each
+field's last value under its plain key, or key_agg columns with --agg. Text
+starts a table, header repeated, after each "# PATH" and "# xml: NAME" line.
+With a run selection a row's source is that of the run's first sample.
+Buckets start at run_t 0 per run with a run selection, else per source: for
+captures from t 0; for raw logs at multiples of SPAN since the Unix epoch,
+so on UTC: --every 1d starts at 00:00 UTC, and a file's first bucket can
+start before the file, at a negative t. Empty buckets are left out. Without
+--fields: pump and every report field (with --agg, text fields only as
+key_last).
+
+events text: T WALL DIR EVENT, then RUN RUN_T with --run/--run-kind, then
+src=, src_end=, xml= when --fields names them, then report fields as
+key=value (pump and mode first) or the line's text. Comment lines: "# PATH"
+when the source changes, followed by "# notes: ..." for a capture with
+manifest notes, and "# xml: NAME" when the XML changes. --fields selects
+the data columns; csv and jsonl always start with t wall src run run_t
+(run and run_t empty or null outside a run window), naming them in
+--fields does not repeat them. jsonl: one object per event, always with
+event and glued too; csv: reports only, with a header row.
+
+Columns medewi adds; everything after them is the machine's data (report
+fields from the XML, frame fields, or the raw text of other lines):
+  t        seconds since the start of the file (raw log) or session (capture)
+  wall     wall clock, raw logs only: local time in text, UTC (RFC 3339 with
+           milliseconds) in jsonl and csv
+  src      PATH:N, the input file and the 1-based JSON line (decompressed) of
+           the event that carried the line's first byte
+  src_end  the same for the last byte; empty when equal to src
+  dir      rx machine to medewi, tx medewi to machine, note medewi's annotation
+  event    report, frame, cmd, reply, banner, notice, note, fragment, partial,
+           redacted; a piece of a glued line is marked (text "+", jsonl glued)
+  run      number of the run whose window (run +- --margin) holds the line
+  run_t    seconds since that run's first sample, negative in the margin before
+  pump     report byte 2: * leva! drives the pump, - not, ? standby
+  xml      the session's vendor XML name
+Report values are parsed (XML factor applied, --raw-values for the raw
+text); masked is ? in text, null in jsonl, empty in csv.
+
+--xml is a file, used for every source, or a directory of NAME.xml files,
+one per XML name a session reports (MC? XML=NAME). It defaults to
+$MEDEWID_XML_PATH, then $MEDEWI_XML_PATH. Without it events shows reports
+raw; fields and runs need it. --dir defaults to $MEDEWID_RAW_DIR, then
+`+defaultRawDir+`. Problems (a missing XML, unparseable values) go to stderr
+as "levalog: ..." lines after the output and do not change the exit code;
+so does the reason for an empty result (what each filter dropped, a --run
+that names no run).
+Exit codes: 0 ok, 1 read error, 2 usage error.
+
+Examples:
+  levalog summary captures/                                      # each capture
+  levalog events --event notice captures/warmup-ready            # find [READY]
+  levalog runs --kind shot --stats pressure --agg max,tmax,srcmax  # peak, when, where
+  levalog events --run 2 --every 1s --fields pressure,pressure_sp  # a shot per second
+  levalog events --every 60s --agg min,max --fields temperature_pid1,heat_pid_average  # warm-up
+  levalog events --run 2 --format csv --fields pressure | awk -F, 'NR>1 && $6>=8.5{print $5; exit}'  # time to 8.5 bar`)
 }
 
 // envOr returns the first non-empty environment variable of keys, else def.
@@ -57,148 +133,84 @@ func run(args []string, stdout, stderr io.Writer) int {
 	xmlPath := envOr("", "MEDEWID_XML_PATH", "MEDEWI_XML_PATH")
 	fs := pflag.NewFlagSet("levalog", pflag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.SetInterspersed(false) // "levalog --xml F decode ..." stops at the subcommand
+	fs.SetInterspersed(false) // "levalog --xml F events ..." stops at the subcommand
 	fs.Usage = func() { usage(stderr) }
-	fs.StringVar(&xmlPath, "xml", xmlPath, "vendor Status-Monitor XML (env MEDEWID_XML_PATH, MEDEWI_XML_PATH)")
+	fs.StringVar(&xmlPath, "xml", xmlPath, "vendor Status-Monitor XML file or directory (env MEDEWID_XML_PATH, MEDEWI_XML_PATH)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
 			return 0
 		}
-		_, _ = fmt.Fprintf(stderr, "levalog: %v\n", err)
-		return 2
+		return fail(stderr, 2, "%v", err)
 	}
 	rest := fs.Args()
 	if len(rest) == 0 {
 		usage(stderr)
 		return 2
 	}
-	if rest[0] != "decode" {
+	cmds := map[string]func([]string, string, io.Writer, io.Writer) int{
+		"fields":  fields,
+		"runs":    runsCmd,
+		"events":  events,
+		"summary": summaryCmd,
+	}
+	cmd, ok := cmds[rest[0]]
+	if !ok {
 		_, _ = fmt.Fprintf(stderr, "levalog: unknown subcommand %q\n", rest[0])
 		usage(stderr)
 		return 2
 	}
-	return decode(rest[1:], xmlPath, stdout, stderr)
+	return cmd(rest[1:], xmlPath, stdout, stderr)
 }
 
-func decode(args []string, xmlPath string, stdout, stderr io.Writer) int {
-	dir := envOr(defaultRawDir, "MEDEWID_RAW_DIR")
-	var since, until systime.Timestamp
-	var showDumps bool
-	fs := pflag.NewFlagSet("decode", pflag.ContinueOnError)
+// fail prints "levalog: MESSAGE" to stderr and returns code.
+func fail(stderr io.Writer, code int, format string, a ...any) int {
+	_, _ = fmt.Fprintf(stderr, "levalog: "+format+"\n", a...)
+	return code
+}
+
+// warn prints each message as a "levalog: " line.
+func warn(stderr io.Writer, msgs []string) {
+	for _, m := range msgs {
+		_, _ = fmt.Fprintf(stderr, "levalog: %s\n", m)
+	}
+}
+
+// subFlags returns the flag set of subcommand name, printing the usage and
+// its own flags on --help.
+func subFlags(name string, stderr io.Writer) *pflag.FlagSet {
+	fs := pflag.NewFlagSet(name, pflag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
 		usage(stderr)
-		_, _ = fmt.Fprintln(stderr, "\ndecode flags:")
+		_, _ = fmt.Fprintf(stderr, "\n%s flags:\n", name)
 		fs.PrintDefaults()
 	}
-	fs.StringVar(&dir, "dir", dir, "raw-log directory used without FILE (env MEDEWID_RAW_DIR)")
-	fs.VarP(&since, "since", "s", "show events at or after this time")
-	fs.VarP(&until, "until", "u", "show events before this time")
-	fs.BoolVar(&showDumps, "show-dumps", false, "print MCu/MCm dump lines instead of redacting them")
+	return fs
+}
+
+// parse parses args into fs; done is true when the caller returns code.
+func parse(fs *pflag.FlagSet, args []string, stderr io.Writer) (code int, done bool) {
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
-			return 0
+			return 0, true
 		}
-		_, _ = fmt.Fprintf(stderr, "levalog: %v\n", err)
-		return 2
+		return fail(stderr, 2, "%v", err), true
 	}
-	window := !since.T.IsZero() || !until.T.IsZero()
-
-	paths, err := sourcePaths(fs.Args(), dir, since.T, until.T)
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "levalog: %v\n", err)
-		return 1
-	}
-	for _, p := range paths {
-		if window && !p.raw {
-			_, _ = fmt.Fprintf(stderr, "levalog: --since/--until need raw logs with wall time; %s is a capture\n", p.path)
-			return 2
-		}
-	}
-	if len(paths) == 0 {
-		_, _ = fmt.Fprintf(stderr, "levalog: no raw logs for this window in %s\n", dir)
-		return 0
-	}
-
-	var spec *leva.RecordSpec
-	if xmlPath == "" {
-		_, _ = fmt.Fprintln(stderr, "levalog: no vendor XML (--xml / MEDEWI_XML_PATH); reports shown raw")
-	} else if spec, err = leva.LoadSpecFile(xmlPath); err != nil {
-		_, _ = fmt.Fprintf(stderr, "levalog: --xml: %v\n", err)
-		return 1
-	}
-
-	opt := logview.Options{Spec: spec, ShowDumps: showDumps, Since: since.T, Until: until.T}
-	w := bufio.NewWriter(stdout)
-	for _, p := range paths {
-		src, err := logview.Open(p.path)
-		if err != nil {
-			_ = w.Flush()
-			_, _ = fmt.Fprintf(stderr, "levalog: %v\n", err)
-			return 1
-		}
-		_, _ = fmt.Fprintf(w, "# %s\n", src.Path)
-		if src.Notes != "" {
-			_, _ = fmt.Fprintf(w, "# notes: %s\n", src.Notes)
-		}
-		for _, e := range logview.Decode(src, opt) {
-			if err := logview.Format(w, e, time.Local); err != nil {
-				_ = w.Flush()
-				_, _ = fmt.Fprintf(stderr, "levalog: %v\n", err)
-				return 1
-			}
-		}
-	}
-	if err := w.Flush(); err != nil {
-		_, _ = fmt.Fprintf(stderr, "levalog: %v\n", err)
-		return 1
-	}
-	return 0
+	return 0, false
 }
 
-// source is one file to decode: a raw log (start from its name) or a
-// capture log.jsonl.
-type source struct {
-	path  string
-	raw   bool
-	start time.Time
+// splitList splits a comma-separated flag value, dropping empty items.
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
-// sourcePaths resolves the FILE|DIR arguments, or the raw logs in dir that
-// overlap the window when there are none, and sorts them by start time
-// (captures, which have none, first and in argument order). A directory
-// argument holding log.jsonl is a capture; any other is a raw-log
-// directory.
-func sourcePaths(args []string, dir string, since, until time.Time) ([]source, error) {
-	var paths []string
-	if len(args) == 0 {
-		args = []string{dir}
-	}
-	for _, a := range args {
-		fi, err := os.Stat(a)
-		if err != nil {
-			return nil, err
-		}
-		if !fi.IsDir() {
-			paths = append(paths, a)
-			continue
-		}
-		capture := filepath.Join(a, "log.jsonl")
-		if _, err := os.Stat(capture); err == nil {
-			paths = append(paths, capture)
-			continue
-		}
-		sel, err := logview.Select(a, since, until)
-		if err != nil {
-			return nil, err
-		}
-		paths = append(paths, sel...)
-	}
-	out := make([]source, 0, len(paths))
-	for _, p := range paths {
-		start, ok := rawlog.FileStart(filepath.Base(p))
-		out = append(out, source{path: p, raw: ok, start: start})
-	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].start.Before(out[j].start) })
-	return out, nil
+// needXML is the usage error of a subcommand or flag that needs the XML.
+func needXML(stderr io.Writer, what string) int {
+	return fail(stderr, 2, "%s needs the vendor XML (--xml / MEDEWI_XML_PATH)", what)
 }

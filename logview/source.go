@@ -24,7 +24,39 @@ type Source struct {
 	Start   time.Time // file-name time for raw logs, zero for captures
 	HasWall bool      // true only for raw logs
 	Notes   string    // the capture manifest's notes, or empty
-	Events  []fixture.Event
+	// Recorded and Firmware are the capture manifest's recording time and
+	// firmware version; zero and empty without a manifest.
+	Recorded time.Time
+	Firmware string
+	Events   []fixture.Event
+	Lines    []int // 1-based line in the decompressed file of each event
+}
+
+// SourceInfo is what is kept of an opened source once its events are
+// decoded: enough to place it on a timeline.
+type SourceInfo struct {
+	Index       int // position in the input, from 0
+	Path        string
+	Start       time.Time // as in Source
+	HasWall     bool
+	Notes       string
+	Recorded    time.Time     // as in Source
+	Firmware    string        // as in Source
+	Events      int           // number of events
+	First, Last time.Duration // offsets of the first and last event; zero without events
+}
+
+// Info summarises s as the source at position index of an input.
+func (s Source) Info(index int) SourceInfo {
+	si := SourceInfo{
+		Index: index, Path: s.Path, Start: s.Start, HasWall: s.HasWall, Notes: s.Notes,
+		Recorded: s.Recorded, Firmware: s.Firmware, Events: len(s.Events),
+	}
+	if n := len(s.Events); n > 0 {
+		si.First = time.Duration(s.Events[0].T) * time.Millisecond
+		si.Last = time.Duration(s.Events[n-1].T) * time.Millisecond
+	}
+	return si
 }
 
 // Wall returns the wall-clock time of ev: Start + T ms. It is only
@@ -35,7 +67,7 @@ func (s Source) Wall(ev fixture.Event) time.Time {
 
 // Open reads path: a raw-log file (name parsed by rawlog.FileStart), a
 // capture log.jsonl (plain or gzip) or a capture directory holding
-// log.jsonl. A sibling manifest.json supplies Notes. A missing gzip trailer
+// log.jsonl. A sibling manifest.json supplies Notes, Recorded and Firmware. A missing gzip trailer
 // or a cut last line yields the events before it, without an error.
 func Open(path string) (Source, error) {
 	fi, err := os.Stat(path)
@@ -48,42 +80,43 @@ func Open(path string) (Source, error) {
 	src := Source{Path: path}
 	if start, ok := rawlog.FileStart(filepath.Base(path)); ok {
 		src.Start, src.HasWall = start, true
-		src.Events, err = rawlog.ReadFile(path)
+		src.Events, src.Lines, err = readEvents(path)
 		if err != nil {
 			return Source{}, err
 		}
 		return src, nil
 	}
-	src.Events, err = readCapture(path)
+	src.Events, src.Lines, err = readEvents(path)
 	if err != nil {
 		return Source{}, err
 	}
 	if m, err := fixture.LoadManifest(filepath.Join(filepath.Dir(path), "manifest.json")); err == nil {
-		src.Notes = m.Notes
+		src.Notes, src.Recorded, src.Firmware = m.Notes, m.Recorded, m.FirmwareVersion
 	}
 	return src, nil
 }
 
-// readCapture reads a plain or gzip JSON-lines capture. A cut last line or
-// a missing gzip trailer is tolerated; a bad line in the middle is not.
-func readCapture(path string) ([]fixture.Event, error) {
+// readEvents reads a plain or gzip JSON-lines log and returns the events
+// with the 1-based line number of each. A cut last line or a missing gzip
+// trailer is tolerated; a bad line in the middle is not.
+func readEvents(path string) ([]fixture.Event, []int, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("logview: %w", err)
+		return nil, nil, fmt.Errorf("logview: %w", err)
 	}
 	data := raw
 	if len(raw) >= 2 && raw[0] == 0x1f && raw[1] == 0x8b {
 		gz, err := gzip.NewReader(bytes.NewReader(raw))
 		if err != nil {
-			if errors.Is(err, io.ErrUnexpectedEOF) {
-				return nil, nil
+			if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+				return nil, nil, nil // no complete header yet
 			}
-			return nil, fmt.Errorf("logview: %s: %w", path, err)
+			return nil, nil, fmt.Errorf("logview: %s: %w", path, err)
 		}
 		// A truncated stream returns the bytes read so far with an error.
 		data, err = io.ReadAll(gz)
 		if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
-			return nil, fmt.Errorf("logview: %s: %w", path, err)
+			return nil, nil, fmt.Errorf("logview: %s: %w", path, err)
 		}
 	}
 	lines := bytes.Split(data, []byte("\n"))
@@ -91,6 +124,7 @@ func readCapture(path string) ([]fixture.Event, error) {
 		lines = lines[:len(lines)-1]
 	}
 	var events []fixture.Event
+	var nums []int
 	for i, line := range lines {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
@@ -100,11 +134,12 @@ func readCapture(path string) ([]fixture.Event, error) {
 			if i == len(lines)-1 {
 				break // cut last line
 			}
-			return events, fmt.Errorf("logview: %s: event %d: %w", path, len(events), err)
+			return events, nums, fmt.Errorf("logview: %s: event %d: %w", path, len(events), err)
 		}
 		events = append(events, ev)
+		nums = append(nums, i+1)
 	}
-	return events, nil
+	return events, nums, nil
 }
 
 // Select returns the raw-log files in dir that may hold events in
