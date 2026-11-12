@@ -45,9 +45,11 @@ and after the window, and a selected run is printed whole.
 runs prints RUN KIND START T DURATION PEAK_BAR VOLUME_ML TRUNCATED XML SRC,
 all of the run's first sample (START is empty for captures, PEAK_BAR for
 draws). runs --stats KEYS [--agg LIST] appends key_agg columns aggregated
-over the non-standby reports of each run window (first to last sample);
-tmin/tmax are run_t, srcmin/srcmax the src of that report, and n counts the
-unmasked values. events --margin SPAN (default 0) widens each run window on both
+over the non-standby reports of each run window (first to last sample).
+--agg takes n, first, last, min, max, mean, median, pNN, sd, tmin, tmax,
+srcmin, srcmax (default n,min,max,mean for runs); tmin/tmax are the run_t of
+the minimum/maximum, srcmin/srcmax its src, and n counts the unmasked
+values. events --margin SPAN (default 0) widens each run window on both
 sides and needs --run or --run-kind.
 
 events --every SPAN [--agg LIST] prints one row per bucket of SPAN instead:
@@ -56,7 +58,7 @@ non-standby reports in it), then each field's last value under its plain key,
 or key_agg columns with --agg. Buckets start at run_t 0 per run with a run
 selection, else at multiples of SPAN since the Unix epoch (raw logs) or from
 t 0 (captures), per source; empty buckets are left out. Without --fields:
-pump and every report field, text fields only as key_last.
+pump and every report field (with --agg, text fields only as key_last).
 
 events text: T WALL DIR EVENT, then RUN RUN_T with --run/--run-kind, then
 src=, src_end=, xml= when --fields names them, then report fields as
@@ -92,7 +94,19 @@ raw; fields and runs need it. --dir defaults to $MEDEWID_RAW_DIR, then
 as "levalog: ..." lines after the output and do not change the exit code;
 so does the reason for an empty result (what each filter dropped, a --run
 that names no run).
-Exit codes: 0 ok, 1 read error, 2 usage error.`)
+Exit codes: 0 ok, 1 read error, 2 usage error.
+
+Examples:
+  levalog summary captures/                         # what each capture holds
+  levalog events --event notice captures/warmup-ready   # find [READY]
+  levalog runs --kind shot --stats pressure --agg max,tmax,srcmax
+                                                    # peak pressure, when, where
+  levalog events --run 2 --every 1s --fields pressure,pressure_sp
+                                                    # shot, one row per second
+  levalog events --every 60s --agg min,max --fields temperature_pid1,heat_pid_average
+                                                    # warm-up, minute by minute
+  levalog events --run 2 --format csv --fields run_t,pressure | awk -F, 'NR>1 && $2>=8.5{print $1; exit}'
+                                                    # time to 8.5 bar: pipe to any tool`)
 }
 
 // envOr returns the first non-empty environment variable of keys, else def.

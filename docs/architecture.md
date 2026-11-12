@@ -67,8 +67,9 @@ flowchart LR
 - **Raw traffic log** — the daemon also keeps the last days of machine
   traffic as gzip JSON-lines files (`rawlog/`), minus license-key replies.
   `levalog events` turns them (and levacap captures) back into readable
-  lines for troubleshooting; `levalog fields` and `levalog runs` list the
-  report fields and the pump runs. The handshake
+  lines for troubleshooting; `levalog fields`, `runs` (with `--stats`)
+  and `summary` list the report fields, the pump runs with statistics, and
+  what each source holds. The handshake
   names the session's XML; `rawlog` repeats it as an `xml:` note at the top
   of each later file.
 
@@ -129,8 +130,8 @@ a truncated kind naming the cause (`truncated-lost`, `truncated-released`,
 - `systime/` — the `systemd.time(7)` subset every command accepts for
   timestamps and spans, plus pflag values for them
   ([CLI conventions](cli-conventions.md)).
-- `cmd/levalog` — `levalog fields`, `runs` and `events` over `logview`,
-  installed on brewhost by the module.
+- `cmd/levalog` — `levalog fields`, `runs`, `events` (with `--every`) and
+  `summary` over `logview`, installed on brewhost by the module.
 - `nix/module.nix` — the `nixosModules.medewid` service.
 
 ## Build order

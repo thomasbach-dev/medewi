@@ -149,14 +149,35 @@
             '';
       };
 
-      devShells.${system}.default = pkgs.mkShell {
-        packages = with pkgs; [
-          go
-          gopls
-          golangci-lint
-          gofumpt
-          govulncheck
-        ];
-      };
+      # `levalog` in the dev shell always runs the working tree's code: it
+      # builds ./cmd/levalog from the repo root into a cache, then execs it
+      # with the caller's arguments and working directory.
+      devShells.${system}.default =
+        let
+          levalogDev = pkgs.writeShellScriptBin "levalog" ''
+            repo=$(${pkgs.git}/bin/git rev-parse --show-toplevel 2>/dev/null) || repo=""
+            [ -f "$repo/cmd/levalog/main.go" ] || repo=''${MEDEWI_REPO:-}
+            if [ ! -f "$repo/cmd/levalog/main.go" ]; then
+              echo "levalog: medewi repo not found (run from it, or set MEDEWI_REPO)" >&2
+              exit 1
+            fi
+            bin=''${XDG_CACHE_HOME:-$HOME/.cache}/medewi/levalog
+            ${pkgs.go}/bin/go build -C "$repo" -o "$bin" ./cmd/levalog || exit 1
+            exec "$bin" "$@"
+          '';
+        in
+        pkgs.mkShell {
+          packages = with pkgs; [
+            go
+            gopls
+            golangci-lint
+            gofumpt
+            govulncheck
+            levalogDev
+          ];
+          shellHook = ''
+            export MEDEWI_REPO=$PWD
+          '';
+        };
     };
 }

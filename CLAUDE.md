@@ -25,6 +25,7 @@ operator procedures in [docs/runbooks/](docs/runbooks/),
 nix develop                       # toolchain (go, gopls, golangci-lint, gofumpt)
 nix develop --command go test -race ./leva/ -run TestName -v   # one test
 go run ./cmd/levasim --fixtures testdata/fixtures/shot-genlever # replay a real shot
+levalog summary captures/   # in nix develop: levalog runs the working tree's code
 ```
 
 Every command follows [docs/cli-conventions.md](docs/cli-conventions.md):

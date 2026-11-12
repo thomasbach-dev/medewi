@@ -1323,3 +1323,44 @@ func TestRunsEmptyReason(t *testing.T) {
 		t.Errorf("no XML: exit %d, stderr %q, want suffix %q", code, errs, want)
 	}
 }
+
+func TestUsageExamples(t *testing.T) {
+	noEnv(t)
+	code, _, errs := runCmd(t, "--help")
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	for _, w := range []string{"Examples:", "summary captures/", "--event notice", "--stats pressure", "--every 1s"} {
+		if !strings.Contains(errs, w) {
+			t.Errorf("help does not mention %q", w)
+		}
+	}
+	_, ex, ok := strings.Cut(errs, "Examples:\n")
+	if !ok {
+		t.Fatal("no Examples: section")
+	}
+	allowed := map[string]bool{}
+	for _, k := range strings.Fields("pressure temperature_pid1 setpoint_pid heat_pid heat_pid_average pressure_sp pressure_band_min pressure_band_max mode pump t wall src src_end run run_t xml dir event") {
+		allowed[k] = true
+	}
+	lines := 0
+	for _, l := range strings.Split(ex, "\n") {
+		if !strings.HasPrefix(l, "  levalog ") {
+			continue
+		}
+		lines++
+		f := strings.Fields(strings.SplitN(l, "#", 2)[0])
+		for i, a := range f {
+			if (a == "--fields" || a == "--stats") && i+1 < len(f) {
+				for _, k := range strings.Split(f[i+1], ",") {
+					if !allowed[k] {
+						t.Errorf("example %q names key %q outside the allowed set", l, k)
+					}
+				}
+			}
+		}
+	}
+	if lines < 6 || lines > 8 {
+		t.Errorf("%d example command lines, want 6 to 8", lines)
+	}
+}
