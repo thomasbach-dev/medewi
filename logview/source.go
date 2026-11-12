@@ -24,8 +24,12 @@ type Source struct {
 	Start   time.Time // file-name time for raw logs, zero for captures
 	HasWall bool      // true only for raw logs
 	Notes   string    // the capture manifest's notes, or empty
-	Events  []fixture.Event
-	Lines   []int // 1-based line in the decompressed file of each event
+	// Recorded and Firmware are the capture manifest's recording time and
+	// firmware version; zero and empty without a manifest.
+	Recorded time.Time
+	Firmware string
+	Events   []fixture.Event
+	Lines    []int // 1-based line in the decompressed file of each event
 }
 
 // SourceInfo is what is kept of an opened source once its events are
@@ -36,13 +40,18 @@ type SourceInfo struct {
 	Start       time.Time // as in Source
 	HasWall     bool
 	Notes       string
+	Recorded    time.Time     // as in Source
+	Firmware    string        // as in Source
 	Events      int           // number of events
 	First, Last time.Duration // offsets of the first and last event; zero without events
 }
 
 // Info summarises s as the source at position index of an input.
 func (s Source) Info(index int) SourceInfo {
-	si := SourceInfo{Index: index, Path: s.Path, Start: s.Start, HasWall: s.HasWall, Notes: s.Notes, Events: len(s.Events)}
+	si := SourceInfo{
+		Index: index, Path: s.Path, Start: s.Start, HasWall: s.HasWall, Notes: s.Notes,
+		Recorded: s.Recorded, Firmware: s.Firmware, Events: len(s.Events),
+	}
 	if n := len(s.Events); n > 0 {
 		si.First = time.Duration(s.Events[0].T) * time.Millisecond
 		si.Last = time.Duration(s.Events[n-1].T) * time.Millisecond
@@ -58,7 +67,7 @@ func (s Source) Wall(ev fixture.Event) time.Time {
 
 // Open reads path: a raw-log file (name parsed by rawlog.FileStart), a
 // capture log.jsonl (plain or gzip) or a capture directory holding
-// log.jsonl. A sibling manifest.json supplies Notes. A missing gzip trailer
+// log.jsonl. A sibling manifest.json supplies Notes, Recorded and Firmware. A missing gzip trailer
 // or a cut last line yields the events before it, without an error.
 func Open(path string) (Source, error) {
 	fi, err := os.Stat(path)
@@ -82,7 +91,7 @@ func Open(path string) (Source, error) {
 		return Source{}, err
 	}
 	if m, err := fixture.LoadManifest(filepath.Join(filepath.Dir(path), "manifest.json")); err == nil {
-		src.Notes = m.Notes
+		src.Notes, src.Recorded, src.Firmware = m.Notes, m.Recorded, m.FirmwareVersion
 	}
 	return src, nil
 }

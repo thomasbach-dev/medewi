@@ -16,10 +16,7 @@ import (
 )
 
 // eventKinds are the values of --event.
-var eventKinds = []logview.Kind{
-	logview.KindReport, logview.KindFrame, logview.KindCmd, logview.KindReply, logview.KindBanner,
-	logview.KindNotice, logview.KindNote, logview.KindFragment, logview.KindPartial, logview.KindRedacted,
-}
+var eventKinds = logview.EventKinds
 
 // runSet is the --run selection: numbers and ranges, kept as ranges so
 // "1-1000000" costs nothing.

@@ -26,8 +26,9 @@ func usage(w io.Writer) {
   fields   list the report fields: key, name, unit, factor, offset, source
   runs     list pump runs (shot, flush) and wand draws, numbered
   events   print events, with selection, projection and formats
+  summary  what each source holds: firmware, XML, events, modes, READY, runs, masked fields, gaps
 
-Input, for all three: FILE|DIR ... are raw logs (*.jsonl.gz) or captures
+Input, for all subcommands: FILE|DIR ... are raw logs (*.jsonl.gz) or captures
 (log.jsonl, plain or gzip). A DIR is either a capture directory (containing
 log.jsonl) or a raw-log directory. Without FILE or DIR, the raw logs in
 --dir that overlap the window. -s/--since T (inclusive) and -u/--until T
@@ -119,9 +120,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	cmds := map[string]func([]string, string, io.Writer, io.Writer) int{
-		"fields": fields,
-		"runs":   runsCmd,
-		"events": events,
+		"fields":  fields,
+		"runs":    runsCmd,
+		"events":  events,
+		"summary": summaryCmd,
 	}
 	cmd, ok := cmds[rest[0]]
 	if !ok {

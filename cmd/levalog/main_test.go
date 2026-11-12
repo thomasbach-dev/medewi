@@ -1099,3 +1099,79 @@ func TestRunsStatsDedup(t *testing.T) {
 		t.Errorf("exit %d, stderr %q\n%s", code, errs, out)
 	}
 }
+
+// summaryCapture is statsCapture with a banner after the last report.
+func summaryCapture(t *testing.T) string {
+	t.Helper()
+	dir := statsCapture(t)
+	f, err := os.OpenFile(filepath.Join(dir, "log.jsonl"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fmt.Fprintf(f, "{\"t\":9100,\"dir\":\"rx\",\"data\":%q}\n",
+		base64.StdEncoding.EncodeToString([]byte("$id: leva! (3.2)\r\n")))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestSummaryCmd(t *testing.T) {
+	noEnv(t)
+	xml, capture := statsXML(t), summaryCapture(t)
+	code, out, errs := runCmd(t, "--xml", xml, "summary", capture)
+	if code != 0 || errs != "" {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	for _, w := range []string{
+		"src: " + filepath.Join(capture, "log.jsonl") + "\n",
+		"kind: capture\n",
+		"firmware: $id: leva! (3.2)\n",
+		"events: report=36 banner=1\n",
+		"modes: PID=8.75\n",
+		"runs: shot=1 flush=0 draw=0 (1)\n",
+		"gaps: 0\n",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("output lacks %q:\n%s", w, out)
+		}
+	}
+
+	code, out, errs = runCmd(t, "summary", "--format", "jsonl", capture)
+	if code != 0 || !strings.HasPrefix(errs, "levalog: ") || !strings.Contains(errs, "XML") {
+		t.Fatalf("no XML: exit %d, stderr %q", code, errs)
+	}
+	var o map[string]any
+	if err := json.Unmarshal([]byte(out), &o); err != nil {
+		t.Fatalf("%q: %v", out, err)
+	}
+	if o["firmware"] != "$id: leva! (3.2)" || fmt.Sprint(o["modes"], o["runs"], o["masked"]) != "map[] map[] []" {
+		t.Errorf("no XML: %s", out)
+	}
+	if ev, _ := o["events"].(map[string]any); ev["report"] != 36.0 {
+		t.Errorf("no XML: events %v", o["events"])
+	}
+}
+
+func TestSummaryGenlever(t *testing.T) {
+	xml := os.Getenv("MEDEWI_XML_PATH")
+	if xml == "" {
+		t.Skip("MEDEWI_XML_PATH not set")
+	}
+	noEnv(t)
+	code, out, errs := runCmd(t, "--xml", xml, "summary", "../../testdata/fixtures/shot-genlever")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	for _, w := range []string{
+		"runs: shot=1 flush=1 draw=0 (1-2)\n",
+		"events: report=644 cmd=3 reply=1 banner=1\n",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("output lacks %q:\n%s", w, out)
+		}
+	}
+}
