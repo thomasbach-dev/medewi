@@ -126,6 +126,7 @@ Details and evidence: [docs/machine-behaviour.md](docs/machine-behaviour.md).
   drives the pump, `-` otherwise, `?` in standby. Wand draws (hot-water
   switch, wired past leva!) show flow with marker `-`. Pressure rises to
   the OPV with the pump off (thermal expansion) — not a pump signal.
-  The Volume field resets to 0 at each leva! pump start and keeps
-  counting during wand draws; the Flow rate field is a decaying estimate
+  The Volume field resets to 0 at each leva! pump start (but not between
+  the pump pulses of the warm-up program: it counts on through the
+  program) and keeps counting during wand draws; the Flow rate field is a decaying estimate
   that lingers for seconds after the pump stops.

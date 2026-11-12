@@ -85,6 +85,13 @@ Observed 2026-11-05 from a cold start (boiler 34 °C):
 3. Pump pulses (marker `*`, no `Pressure SP`): about one per minute, then
    every 15–30 s in the last two minutes, mostly 2–4 s and 10–20 ml; one
    21 s pulse reached 12.2 bar. 285 ml in total.
+   (`levalog runs` on the same capture gives 12.75 bar for that pulse.)
+   The `Volume` field does **not** reset between the pulses: it counts on
+   through the whole program (15, 31, 50 … 285 ml), unlike the reset at
+   every pump start outside programs. The first shot after the program
+   starts from 0 again. One run only; whether the program or the pulse
+   length decides this is open. Per-pulse volume is the difference from
+   the previous pulse.
 4. After the program the manual asks to vent the boiler through the wand
    (air collects above boiling point).
 
