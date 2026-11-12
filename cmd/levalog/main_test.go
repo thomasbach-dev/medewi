@@ -961,6 +961,12 @@ func TestRunsCaptureStart(t *testing.T) {
 	if !strings.Contains(out, " 2026-11-02 ") {
 		t.Errorf("text START without a date:\n%s", out)
 	}
+	// summary's start is the capture's t 0, on the same anchor: 2 s
+	// before the run.
+	_, out, _ = runCmd(t, "--xml", xml, "summary", "--format", "jsonl", capture)
+	if !strings.Contains(out, `"start":"2026-11-02T07:46:24.750Z",`) {
+		t.Errorf("summary start:\n%s", out)
+	}
 }
 
 func TestRunsStatsUsage(t *testing.T) {

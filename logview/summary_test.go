@@ -94,8 +94,10 @@ func TestSummaryCounts(t *testing.T) {
 	if s.Firmware != "fw from manifest" || s.Notes != "a note" || s.Kind != "capture" {
 		t.Errorf("firmware %q notes %q kind %q", s.Firmware, s.Notes, s.Kind)
 	}
-	if !s.HasStart || !s.Start.Equal(rec) {
-		t.Errorf("start = %v (%v), want %v", s.Start, s.HasStart, rec)
+	// levacap takes recorded just after the last event (3.5 s): the
+	// capture started that much earlier.
+	if want := rec.Add(-3500 * time.Millisecond); !s.HasStart || !s.Start.Equal(want) {
+		t.Errorf("start = %v (%v), want %v", s.Start, s.HasStart, want)
 	}
 	if s.Duration != 3500*time.Millisecond || !s.Decoded || s.Src != filepath.Join(dir, "log.jsonl") {
 		t.Errorf("duration %v decoded %v src %q", s.Duration, s.Decoded, s.Src)

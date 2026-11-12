@@ -118,7 +118,7 @@ values joined by spaces.
 | --- | --- |
 | `src` | the source path |
 | `kind` | `capture` or `rawlog` |
-| `start` | wall-clock start: manifest `recorded` (captures; levacap takes it when writing, just after the last event), file start (raw logs) |
+| `start` | wall-clock start: manifest `recorded` minus the last event's offset (captures; levacap takes `recorded` when writing, just after the last event), file start (raw logs) |
 | `duration` | seconds from first to last event |
 | `firmware` | manifest `firmware_version` (captures), else the first `$id:` banner text; empty if none |
 | `xml` | the XML name(s) in effect, in order |
@@ -160,11 +160,11 @@ levalog runs --stats pressure,temperature_pid1 [--agg min,max,mean] …
   Existing columns keep their positions.
 - Works with `--kind`; draws get stats too (their reports are in the window).
 - `START` is the wall time of the run's first sample. In a capture it is
-  the manifest's `recorded` time less the time from that sample to the
-  capture's last event: levacap takes `recorded` when it writes the
-  capture, just after its last event (see the
-  [log-decode spec](2026-11-10-log-decode-cli-conventions-design.md)), so
-  `recorded` + offset would land a capture's length too late. Empty only
+  the manifest's `recorded` minus the last event's offset (the capture's
+  start, as `summary` gives it) plus the sample's offset: levacap takes
+  `recorded` when it writes the capture, just after its last event (see
+  the [log-decode spec](2026-11-10-log-decode-cli-conventions-design.md)),
+  so `recorded` + offset would land a capture's length too late. Empty only
   for a capture without a manifest time. *(Round 2: was empty for every
   capture, so agents saw no date.)*
 - Run numbers count over the whole input given, in input order, as
@@ -317,6 +317,9 @@ Fixes after fresh agents used the tool, all reflected above:
 - The `src` column of `--every` rows is specified (section above).
 - csv/jsonl of `events`: identifying columns lead (section above).
 - `runs`: `START` for captures; run numbering over the given input.
+- `summary`: a capture's `start` is `recorded` minus the last event's
+  offset, the capture's start, consistent with `runs` `START` (it was
+  `recorded` itself, the capture's end).
 - A named text field with a numeric aggregator: `<key>_last` and a note,
   no longer exit 2.
 - Help: `tmin`/`tmax`/`srcmin`/`srcmax` take the first occurrence on ties.

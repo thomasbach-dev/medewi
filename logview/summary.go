@@ -96,7 +96,9 @@ func (s *SummaryScanner) Source(si SourceInfo) {
 	case si.HasWall:
 		sum.Kind, sum.Start, sum.HasStart = "rawlog", si.Start, true
 	case !si.Recorded.IsZero():
-		sum.Start, sum.HasStart = si.Recorded, true
+		// levacap takes recorded when it writes the capture, just after
+		// its last event; t 0 is that much earlier (as Run.Start).
+		sum.Start, sum.HasStart = si.Recorded.Add(-si.Last), true
 	}
 	s.cur = &sourceSum{sum: sum, index: si.Index, masked: map[string]int{}}
 }
