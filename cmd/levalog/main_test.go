@@ -1175,3 +1175,26 @@ func TestSummaryGenlever(t *testing.T) {
 		}
 	}
 }
+
+func TestSummaryWindow(t *testing.T) {
+	noEnv(t)
+	dir := rawDir(t)
+	code, out, errs := runCmd(t, "--xml", synth, "summary", "--dir", dir, "--format", "jsonl",
+		"-s", "2026-11-10 10:00:05 UTC", "-u", "2026-11-10 10:00:15 UTC")
+	if code != 0 || errs != "" {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	if strings.Count(out, "\n") != 1 {
+		t.Fatalf("want one record:\n%s", out)
+	}
+	var o map[string]any
+	if err := json.Unmarshal([]byte(out), &o); err != nil {
+		t.Fatalf("%q: %v", out, err)
+	}
+	if !strings.Contains(o["src"].(string), "20261110T100000") || o["start"] != "2026-11-10T10:00:10.000Z" || o["duration"] != 0.0 {
+		t.Errorf("record: %s", out)
+	}
+	if ev := fmt.Sprint(o["events"]); ev != "map[note:1 report:1]" {
+		t.Errorf("events = %s", ev)
+	}
+}

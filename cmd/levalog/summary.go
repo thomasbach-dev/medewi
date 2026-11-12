@@ -37,6 +37,7 @@ func summaryCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		}
 	}
 	ss := logview.NewSummaryScanner()
+	ss.Since, ss.Until = in.since.T, in.until.T
 	s := logview.Stream{
 		Catalog:  cat,
 		OnSource: func(si logview.SourceInfo) error { ss.Source(si); return nil },

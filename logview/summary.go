@@ -50,7 +50,14 @@ type Summary struct {
 // SummaryScanner builds a Summary per source from a Stream: call Source
 // before the entries of each source and Entry for each entry, then
 // Summaries once.
+//
+// With Since or Until set, only entries whose wall time lies in
+// [Since, Until) count (entries without wall time are dropped), a source
+// without such an entry gets no summary, and Start and Duration are those
+// of its first and last counted entry.
 type SummaryScanner struct {
+	Since, Until time.Time // zero: no bound
+
 	done []sourceSum
 	cur  *sourceSum
 	keys map[*leva.RecordSpec][]string // XML keys of a spec, by position
@@ -64,7 +71,9 @@ type sourceSum struct {
 	decoded bool
 	last    time.Duration // offset of the previous report
 	hasLast bool
-	mode    string // mode of the previous report; "" counts nowhere
+	mode    string        // mode of the previous report; "" counts nowhere
+	entries int           // entries counted
+	first   time.Duration // offset of the first counted entry
 
 	nonStandby int
 	masked     map[string]int // per key: non-standby reports where it is masked
@@ -95,10 +104,18 @@ func (s *SummaryScanner) Source(si SourceInfo) {
 // Entry counts e in the summary of the current source.
 func (s *SummaryScanner) Entry(e *Entry) {
 	c := s.cur
-	if c == nil {
+	if c == nil || !s.inWindow(e) {
 		return
 	}
 	sum := &c.sum
+	c.entries++
+	if s.windowed() {
+		if c.entries == 1 {
+			c.first = e.Offset
+			sum.Start, sum.HasStart = e.Wall, true
+		}
+		sum.Duration = e.Offset - c.first
+	}
 	sum.Events[e.Kind]++
 	if e.XML != "" && (len(sum.XML) == 0 || sum.XML[len(sum.XML)-1] != e.XML) {
 		sum.XML = append(sum.XML, e.XML)
@@ -177,6 +194,17 @@ func sortedKeys(pos map[string]int) []string {
 	return keys
 }
 
+func (s *SummaryScanner) windowed() bool { return !s.Since.IsZero() || !s.Until.IsZero() }
+
+// inWindow reports whether e counts: always without a window, else when
+// its wall time lies in [Since, Until).
+func (s *SummaryScanner) inWindow(e *Entry) bool {
+	if !s.windowed() {
+		return true
+	}
+	return e.HasWall && (s.Since.IsZero() || !e.Wall.Before(s.Since)) && (s.Until.IsZero() || e.Wall.Before(s.Until))
+}
+
 func (s *SummaryScanner) finish() {
 	if s.cur != nil {
 		s.done = append(s.done, *s.cur)
@@ -184,17 +212,21 @@ func (s *SummaryScanner) finish() {
 	}
 }
 
-// Summaries returns the summaries in source order, with each run counted
+// Summaries returns the summaries in source order (with a window, only of
+// the sources that had an entry in it), with each run counted
 // in the source of its first sample.
 func (s *SummaryScanner) Summaries(runs []Run) []Summary {
 	s.finish()
-	out := make([]Summary, len(s.done))
-	for i, c := range s.done {
+	out := make([]Summary, 0, len(s.done))
+	for _, c := range s.done {
+		if s.windowed() && c.entries == 0 {
+			continue
+		}
 		sum := c.sum
 		sum.Decoded = c.decoded || !c.reports
 		if !sum.Decoded {
 			sum.Modes = map[string]time.Duration{}
-			out[i] = sum
+			out = append(out, sum)
 			continue
 		}
 		sum.Runs = map[RunKind]int{}
@@ -214,7 +246,7 @@ func (s *SummaryScanner) Summaries(runs []Run) []Summary {
 				}
 			}
 		}
-		out[i] = sum
+		out = append(out, sum)
 	}
 	return out
 }

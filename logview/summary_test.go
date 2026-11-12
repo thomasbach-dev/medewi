@@ -354,3 +354,42 @@ func TestRunRanges(t *testing.T) {
 		}
 	}
 }
+
+func TestSummaryWindow(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "20261110T100000.000Z.jsonl.gz")
+	writeLog(t, first,
+		rxLine(0, summaryLine('-', "PID")),
+		rxLine(1000, summaryLine('-', "PID")),
+		rxLine(1250, summaryLine('-', "ECO")),
+		rxLine(1500, []byte("[READY]")),
+		rxLine(5000, summaryLine('-', "PID")),
+	)
+	second := filepath.Join(dir, "20261110T110000.000Z.jsonl.gz")
+	writeLog(t, second, rxLine(0, summaryLine('-', "PID")))
+	t0 := time.Date(2026, 11, 10, 10, 0, 0, 0, time.UTC)
+	sc := NewSummaryScanner()
+	sc.Since, sc.Until = t0.Add(time.Second), t0.Add(2*time.Second)
+	s := Stream{
+		Catalog:  testCatalog(t),
+		OnSource: func(si SourceInfo) error { sc.Source(si); return nil },
+		OnEntry:  func(e *Entry) error { sc.Entry(e); return nil },
+	}
+	if err := s.Add(first, second); err != nil {
+		t.Fatal(err)
+	}
+	ss := sc.Summaries(nil)
+	if len(ss) != 1 || ss[0].Src != first {
+		t.Fatalf("summaries = %+v", ss)
+	}
+	got := ss[0]
+	if got.Events[KindReport] != 2 || got.Events[KindNotice] != 1 || len(got.Events) != 2 {
+		t.Errorf("events = %v", got.Events)
+	}
+	if !got.Start.Equal(t0.Add(time.Second)) || got.Duration != 500*time.Millisecond {
+		t.Errorf("start %v duration %v", got.Start, got.Duration)
+	}
+	if got.Modes["PID"] != 250*time.Millisecond || len(got.Modes) != 1 || got.Gaps != 0 || got.GapMax != 250*time.Millisecond {
+		t.Errorf("modes %v gaps %d gap_max %v", got.Modes, got.Gaps, got.GapMax)
+	}
+}
