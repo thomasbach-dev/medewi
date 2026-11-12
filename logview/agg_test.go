@@ -77,7 +77,7 @@ func TestAccNumbers(t *testing.T) {
 	c := fill(5, 1, 3, 2, 4)
 	for name, want := range map[string]float64{
 		"n": 5, "first": 5, "last": 4, "min": 1, "max": 5, "mean": 3,
-		"median": 3, "p90": 5, "p10": 1, "sd": math.Sqrt2,
+		"median": 3, "p90": 5, "p10": 1, "sd": 1.414214, // sqrt 2, rounded to 6 decimals
 		"tmin": 2, "tmax": 1,
 	} {
 		wantNum(t, c, name, want)
@@ -131,4 +131,24 @@ func TestAccText(t *testing.T) {
 	if r := res(t, &c, "min"); r.Num != nil || r.Str != nil {
 		t.Errorf("min of text = %+v", r)
 	}
+}
+
+func TestAccResultRoundedCopies(t *testing.T) {
+	var c Acc
+	x := 3.0
+	c.Add(Value{Num: &x}, 1234567*time.Microsecond, "f:1")
+	wantNum(t, &c, "tmax", 1.235)
+	wantNum(t, &c, "tmin", 1.235)
+	r := res(t, &c, "first")
+	*r.Num = 99
+	s := res(t, &c, "srcmax")
+	*s.Str = "changed"
+	if x != 3 {
+		t.Error("first points into the caller's Value")
+	}
+	wantNum(t, &c, "last", 3)
+	if s := res(t, &c, "srcmax"); *s.Str != "f:1" {
+		t.Errorf("srcmax points into the accumulator: %q", *s.Str)
+	}
+	wantNum(t, fill(1, 2, 2), "mean", 1.666667)
 }

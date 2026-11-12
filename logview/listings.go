@@ -96,24 +96,38 @@ func yesNo(b bool) string {
 	return "no"
 }
 
+// RunsOptions controls WriteRuns.
+type RunsOptions struct {
+	// Loc is the zone of START in text; nil means time.Local.
+	Loc *time.Location
+	// Stats, when set, appends its columns after SRC.
+	Stats *RunStats
+}
+
 // WriteRuns lists runs: RUN KIND START T DURATION PEAK_BAR VOLUME_ML
-// TRUNCATED XML SRC, all of the run's first sample. START is the wall
-// time in loc (text) or UTC (jsonl, csv), absent for captures.
-func WriteRuns(w io.Writer, f Format, runs []Run, loc *time.Location) error {
+// TRUNCATED XML SRC, all of the run's first sample, then the Stats
+// columns (lowercase also in text). START is the wall time in Loc (text)
+// or UTC (jsonl, csv), absent for captures.
+func WriteRuns(w io.Writer, f Format, runs []Run, opt RunsOptions) error {
+	loc := opt.Loc
 	if loc == nil {
 		loc = time.Local
 	}
 	header := []string{"run", "kind", "start", "t", "duration", "peak_bar", "volume_ml", "truncated", "xml", "src"}
+	var statCols []string
+	if opt.Stats != nil {
+		statCols = opt.Stats.Header()
+	}
 	var tw *tabwriter.Writer
 	var cw *csv.Writer
 	switch f {
 	case FormatJSONL:
 	case FormatCSV:
 		cw = csv.NewWriter(w)
-		_ = cw.Write(header)
+		_ = cw.Write(append(header, statCols...))
 	default:
 		tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		_, _ = fmt.Fprintln(tw, strings.ToUpper(strings.Join(header, "\t")))
+		_, _ = fmt.Fprintln(tw, strings.Join(append([]string{strings.ToUpper(strings.Join(header, "\t"))}, statCols...), "\t"))
 	}
 	for _, r := range runs {
 		e := r.First
@@ -129,16 +143,32 @@ func WriteRuns(w io.Writer, f Format, runs []Run, loc *time.Location) error {
 		}
 		n, vol := strconv.Itoa(r.N), FormatNum(math.Round(r.VolumeML*1e6)/1e6)
 		src := srcRef(e.Path, e.Src)
+		var stats []AggValue
+		if opt.Stats != nil {
+			stats = opt.Stats.Values(r.N)
+		}
 		switch {
 		case tw != nil:
-			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%.3f\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%.3f\t%s\t%s\t%s\t%s\t%s\t%s",
 				n, r.Kind, orDash(start), e.Offset.Seconds(), seconds(r.Duration), orDash(peak), vol,
 				yesNo(r.Truncated), orDash(r.XML), src)
+			for _, v := range stats {
+				s := aggText(v)
+				if v.Num == nil && v.Str == nil {
+					s = "?"
+				}
+				_, _ = fmt.Fprintf(tw, "\t%s", s)
+			}
+			_, _ = fmt.Fprintln(tw)
 		case cw != nil:
-			_ = cw.Write([]string{
+			rec := []string{
 				n, string(r.Kind), start, seconds(e.Offset), seconds(r.Duration), peak, vol,
 				strconv.FormatBool(r.Truncated), r.XML, src,
-			})
+			}
+			for _, v := range stats {
+				rec = append(rec, aggText(v))
+			}
+			_ = cw.Write(rec)
 		default:
 			var o jsonObj
 			o.raw("run", n)
@@ -151,6 +181,16 @@ func WriteRuns(w io.Writer, f Format, runs []Run, loc *time.Location) error {
 			o.raw("truncated", strconv.FormatBool(r.Truncated))
 			o.strOrNull("xml", r.XML)
 			o.str("src", src)
+			for i, v := range stats {
+				switch {
+				case v.Num != nil:
+					o.raw(statCols[i], FormatNum(*v.Num))
+				case v.Str != nil:
+					o.str(statCols[i], *v.Str)
+				default:
+					o.raw(statCols[i], "null")
+				}
+			}
 			if _, err := w.Write(o.line()); err != nil {
 				return err
 			}
@@ -164,4 +204,15 @@ func WriteRuns(w io.Writer, f Format, runs []Run, loc *time.Location) error {
 		return cw.Error()
 	}
 	return nil
+}
+
+// aggText is an aggregate as text, empty when it is empty.
+func aggText(v AggValue) string {
+	switch {
+	case v.Num != nil:
+		return FormatNum(*v.Num)
+	case v.Str != nil:
+		return *v.Str
+	}
+	return ""
 }

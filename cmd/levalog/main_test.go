@@ -856,3 +856,138 @@ func TestMemoryBoundedByFile(t *testing.T) {
 		}
 	}
 }
+
+// statsXML is runXML's spec plus a mode text field at offset 4.
+func statsXML(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "stats.xml")
+	const x = `<cfg version="4"><values>
+<value at="4" len="3" type="string">1:%</value>
+<value at="7" len="5" export="Pressure" type="float" unit="bar"></value>
+<value at="13" len="5" export="Pressure SP" type="float" unit="bar"></value>
+<value at="19" len="5" export="Volume" type="float" unit="ml"></value>
+</values></cfg>
+`
+	if err := os.WriteFile(p, []byte(x), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// statsCapture writes a capture with one shot whose pressure rises to
+// 9.50 bar at its 7th pumping report and then falls; reports every 250 ms.
+func statsCapture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	var b strings.Builder
+	k := 0
+	add := func(pump byte, bar float64, sp string, volume float64) {
+		r := runReport(step{pump: pump, sp: sp, volume: volume})
+		copy(r[4:], "PID")
+		copy(r[7:], fmt.Sprintf("%5.2f", bar))
+		fmt.Fprintf(&b, "{\"t\":%d,\"dir\":\"rx\",\"data\":%q}\n", k*250,
+			base64.StdEncoding.EncodeToString(append(r, '\r', '\n')))
+		k++
+	}
+	for range 8 {
+		add('-', 0, "", 0)
+	}
+	for i, bar := range []float64{1, 2, 4, 6, 8, 9, 9.5, 9.2, 9, 8.5, 8, 7} {
+		add('*', bar, "9.00", float64(i))
+	}
+	for range 16 {
+		add('-', 0, "", 11)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "log.jsonl"), []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestRunsStats(t *testing.T) {
+	noEnv(t)
+	xml, capture := statsXML(t), statsCapture(t)
+	code, out, errs := runCmd(t, "--xml", xml, "runs", "--stats", "pressure", "--agg", "max", capture)
+	if code != 0 || errs != "" {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	ls := strings.Split(strings.TrimSpace(out), "\n")
+	if len(ls) != 2 {
+		t.Fatalf("output:\n%s", out)
+	}
+	h, r := strings.Fields(ls[0]), strings.Fields(ls[1])
+	if h[len(h)-1] != "pressure_max" || r[len(r)-1] != "9.5" || len(h) != len(r) {
+		t.Errorf("output:\n%s", out)
+	}
+
+	code, out, errs = runCmd(t, "--xml", xml, "runs", "--format", "jsonl", "--stats", "pressure,pump",
+		"--agg", "n,last", capture)
+	if code != 0 || errs != "" {
+		t.Fatalf("pump: exit %d, stderr %q", code, errs)
+	}
+	var row map[string]any
+	if err := json.Unmarshal([]byte(out), &row); err != nil {
+		t.Fatalf("%q: %v", out, err)
+	}
+	if row["pressure_n"] != 12.0 || row["pressure_last"] != 7.0 || row["pump_n"] != 12.0 || row["pump_last"] != "*" {
+		t.Errorf("jsonl: %s", out)
+	}
+	code, out, errs = runCmd(t, "--xml", xml, "runs", "--format", "csv", "--stats", "pressure",
+		"--agg", "tmax,srcmax", capture)
+	if code != 0 || !strings.HasSuffix(strings.TrimSpace(out), ",1.5,"+filepath.Join(capture, "log.jsonl")+":15") {
+		t.Errorf("csv: exit %d, stderr %q\n%s", code, errs, out)
+	}
+}
+
+func TestRunsStatsUsage(t *testing.T) {
+	noEnv(t)
+	xml, capture := statsXML(t), statsCapture(t)
+	for _, tc := range []struct {
+		args []string
+		code int
+		want string
+	}{
+		{[]string{"--agg", "max"}, 2, "--agg needs --stats"},
+		{[]string{"--stats", "nosuch"}, 2, "levalog fields"},
+		{[]string{"--stats", "src"}, 2, "src"},
+		{[]string{"--stats", "pressure", "--agg", "avg"}, 2, "tmax"},
+		{[]string{"--stats", "mode", "--agg", "max"}, 2, "mode"},
+		{[]string{"--stats", "pump", "--agg", "mean"}, 2, "pump"},
+		{[]string{"--stats", "mode", "--agg", "last"}, 0, ""},
+	} {
+		args := append(append([]string{"--xml", xml, "runs"}, tc.args...), capture)
+		code, _, errs := runCmd(t, args...)
+		if code != tc.code || !strings.Contains(errs, tc.want) || (tc.code == 0 && errs != "") {
+			t.Errorf("%q: exit %d, stderr %q; want %d naming %q", tc.args, code, errs, tc.code, tc.want)
+		}
+	}
+}
+
+func TestRunsStatsGenlever(t *testing.T) {
+	xml := os.Getenv("MEDEWI_XML_PATH")
+	if xml == "" {
+		t.Skip("MEDEWI_XML_PATH not set")
+	}
+	noEnv(t)
+	code, out, errs := runCmd(t, "--xml", xml, "runs", "--kind", "shot", "--format", "jsonl",
+		"--stats", "pressure", "--agg", "n,max,tmax,srcmax", "../../testdata/fixtures/shot-genlever")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	var row map[string]any
+	if err := json.Unmarshal([]byte(strings.Split(out, "\n")[0]), &row); err != nil {
+		t.Fatalf("%q: %v", out, err)
+	}
+	if row["pressure_max"] == nil || row["pressure_max"] != row["peak_bar"] {
+		t.Errorf("pressure_max %v, peak_bar %v", row["pressure_max"], row["peak_bar"])
+	}
+	want := map[string]any{
+		"run": 2.0, "pressure_n": 176.0, "pressure_max": 9.01, "pressure_tmax": 10.07,
+		"pressure_srcmax": "../../testdata/fixtures/shot-genlever/log.jsonl:1815",
+	}
+	for k, v := range want {
+		if row[k] != v {
+			t.Errorf("%s = %v, want %v", k, row[k], v)
+		}
+	}
+}

@@ -41,7 +41,10 @@ and after the window, and a selected run is printed whole.
 
 runs prints RUN KIND START T DURATION PEAK_BAR VOLUME_ML TRUNCATED XML SRC,
 all of the run's first sample (START is empty for captures, PEAK_BAR for
-draws). events --margin SPAN (default 0) widens each run window on both
+draws). runs --stats KEYS [--agg LIST] appends key_agg columns aggregated
+over the non-standby reports of each run window (first to last sample);
+tmin/tmax are run_t, srcmin/srcmax the src of that report, and n counts the
+unmasked values. events --margin SPAN (default 0) widens each run window on both
 sides and needs --run or --run-kind.
 
 events text: T WALL DIR EVENT, then RUN RUN_T with --run/--run-kind, then

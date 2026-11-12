@@ -3,9 +3,12 @@ package main
 import (
 	"bufio"
 	"io"
+	"maps"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/thomasbach-dev/medewi/leva"
 	"github.com/thomasbach-dev/medewi/logview"
 )
 
@@ -25,10 +28,12 @@ func parseRunKinds(s, flag string, stderr io.Writer) ([]logview.RunKind, int) {
 // runsCmd lists the runs of the input.
 func runsCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	var in input
-	var kind string
+	var kind, stats, agg string
 	fs := subFlags("runs", stderr)
 	in.register(fs)
 	fs.StringVar(&kind, "kind", "", "only runs of these kinds, comma-separated: shot, flush, draw (numbers stay)")
+	fs.StringVar(&stats, "stats", "", "add aggregates of these report fields per run window, by key (see levalog fields)")
+	fs.StringVar(&agg, "agg", "n,min,max,mean", "aggregates for --stats: n, first, last, min, max, mean, median, pNN, sd, tmin, tmax, srcmin, srcmax")
 	if code, done := parse(fs, args, stderr); done {
 		return code
 	}
@@ -38,6 +43,14 @@ func runsCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	kinds, code := parseRunKinds(kind, "--kind", stderr)
 	if code != 0 {
 		return code
+	}
+	statKeys := splitList(stats)
+	if fs.Changed("agg") && len(statKeys) == 0 {
+		return fail(stderr, 2, "--agg needs --stats")
+	}
+	aggs, err := logview.ParseAggs(agg)
+	if err != nil {
+		return fail(stderr, 2, "--agg: %v", err)
 	}
 	if xmlPath == "" {
 		return needXML(stderr, "runs")
@@ -59,15 +72,66 @@ func runsCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		return fail(stderr, 1, "%v", err)
 	}
 	runs := slices.DeleteFunc(sc.runs, func(r logview.Run) bool { return !keep(r) })
+	opt := logview.RunsOptions{Loc: time.Local}
+	if len(statKeys) > 0 {
+		if code := checkStats(statKeys, aggs, sc.specs, cat, stderr); code != 0 {
+			return code
+		}
+		opt.Stats = logview.NewRunStats(runs, statKeys, aggs)
+		s := logview.Stream{Catalog: cat, OnEntry: func(e *logview.Entry) error {
+			opt.Stats.Entry(e)
+			return nil
+		}}
+		if err := s.Add(sc.paths...); err != nil {
+			return fail(stderr, 1, "%v", err)
+		}
+	}
 	w := bufio.NewWriter(stdout)
-	err = logview.WriteRuns(w, in.f, runs, time.Local)
+	err = logview.WriteRuns(w, in.f, runs, opt)
 	if ferr := w.Flush(); err == nil {
 		err = ferr
 	}
 	warn(stderr, sc.problems)
 	warn(stderr, sc.warns)
+	if opt.Stats != nil {
+		warn(stderr, opt.Stats.Missing())
+	}
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
+	}
+	return 0
+}
+
+// checkStats validates the --stats keys: report fields of the input's XML
+// or pump, and no numeric aggregate on a text field.
+func checkStats(keys []string, aggs []logview.Agg, specs map[*leva.RecordSpec]bool, cat *logview.Catalog, stderr io.Writer) int {
+	var bad []string
+	for _, k := range keys {
+		if k != "pump" && isMedewiKey(k) {
+			bad = append(bad, k)
+		}
+	}
+	bad = append(bad, unknownKeys(keys, specs, cat)...)
+	if len(bad) > 0 {
+		return fail(stderr, 2, "--stats: unknown report fields %s (see levalog fields)", strings.Join(bad, ", "))
+	}
+	all := maps.Clone(specs)
+	if spec, _ := cat.Lookup(""); spec != nil {
+		all[spec] = true
+	}
+	for _, k := range keys {
+		text := k == "pump"
+		for spec := range all {
+			text = text || logview.IsTextKey(spec, k)
+		}
+		if !text {
+			continue
+		}
+		for _, a := range aggs {
+			if a.Numeric() {
+				return fail(stderr, 2, "--agg %s: %s is a text field (n, first and last only)", a.Name, k)
+			}
+		}
 	}
 	return 0
 }

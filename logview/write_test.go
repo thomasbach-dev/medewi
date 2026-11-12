@@ -424,7 +424,7 @@ func TestWriteRunsText(t *testing.T) {
 		t.Fatalf("runs = %+v", runs)
 	}
 	var b bytes.Buffer
-	if err := WriteRuns(&b, FormatText, runs, time.UTC); err != nil {
+	if err := WriteRuns(&b, FormatText, runs, RunsOptions{Loc: time.UTC}); err != nil {
 		t.Fatal(err)
 	}
 	ls := lines(b.String())
@@ -438,7 +438,7 @@ func TestWriteRunsText(t *testing.T) {
 		t.Errorf("draw %q", ls[2])
 	}
 	b.Reset()
-	if err := WriteRuns(&b, FormatJSONL, runs, time.UTC); err != nil {
+	if err := WriteRuns(&b, FormatJSONL, runs, RunsOptions{Loc: time.UTC}); err != nil {
 		t.Fatal(err)
 	}
 	m := decodeJSON(t, lines(b.String())[1])
@@ -446,7 +446,7 @@ func TestWriteRunsText(t *testing.T) {
 		t.Errorf("jsonl %v", m)
 	}
 	b.Reset()
-	if err := WriteRuns(&b, FormatCSV, runs, time.UTC); err != nil {
+	if err := WriteRuns(&b, FormatCSV, runs, RunsOptions{Loc: time.UTC}); err != nil {
 		t.Fatal(err)
 	}
 	if ls := lines(b.String()); ls[0] != "run,kind,start,t,duration,peak_bar,volume_ml,truncated,xml,src" || !strings.HasPrefix(ls[1], "1,shot,2026-11-10T07:58:01.000Z,1,") {
@@ -511,10 +511,55 @@ func TestTextJSONLLatin1Valid(t *testing.T) {
 
 func TestWriteRunsDefaultText(t *testing.T) {
 	var b bytes.Buffer
-	if err := WriteRuns(&b, Format("bogus"), nil, time.UTC); err != nil {
+	if err := WriteRuns(&b, Format("bogus"), nil, RunsOptions{Loc: time.UTC}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(b.String(), "RUN  KIND") {
 		t.Errorf("got %q", b.String())
+	}
+}
+
+func TestWriteRunsStats(t *testing.T) {
+	l, runs := twoShots(t)
+	aggs, _ := ParseAggs("n,max")
+	st := NewRunStats(runs, []string{"pressure"}, aggs)
+	// Run 2 gets no values: n 0, max empty.
+	for i := range l.Entries {
+		if l.Entries[i].Index < 20 {
+			st.Entry(&l.Entries[i])
+		}
+	}
+	opt := RunsOptions{Loc: time.UTC, Stats: st}
+	var b bytes.Buffer
+	if err := WriteRuns(&b, FormatText, runs, opt); err != nil {
+		t.Fatal(err)
+	}
+	ls := lines(b.String())
+	tail := func(line string, n int) string {
+		f := strings.Fields(line)
+		return strings.Join(f[max(len(f)-n, 0):], " ")
+	}
+	if tail(ls[0], 3) != "SRC pressure_n pressure_max" {
+		t.Errorf("header %q", ls[0])
+	}
+	if tail(ls[1], 3) != "src0:5 3 9" || tail(ls[2], 2) != "0 ?" {
+		t.Errorf("rows %q", ls[1:])
+	}
+	b.Reset()
+	if err := WriteRuns(&b, FormatJSONL, runs, opt); err != nil {
+		t.Fatal(err)
+	}
+	ls = lines(b.String())
+	if !strings.HasSuffix(ls[0], `,"src":"src0:5","pressure_n":3,"pressure_max":9}`) ||
+		!strings.HasSuffix(ls[1], `,"pressure_n":0,"pressure_max":null}`) {
+		t.Errorf("jsonl %q", ls)
+	}
+	b.Reset()
+	if err := WriteRuns(&b, FormatCSV, runs, opt); err != nil {
+		t.Fatal(err)
+	}
+	ls = lines(b.String())
+	if !strings.HasSuffix(ls[0], ",src,pressure_n,pressure_max") || !strings.HasSuffix(ls[1], ",src0:5,3,9") || !strings.HasSuffix(ls[2], ",0,") {
+		t.Errorf("csv %q", ls)
 	}
 }
