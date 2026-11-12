@@ -57,16 +57,17 @@ func (in *input) fromDir() bool { return len(in.args) == 0 }
 // paths resolves the input files, selecting raw logs for [since, until).
 // Code 0 means ok; otherwise the error is printed. With no file to read it
 // prints why and returns none with code 0. The notes on skipped
-// directories are left in in.notes for after the output.
+// directories, and why a directory gave no file while others did, are
+// left in in.notes for after the output.
 func (in *input) paths(since, until time.Time, stderr io.Writer) ([]string, int) {
 	srcs, notes, empty, err := sourcePaths(in.args, in.dir, since, until, in.window())
 	if err != nil {
 		return nil, fail(stderr, 1, "%v", err)
 	}
+	notes = append(notes, empty...)
 	in.notes = notes
 	if len(srcs) == 0 {
 		warn(stderr, notes)
-		warn(stderr, empty)
 		return nil, 0
 	}
 	out := make([]string, 0, len(srcs))

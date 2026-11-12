@@ -1292,6 +1292,17 @@ func TestNoLogsNamesDir(t *testing.T) {
 	}
 }
 
+// An empty directory among other inputs is named after the output.
+func TestEmptyDirAmongOthers(t *testing.T) {
+	noEnv(t)
+	xml, capture, empty := statsXML(t), summaryCapture(t), t.TempDir()
+	code, out, errs := runCmd(t, "--xml", xml, "summary", empty, capture)
+	want := "levalog: no logs in " + empty + " (no log.jsonl, no *.jsonl.gz, no capture subdirectories)\n"
+	if code != 0 || !strings.Contains(out, "src: "+filepath.Join(capture, "log.jsonl")+"\n") || errs != want {
+		t.Errorf("exit %d, stderr %q, want %q\n%s", code, errs, want, out)
+	}
+}
+
 func TestCaptureWithSubdirs(t *testing.T) {
 	noEnv(t)
 	dir := t.TempDir()
