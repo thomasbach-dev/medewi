@@ -53,9 +53,12 @@ values. events --margin SPAN (default 0) widens each run window on both
 sides and needs --run or --run-kind.
 
 events --every SPAN [--agg LIST] prints one row per bucket of SPAN instead:
-t (bucket start), wall, run and run_t with a run selection, reports (the
-non-standby reports in it), then each field's last value under its plain key,
-or key_agg columns with --agg. Buckets start at run_t 0 per run with a run
+t (bucket start), wall, src (jsonl and csv: the source path), run and run_t
+with a run selection, reports (the non-standby reports in it), then each
+field's last value under its plain key, or key_agg columns with --agg. Text
+starts a table, header repeated, after each "# PATH" and "# xml: NAME" line.
+With a run selection a row's source is that of the run's first sample.
+Buckets start at run_t 0 per run with a run
 selection, else at multiples of SPAN since the Unix epoch (raw logs) or from
 t 0 (captures), per source; empty buckets are left out. Without --fields:
 pump and every report field (with --agg, text fields only as key_last).

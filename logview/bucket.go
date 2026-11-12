@@ -27,8 +27,11 @@ func (c BucketCol) Name() string {
 
 // BucketRow is one bucket: the reports of one span of time, aggregated.
 type BucketRow struct {
-	Source SourceInfo // the source of the bucket's first report
-	Run    *Run       // with run selection, else nil
+	// Source and XML are those of the bucket's first report; with run
+	// selection, those of the run's first sample.
+	Source SourceInfo
+	XML    string
+	Run    *Run // with run selection, else nil
 	// Start is the bucket start on the source's base (its t), Wall the
 	// same on the wall clock (raw logs only).
 	Start   time.Duration
@@ -62,6 +65,7 @@ type bucket struct {
 	run     *Run
 	idx     int64 // start / every
 	src     SourceInfo
+	xml     string
 	reports int
 	accs    []Acc // per key
 }
@@ -194,7 +198,11 @@ func (b *Bucketer) newBucket(run *Run, idx int64, e *Entry) *bucket {
 	for i := range accs {
 		accs[i] = NewAcc(b.keyAggs[i])
 	}
-	return &bucket{run: run, idx: idx, src: b.sources[e.Source], accs: accs}
+	bk := &bucket{run: run, idx: idx, src: b.sources[e.Source], xml: e.XML, accs: accs}
+	if run != nil {
+		bk.src, bk.xml = b.sources[run.First.Source], run.XML
+	}
+	return bk
 }
 
 func (b *Bucketer) closeCur() []BucketRow {
@@ -264,7 +272,7 @@ func (b *Bucketer) emitRun(rb *runBuckets) []BucketRow {
 
 func (b *Bucketer) row(bk *bucket) BucketRow {
 	start := time.Duration(bk.idx) * b.every
-	r := BucketRow{Source: bk.src, Run: bk.run, Reports: bk.reports, Values: make([]AggValue, len(b.cols))}
+	r := BucketRow{Source: bk.src, XML: bk.xml, Run: bk.run, Reports: bk.reports, Values: make([]AggValue, len(b.cols))}
 	switch {
 	case bk.run != nil:
 		rt := start

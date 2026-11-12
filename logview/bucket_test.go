@@ -226,7 +226,7 @@ func TestBucketDefaultLast(t *testing.T) {
 	for i, l := range ls {
 		got[i] = strings.Join(strings.Fields(l), " ")
 	}
-	want := []string{"t wall reports pump pressure", "0.000 - 3 * 3", "1.000 - 1 * 4"}
+	want := []string{"# src0", "# xml: x", "t wall reports pump pressure", "0.000 - 3 * 3", "1.000 - 1 * 4"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -324,5 +324,37 @@ func TestBucketCaptureRunClosesOnNextSource(t *testing.T) {
 	added, closed := bucketRuns(l, runs, Selection{Runs: []int{1, 2}}, b)
 	if len(added) == 0 || added[0].Run.N != 1 || len(closed) == 0 || closed[0].Run.N != 2 {
 		t.Errorf("run 1 not emitted by Add: %d rows from Add, %d from Close", len(added), len(closed))
+	}
+}
+
+// With run selection a row belongs to the run's first sample's source,
+// also when its reports come from a later one; without, to its own.
+func TestBucketRowSource(t *testing.T) {
+	var l loaded
+	addSource(t, &l, runT0, true, concat(idle(4, 0, 0), pumping(10, "9.0", 9, 4), idle(14, 40, 0)))
+	addSource(t, &l, time.Time{}, false, concat(idle(4, 0, 0), pumping(10, "9.0", 9, 4), idle(14, 40, 0)))
+	addSource(t, &l, runT0.Add(6900*time.Millisecond), true, idle(8, 40, 0))
+	runs := findRuns(l, brew.DefaultConfig(), time.Time{}, time.Time{})
+	b := NewBucketer(time.Second, lastCols("pressure"), true)
+	added, closed := bucketRuns(l, runs, Selection{Runs: []int{1}, Margin: 4 * time.Second}, b)
+	rows := slices.Concat(added, closed)
+	if len(rows) == 0 || *rows[len(rows)-1].RunT < 6*time.Second {
+		t.Fatalf("want run 1 rows into the third source: %+v", startsOf(rows))
+	}
+	for _, r := range rows {
+		if r.Source.Path != "src0" || r.XML != "x" {
+			t.Errorf("run_t %v: source %q, xml %q; want src0, x", *r.RunT, r.Source.Path, r.XML)
+		}
+		if want := r.Wall.Sub(runT0); r.Start != want {
+			t.Errorf("run_t %v: t %v, want %v (on src0's base)", *r.RunT, r.Start, want)
+		}
+	}
+	rows = bucketAll(NewBucketer(time.Minute, lastCols("pressure"), false), l.Sources, l.Entries)
+	var paths []string
+	for _, r := range rows {
+		paths = append(paths, r.Source.Path+"/"+r.XML)
+	}
+	if got := strings.Join(paths, " "); got != "src0/x src1/x src2/x" {
+		t.Errorf("sources %s", got)
 	}
 }

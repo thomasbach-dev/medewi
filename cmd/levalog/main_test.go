@@ -1004,6 +1004,7 @@ func TestEventsEvery(t *testing.T) {
 		got = append(got, strings.Join(strings.Fields(l), " "))
 	}
 	want := []string{
+		"# " + filepath.Join(capture, "log.jsonl"),
 		"t wall reports pressure_max",
 		"0.000 - 4 0", "1.000 - 4 0", "2.000 - 4 6", "3.000 - 4 9.5", "4.000 - 4 9",
 		"5.000 - 4 0", "6.000 - 4 0", "7.000 - 4 0", "8.000 - 4 0",
@@ -1019,7 +1020,8 @@ func TestEventsEvery(t *testing.T) {
 		t.Fatalf("csv: exit %d, stderr %q", code, errs)
 	}
 	ls := strings.Split(strings.TrimSpace(out), "\n")
-	if ls[0] != "t,wall,run,run_t,reports,pressure,mode" || ls[1] != "2,,1,0,8,9.2,PID" || len(ls) != 3 {
+	logPath := filepath.Join(capture, "log.jsonl")
+	if ls[0] != "t,wall,src,run,run_t,reports,pressure,mode" || ls[1] != "2,,"+logPath+",1,0,8,9.2,PID" || len(ls) != 3 {
 		t.Errorf("csv:\n%s", out)
 	}
 
@@ -1028,9 +1030,33 @@ func TestEventsEvery(t *testing.T) {
 	if code != 0 || errs != "" {
 		t.Fatalf("jsonl: exit %d, stderr %q", code, errs)
 	}
-	want1 := `{"t":0,"wall":null,"reports":36,"pump_last":"-","mode_last":"PID","pressure_max":9.5,"pressure_sp_max":9,"volume_max":11}`
+	want1 := `{"t":0,"wall":null,"src":"` + logPath + `","reports":36,"pump_last":"-","mode_last":"PID","pressure_max":9.5,"pressure_sp_max":9,"volume_max":11}`
 	if strings.TrimSpace(out) != want1 {
 		t.Errorf("jsonl:\n%s\nwant\n%s", out, want1)
+	}
+}
+
+// Rows of several captures name their source: text with a "# PATH" line
+// per table, jsonl and csv with src.
+func TestEventsEverySources(t *testing.T) {
+	noEnv(t)
+	xml, a, b := statsXML(t), statsCapture(t), statsCapture(t)
+	pa, pb := filepath.Join(a, "log.jsonl"), filepath.Join(b, "log.jsonl")
+	code, out, errs := runCmd(t, "--xml", xml, "events", "--every", "10s", "--fields", "pressure", a, b)
+	if code != 0 || errs != "" {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	var got []string
+	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
+		got = append(got, strings.Join(strings.Fields(l), " "))
+	}
+	want := []string{"# " + pa, "t wall reports pressure", "0.000 - 36 0", "# " + pb, "t wall reports pressure", "0.000 - 36 0"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("text:\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	_, out, _ = runCmd(t, "--xml", xml, "events", "--every", "10s", "--fields", "pressure", "--format", "csv", a, b)
+	if want := "t,wall,src,reports,pressure\n0,," + pa + ",36,0\n0,," + pb + ",36,0\n"; out != want {
+		t.Errorf("csv:\n%s\nwant\n%s", out, want)
 	}
 }
 
@@ -1080,6 +1106,10 @@ func TestEventsEveryGenlever(t *testing.T) {
 		t.Errorf("stderr %q", errs)
 	}
 	ls := strings.Split(strings.TrimSpace(out), "\n")
+	if ls[0] != "# ../../testdata/fixtures/shot-genlever/log.jsonl" || !strings.HasPrefix(ls[1], "# xml: ") {
+		t.Errorf("comments %q", ls[:2])
+	}
+	ls = ls[2:]
 	if got := strings.Join(strings.Fields(ls[0]), " "); got != "t wall run run_t reports pressure" {
 		t.Errorf("header %q", got)
 	}

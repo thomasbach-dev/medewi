@@ -17,34 +17,43 @@ func TestWriteBucket(t *testing.T) {
 	runT := -time.Second
 	run := &Run{N: 3}
 	capture := BucketRow{
-		Source: SourceInfo{Path: "c/log.jsonl"}, Run: run, RunT: &runT, Start: time.Second, Reports: 2,
+		Source: SourceInfo{Path: "c/log.jsonl", Notes: "warm-up"}, Run: run, RunT: &runT, Start: time.Second, Reports: 2,
 		Values: []AggValue{{Num: &nine}, {}, {Str: &empty}},
 	}
 	wall := time.Date(2026, 11, 10, 10, 0, 30, 0, time.UTC)
 	raw := capture
 	raw.Wall, raw.HasWall, raw.Start = wall, true, 30*time.Second
+	raw.Source, raw.XML = SourceInfo{Index: 1, Path: "r.jsonl.gz", HasWall: true}, "X"
 	for _, tc := range []struct {
 		f    Format
 		want []string
 	}{
 		{FormatText, []string{
+			"# c/log.jsonl",
+			"# notes: warm-up",
 			"t wall run run_t reports pressure_max pressure_sp_max mode_last",
 			"1.000 - 3 -1.000 2 9.5 ? ?",
+			"# r.jsonl.gz",
+			"# xml: X",
+			"t wall run run_t reports pressure_max pressure_sp_max mode_last",
+			"30.000 2026-11-10 10:00:30.000 3 -1.000 2 9.5 ? ?",
 			"30.000 2026-11-10 10:00:30.000 3 -1.000 2 9.5 ? ?",
 		}},
 		{FormatJSONL, []string{
-			`{"t":1,"wall":null,"run":3,"run_t":-1,"reports":2,"pressure_max":9.5,"pressure_sp_max":null,"mode_last":""}`,
-			`{"t":30,"wall":"2026-11-10T10:00:30.000Z","run":3,"run_t":-1,"reports":2,"pressure_max":9.5,"pressure_sp_max":null,"mode_last":""}`,
+			`{"t":1,"wall":null,"src":"c/log.jsonl","run":3,"run_t":-1,"reports":2,"pressure_max":9.5,"pressure_sp_max":null,"mode_last":""}`,
+			`{"t":30,"wall":"2026-11-10T10:00:30.000Z","src":"r.jsonl.gz","run":3,"run_t":-1,"reports":2,"pressure_max":9.5,"pressure_sp_max":null,"mode_last":""}`,
+			`{"t":30,"wall":"2026-11-10T10:00:30.000Z","src":"r.jsonl.gz","run":3,"run_t":-1,"reports":2,"pressure_max":9.5,"pressure_sp_max":null,"mode_last":""}`,
 		}},
 		{FormatCSV, []string{
-			"t,wall,run,run_t,reports,pressure_max,pressure_sp_max,mode_last",
-			"1,,3,-1,2,9.5,,",
-			"30,2026-11-10T10:00:30.000Z,3,-1,2,9.5,,",
+			"t,wall,src,run,run_t,reports,pressure_max,pressure_sp_max,mode_last",
+			"1,,c/log.jsonl,3,-1,2,9.5,,",
+			"30,2026-11-10T10:00:30.000Z,r.jsonl.gz,3,-1,2,9.5,,",
+			"30,2026-11-10T10:00:30.000Z,r.jsonl.gz,3,-1,2,9.5,,",
 		}},
 	} {
 		var b bytes.Buffer
 		w := NewBucketWriter(&b, tc.f, cols, true, time.UTC)
-		for _, r := range []BucketRow{capture, raw} {
+		for _, r := range []BucketRow{capture, raw, raw} {
 			if err := w.Write(r); err != nil {
 				t.Fatal(err)
 			}
@@ -68,7 +77,7 @@ func TestWriteBucketNoRunCols(t *testing.T) {
 	cols := []BucketCol{{Key: "pressure", Agg: Agg{Name: "last"}, Plain: true}}
 	for f, want := range map[Format]string{
 		FormatText:  "t wall reports pressure",
-		FormatCSV:   "t,wall,reports,pressure",
+		FormatCSV:   "t,wall,src,reports,pressure",
 		FormatJSONL: "",
 	} {
 		var b bytes.Buffer
