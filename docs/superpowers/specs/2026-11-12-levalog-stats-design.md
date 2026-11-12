@@ -75,8 +75,8 @@ One list, used by `runs --agg` and `events --agg`:
 | `mean` | arithmetic mean over the `n` values (per report, not time-weighted) |
 | `median`, `pNN` | nearest-rank percentile, `NN` 1–99 (`median` = `p50`) |
 | `sd` | population standard deviation |
-| `tmin`, `tmax` | time of the first smallest / largest value: `run_t` with a run (in `runs`, and in `events` with run selection), else `t` on the same base as the row's `t` |
-| `srcmin`, `srcmax` | `src` (`PATH:N`) of that same report |
+| `tmin`, `tmax` | time of the smallest / largest value, its first occurrence on ties: `run_t` with a run (in `runs`, and in `events` with run selection), else `t` on the same base as the row's `t` |
+| `srcmin`, `srcmax` | `src` (`PATH:N`) of that same report (also the first occurrence on ties) |
 
 - Output column name: `<key>_<agg>`, the field key verbatim (lowercase also
   in text headers, so a grep for `pressure_max` works in every format).
@@ -85,11 +85,15 @@ One list, used by `runs --agg` and `events --agg`:
 - Only reports enter aggregates, and only non-standby ones (marker `*` or
   `-`); standby reports are masked anyway.
 - Only numeric fields can be aggregated with `min … sd`; `first`/`last`/`n`
-  also work on text fields (`mode`, `pump`, the profile label). A numeric
-  aggregator on a text field **named** in `--stats`/`--fields` is a usage
-  error (exit 2). When the fields are implied (`events --every` without
-  `--fields`), a text field gets only `<key>_last`. *(My call: the warm-up
-  example works without `--fields`, and an explicit mistake still fails.)*
+  also work on text fields (`mode`, `pump`, the profile label). A text
+  field with a numeric aggregator in `--agg` gets only `<key>_last`, whether
+  implied (`events --every` without `--fields`) or named in
+  `--stats`/`--fields`. A named one also gets one stderr note after the
+  output, `levalog: pump is text: only pump_last`; exit 0. With only
+  `n`/`first`/`last` in `--agg`, a named text field gets those. *(Changed
+  in round 2: a named text field used to be a usage error; agents passing
+  `pump,pressure` with `--agg max` should get the pressure numbers, not an
+  exit 2.)*
 - A key missing from a source's XML, or a source shown raw (no XML for it),
   contributes no values (so `n` shows it) and gets the same stderr warning
   `events --fields` gives. *(My call, follows the first spec.)*
@@ -114,7 +118,7 @@ values joined by spaces.
 | --- | --- |
 | `src` | the source path |
 | `kind` | `capture` or `rawlog` |
-| `start` | wall-clock start: manifest `recorded` (captures), file start (raw logs) |
+| `start` | wall-clock start: manifest `recorded` (captures; levacap takes it when writing, just after the last event), file start (raw logs) |
 | `duration` | seconds from first to last event |
 | `firmware` | manifest `firmware_version` (captures), else the first `$id:` banner text; empty if none |
 | `xml` | the XML name(s) in effect, in order |
@@ -155,6 +159,17 @@ levalog runs --stats pressure,temperature_pid1 [--agg min,max,mean] …
   order, then `--agg` order: `pressure_n pressure_min … temperature_pid1_mean`.
   Existing columns keep their positions.
 - Works with `--kind`; draws get stats too (their reports are in the window).
+- `START` is the wall time of the run's first sample. In a capture it is
+  the manifest's `recorded` time less the time from that sample to the
+  capture's last event: levacap takes `recorded` when it writes the
+  capture, just after its last event (see the
+  [log-decode spec](2026-11-10-log-decode-cli-conventions-design.md)), so
+  `recorded` + offset would land a capture's length too late. Empty only
+  for a capture without a manifest time. *(Round 2: was empty for every
+  capture, so agents saw no date.)*
+- Run numbers count over the whole input given, in input order, as
+  `events --run N` with the same input numbers them; to address a run of
+  one capture, pass that capture alone. The help says so.
 
 Example: peak pressure and its time for every shot:
 `levalog runs --kind shot --stats pressure --agg max,tmax,srcmax`.
@@ -174,9 +189,18 @@ levalog events --every 30s [--agg last] [--fields …] [selection flags] …
   `<key>_<agg>`, even for one aggregator. Projected fields: `--fields`, or
   all report fields when not given (as in `events`).
 - Leading columns per row: the bucket start in the same time columns
-  `events` prints (`t`, plus `wall` for raw logs; `run`, `run_t` with run
-  selection), then `reports` (reports in the bucket; not `n`, which could
-  collide with a field key), then the aggregates.
+  `events` prints (`t`, then `wall`, empty for captures), the source, `run`,
+  `run_t` with run selection, then `reports` (reports in the bucket; not
+  `n`, which could collide with a field key), then the aggregates.
+- The source: jsonl and csv carry a `src` column right after `wall`, the
+  source path (no line number: a bucket spans many lines). Text prints a
+  `# PATH` line when the source changes, followed by `# notes: ...` for a
+  capture with manifest notes, and `# xml: NAME` when the XML changes;
+  after each such comment block the table header is repeated. With run
+  selection a row's source is that of the run's first sample, also when
+  the bucket's reports come from another file (a margin reaching into the
+  previous raw log, a run crossing into the next); its `t` is on that
+  source's base, so negative before it starts.
 - With run selection, rows go per run, in run order; a report in two
   overlapping windows (`--margin`) counts in both runs' buckets, so each
   run's rows are complete. *(My call.)*
@@ -213,7 +237,24 @@ stderr, after the output, whenever:
 - `--run N` names a run that does not exist (already a message; keep it in
   this form).
 - An input directory holds no logs: name **that** directory and what it
-  holds, never the `--dir` default.
+  holds, never the `--dir` default. Among other inputs that do hold logs,
+  every subcommand (`fields` too) prints that note after its output.
+
+## `events`: identifying columns in csv and jsonl
+
+*(Round 2; changes the column rule of the first spec.)* In csv and jsonl,
+plain `events` rows (not `--every`) always start with `t`, `wall`, `src`,
+`run`, `run_t`, whatever `--fields` says; `run` and `run_t` are empty
+(csv) or `null` (jsonl) outside a run window. `--fields` selects and orders
+only the remaining columns; naming an identifying column there does not
+repeat it. jsonl keeps `event` and `glued` in every object, after those
+five and `src_end`/`dir` when shown. Without `--fields` the csv header is
+`t,wall,src,run,run_t,src_end,pump`, then the report fields. Text output
+is unchanged (`--fields src` still adds `src=` there). The help says
+"`--fields` selects data columns; csv/jsonl always start with t wall src
+run run_t". Reason: agents piping `--fields run_t,pressure` to awk lost
+the run number and the source, and had to rerun to tie a row to its raw
+line.
 
 ## Input: a directory of captures
 
@@ -262,6 +303,25 @@ and `events --run N --every 1s` row count and first row. Synthetic tests:
 masked values excluded and `n` = 0 giving empty aggregates, nearest-rank
 percentiles on a known list, bucket alignment for each of the three cases,
 omitted empty buckets, the capture-parent expansion, each stderr reason.
+
+## Round 2 (2026-11-12)
+
+Fixes after fresh agents used the tool, all reflected above:
+
+- `events --every` with a run selection and `--margin`: a run's first
+  bucket could open on a report of an earlier raw log, before the run's own
+  source was read, and got no source and a saturated `t`. The row's source
+  is now resolved when the row is built, once the run is over.
+- `fields EMPTYDIR CAPTURE` names the empty directory, as the other
+  subcommands do.
+- The `src` column of `--every` rows is specified (section above).
+- csv/jsonl of `events`: identifying columns lead (section above).
+- `runs`: `START` for captures; run numbering over the given input.
+- A named text field with a numeric aggregator: `<key>_last` and a note,
+  no longer exit 2.
+- Help: `tmin`/`tmax`/`srcmin`/`srcmax` take the first occurrence on ties.
+- README: `nix develop` puts a working-tree `levalog` on PATH; raw-log and
+  capture `data` is base64, so grep on the log files finds nothing.
 
 ## Left to the builder
 

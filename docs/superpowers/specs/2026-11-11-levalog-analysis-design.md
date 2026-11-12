@@ -220,6 +220,10 @@ then all report fields, or exactly `--fields` in that order. A report that
 failed to decode is skipped and counted in one warning on stderr at the
 end.
 
+*Changed 2026-11-12:* in CSV and JSON Lines, `t, wall, src, run, run_t`
+now always lead, whatever `--fields` says; see the
+[stats addendum](2026-11-12-levalog-stats-design.md#events-identifying-columns-in-csv-and-jsonl).
+
 Example agent session:
 
 ```sh

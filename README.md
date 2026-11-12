@@ -145,6 +145,13 @@ KEYS --agg LIST` adds per-run aggregates such as `pressure_max`, and
 `events --every SPAN` resamples the reports into one row per bucket;
 `levalog --help` has examples.
 
+Inside `nix develop`, `levalog` is already on PATH: a wrapper that builds
+the working tree's `./cmd/levalog` (cached per repo path; run it inside
+the repo or set `MEDEWI_REPO`) and runs it, so there is no need to build
+it yourself. The `data` of raw logs and captures
+is base64, so `grep` on a `log.jsonl` finds no machine text; use
+`levalog events` (e.g. `--event notice` for `[READY]`).
+
 `--xml` also takes a directory of `NAME.xml` files; each session uses the
 XML it names, so logs from before a firmware update still decode.
 `levalog --help` has the full column list.
