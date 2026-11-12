@@ -66,8 +66,8 @@ func ReportKeys(specs ...*leva.RecordSpec) ([]string, error) {
 // bucket is an open bucket.
 type bucket struct {
 	run     *Run
-	idx     int64 // start / every
-	src     SourceInfo
+	idx     int64      // start / every
+	src     SourceInfo // without run; a run's comes from its first sample
 	xml     string
 	reports int
 	accs    []Acc // per key
@@ -201,11 +201,12 @@ func (b *Bucketer) newBucket(run *Run, idx int64, e *Entry) *bucket {
 	for i := range accs {
 		accs[i] = NewAcc(b.keyAggs[i])
 	}
-	bk := &bucket{run: run, idx: idx, src: b.sources[e.Source], xml: e.XML, accs: accs}
 	if run != nil {
-		bk.src, bk.xml = b.sources[run.First.Source], run.XML
+		// The run's source is resolved in row: with a margin, e can come
+		// from an earlier source, announced before the run's own.
+		return &bucket{run: run, idx: idx, xml: run.XML, accs: accs}
 	}
-	return bk
+	return &bucket{idx: idx, src: b.sources[e.Source], xml: e.XML, accs: accs}
 }
 
 func (b *Bucketer) closeCur() []BucketRow {
@@ -278,11 +279,14 @@ func (b *Bucketer) row(bk *bucket) BucketRow {
 	r := BucketRow{Source: bk.src, XML: bk.xml, Run: bk.run, Reports: bk.reports, Values: make([]AggValue, len(b.cols))}
 	switch {
 	case bk.run != nil:
+		// The run's rows come out once it is over, so its first sample,
+		// and with it its source, has been seen.
+		r.Source = b.sources[bk.run.First.Source]
 		rt := start
 		r.RunT = &rt
 		if f := bk.run.First; f.HasWall {
 			r.Wall, r.HasWall = f.Wall.Add(rt), true
-			r.Start = r.Wall.Sub(bk.src.Start)
+			r.Start = r.Wall.Sub(r.Source.Start)
 		} else {
 			r.Start = f.Offset + rt
 		}

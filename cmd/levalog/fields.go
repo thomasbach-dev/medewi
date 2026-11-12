@@ -52,6 +52,7 @@ func fields(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		warn(stderr, empty[:len(empty)-1])
 		return fail(stderr, 1, "%s", empty[len(empty)-1])
 	default:
+		notes = append(notes, empty...)
 		for _, s := range srcs {
 			if in.window() && !s.raw {
 				return fail(stderr, 2, "--since/--until need raw logs with wall time; %s is a capture", s.path)

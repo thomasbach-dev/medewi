@@ -358,3 +358,31 @@ func TestBucketRowSource(t *testing.T) {
 		t.Errorf("sources %s", got)
 	}
 }
+
+// With a margin, a run's first bucket can open on a report of an earlier
+// raw log, before the run's own source is announced: the row still gets
+// the run's first source and a t on its base.
+func TestBucketRunMarginEarlierSource(t *testing.T) {
+	var l loaded
+	addSource(t, &l, runT0, true, idle(8, 0, 0))
+	s1 := runT0.Add(2 * time.Second)
+	addSource(t, &l, s1, true, concat(pumping(10, "9.0", 9, 4), idle(14, 40, 0)))
+	runs := findRuns(l, brew.DefaultConfig(), time.Time{}, time.Time{})
+	if len(runs) != 1 || runs[0].First.Source != 1 {
+		t.Fatalf("runs = %+v", runs)
+	}
+	b := NewBucketer(time.Second, lastCols("pressure"), true)
+	added, closed := bucketRuns(l, runs, Selection{Runs: []int{1}, Margin: time.Second}, b)
+	rows := slices.Concat(added, closed)
+	if len(rows) == 0 || *rows[0].RunT != -time.Second {
+		t.Fatalf("rows %+v", startsOf(rows))
+	}
+	for _, r := range rows {
+		if r.Source.Path != "src1" {
+			t.Errorf("run_t %v: source %q, want src1", *r.RunT, r.Source.Path)
+		}
+		if want := r.Wall.Sub(s1); r.Start != want {
+			t.Errorf("run_t %v: t %v, want %v (on src1's base)", *r.RunT, r.Start, want)
+		}
+	}
+}

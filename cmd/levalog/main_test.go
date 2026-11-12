@@ -1380,6 +1380,12 @@ func TestEmptyDirAmongOthers(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "src: "+filepath.Join(capture, "log.jsonl")+"\n") || errs != want {
 		t.Errorf("exit %d, stderr %q, want %q\n%s", code, errs, want, out)
 	}
+	for _, sub := range []string{"fields", "runs", "events"} {
+		code, out, errs := runCmd(t, "--xml", xml, sub, empty, capture)
+		if code != 0 || out == "" || errs != want {
+			t.Errorf("%s: exit %d, stderr %q, want %q\n%s", sub, code, errs, want, out)
+		}
+	}
 }
 
 func TestCaptureWithSubdirs(t *testing.T) {
