@@ -207,7 +207,8 @@ func aggText(v AggValue) string {
 }
 
 // aggTextCell is an aggregate as one text-table token: ? when empty or
-// an empty string, a string quoted when it holds blanks.
+// an empty string, a string quoted when it holds blanks, a time with three
+// decimals like t.
 func aggTextCell(v AggValue) string {
 	s := aggText(v)
 	switch {
@@ -215,6 +216,8 @@ func aggTextCell(v AggValue) string {
 		return "?"
 	case v.Str != nil:
 		return textQuote(s)
+	case v.Seconds:
+		return fmt.Sprintf("%.3f", *v.Num)
 	}
 	return s
 }

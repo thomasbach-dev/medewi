@@ -83,6 +83,7 @@ type Bucketer struct {
 	every   time.Duration
 	cols    []BucketCol
 	keys    []string // distinct column keys
+	keyAggs [][]Agg  // per key, the aggregates of its columns
 	colKey  []int    // per column, index in keys
 	byRun   bool
 	sources map[int]SourceInfo
@@ -100,7 +101,9 @@ func NewBucketer(every time.Duration, cols []BucketCol, byRun bool) *Bucketer {
 		if i < 0 {
 			i = len(b.keys)
 			b.keys = append(b.keys, c.Key)
+			b.keyAggs = append(b.keyAggs, nil)
 		}
+		b.keyAggs[i] = append(b.keyAggs[i], c.Agg)
 		b.colKey = append(b.colKey, i)
 	}
 	return b
@@ -187,7 +190,11 @@ func (b *Bucketer) Missing() []string {
 }
 
 func (b *Bucketer) newBucket(run *Run, idx int64, e *Entry) *bucket {
-	return &bucket{run: run, idx: idx, src: b.sources[e.Source], accs: make([]Acc, len(b.keys))}
+	accs := make([]Acc, len(b.keys))
+	for i := range accs {
+		accs[i] = NewAcc(b.keyAggs[i])
+	}
+	return &bucket{run: run, idx: idx, src: b.sources[e.Source], accs: accs}
 }
 
 func (b *Bucketer) closeCur() []BucketRow {

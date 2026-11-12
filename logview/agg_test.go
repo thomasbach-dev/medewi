@@ -1,6 +1,7 @@
 package logview
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -151,4 +152,79 @@ func TestAccResultRoundedCopies(t *testing.T) {
 		t.Errorf("srcmax points into the accumulator: %q", *s.Str)
 	}
 	wantNum(t, fill(1, 2, 2), "mean", 1.666667)
+}
+
+func TestParseAggsDedup(t *testing.T) {
+	got, err := ParseAggs("max,min,max,p90,p90")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, a := range got {
+		names = append(names, a.Name)
+	}
+	if strings.Join(names, ",") != "max,min,p90" {
+		t.Errorf("got %v, want max,min,p90", names)
+	}
+}
+
+// An Acc told its aggregates keeps the values only for a percentile, and
+// gives the same results either way.
+func TestAccKeepsValuesOnlyForPercentiles(t *testing.T) {
+	all, err := ParseAggs("n,first,last,min,max,mean,median,p90,sd,tmin,tmax,srcmin,srcmax")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := ParseAggs("n,first,last,min,max,mean,sd,tmin,tmax,srcmin,srcmax")
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, lean := NewAcc(all), NewAcc(plain)
+	vals := []float64{5, 1, 3, 2, 4, 1e6 + 0.1, 1e6 + 0.2, -7.25}
+	for i, v := range vals {
+		at, src := time.Duration(i+1)*time.Second, "f:"+string(rune('1'+i))
+		full.Add(num(v), at, src)
+		lean.Add(num(v), at, src)
+	}
+	if lean.nums != nil {
+		t.Errorf("lean Acc keeps %d values", len(lean.nums))
+	}
+	if len(full.nums) != len(vals) {
+		t.Errorf("full Acc keeps %d values, want %d", len(full.nums), len(vals))
+	}
+	ref := fill(vals...)
+	for _, a := range plain {
+		w, g := ref.Result(a), lean.Result(a)
+		if fmt.Sprint(deref(w)) != fmt.Sprint(deref(g)) {
+			t.Errorf("%s = %v, want %v", a.Name, deref(g), deref(w))
+		}
+	}
+	wantNum(t, &full, "p90", 1e6+0.2)
+}
+
+func deref(v AggValue) any {
+	switch {
+	case v.Num != nil:
+		return *v.Num
+	case v.Str != nil:
+		return *v.Str
+	}
+	return nil
+}
+
+// tmin and tmax are marked as times, so text prints them like t.
+func TestAccTimesMarked(t *testing.T) {
+	c := fill(1, 2)
+	if r := res(t, c, "tmin"); !r.Seconds {
+		t.Error("tmin not marked as seconds")
+	}
+	if r := res(t, c, "max"); r.Seconds {
+		t.Error("max marked as seconds")
+	}
+	if got := aggTextCell(res(t, c, "tmax")); got != "2.000" {
+		t.Errorf("text tmax = %q, want 2.000", got)
+	}
+	if got := aggText(res(t, c, "tmax")); got != "2" {
+		t.Errorf("csv tmax = %q, want 2", got)
+	}
 }

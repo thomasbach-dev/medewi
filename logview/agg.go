@@ -18,11 +18,15 @@ type Agg struct {
 	P    int
 }
 
-// ParseAggs parses a comma-separated aggregate list.
+// ParseAggs parses a comma-separated aggregate list; a repeated aggregate
+// counts once, where it first appears.
 func ParseAggs(s string) ([]Agg, error) {
 	var out []Agg
 	for _, name := range strings.Split(s, ",") {
 		name = strings.TrimSpace(name)
+		if slices.ContainsFunc(out, func(a Agg) bool { return a.Name == name }) {
+			continue
+		}
 		a := Agg{Name: name}
 		switch name {
 		case "n", "first", "last", "min", "max", "mean", "sd", "tmin", "tmax", "srcmin", "srcmax":
@@ -52,19 +56,32 @@ func (a Agg) Numeric() bool {
 }
 
 // AggValue is an aggregate result; both nil means empty (masked output).
+// Seconds marks a time (tmin, tmax), which text prints with milliseconds.
 type AggValue struct {
-	Num *float64
-	Str *string
+	Num     *float64
+	Str     *string
+	Seconds bool
 }
 
-// Acc accumulates the values of one field. The zero value is usable.
+// Acc accumulates the values of one field. The zero value is usable and
+// serves every aggregate; NewAcc returns one that keeps the values only
+// when a percentile needs them.
 type Acc struct {
 	n           int
+	nn          int     // numeric values
+	mean, m2    float64 // running mean and sum of squared deviations (Welford)
+	lean        bool    // keep no values: no percentile asked
 	nums        []float64
 	first, last Value
 	min, max    float64
 	minT, maxT  time.Duration
 	minS, maxS  string
+}
+
+// NewAcc returns an Acc for aggs: it keeps every value only when one of
+// them is a percentile (pNN, median).
+func NewAcc(aggs []Agg) Acc {
+	return Acc{lean: !slices.ContainsFunc(aggs, func(a Agg) bool { return a.P > 0 })}
 }
 
 // Add counts v; masked and bad values are ignored. t and src locate the
@@ -82,13 +99,19 @@ func (c *Acc) Add(v Value, t time.Duration, src string) {
 		return
 	}
 	x := *v.Num
-	if len(c.nums) == 0 || x < c.min {
+	if c.nn == 0 || x < c.min {
 		c.min, c.minT, c.minS = x, t, src
 	}
-	if len(c.nums) == 0 || x > c.max {
+	if c.nn == 0 || x > c.max {
 		c.max, c.maxT, c.maxS = x, t, src
 	}
-	c.nums = append(c.nums, x)
+	c.nn++
+	d := x - c.mean
+	c.mean += d / float64(c.nn)
+	c.m2 += d * (x - c.mean)
+	if !c.lean {
+		c.nums = append(c.nums, x)
+	}
 }
 
 // Result evaluates a; an aggregate without data is empty.
@@ -112,7 +135,7 @@ func (c *Acc) Result(a Agg) AggValue {
 		}
 		return out
 	}
-	if len(c.nums) == 0 {
+	if c.nn == 0 {
 		return AggValue{}
 	}
 	switch a.Name {
@@ -121,9 +144,9 @@ func (c *Acc) Result(a Agg) AggValue {
 	case "max":
 		return numVal(c.max)
 	case "tmin":
-		return numVal(roundMilli(c.minT))
+		return secVal(roundMilli(c.minT))
 	case "tmax":
-		return numVal(roundMilli(c.maxT))
+		return secVal(roundMilli(c.maxT))
 	case "srcmin":
 		s := c.minS
 		return AggValue{Str: &s}
@@ -131,13 +154,12 @@ func (c *Acc) Result(a Agg) AggValue {
 		s := c.maxS
 		return AggValue{Str: &s}
 	case "mean":
-		return numVal(round6(c.mean()))
+		return numVal(round6(c.mean))
 	case "sd":
-		m, ss := c.mean(), 0.0
-		for _, x := range c.nums {
-			ss += (x - m) * (x - m)
-		}
-		return numVal(round6(math.Sqrt(ss / float64(len(c.nums)))))
+		return numVal(round6(math.Sqrt(c.m2 / float64(c.nn))))
+	}
+	if c.lean {
+		panic("logview: Acc.Result: percentile " + a.Name + " not among NewAcc's aggregates")
 	}
 	// pNN and median: nearest rank, ceil(P/100*n).
 	sorted := slices.Sorted(slices.Values(c.nums))
@@ -145,15 +167,9 @@ func (c *Acc) Result(a Agg) AggValue {
 	return numVal(sorted[rank-1])
 }
 
-func (c *Acc) mean() float64 {
-	sum := 0.0
-	for _, x := range c.nums {
-		sum += x
-	}
-	return sum / float64(len(c.nums))
-}
-
 func numVal(f float64) AggValue { return AggValue{Num: &f} }
+
+func secVal(f float64) AggValue { return AggValue{Num: &f, Seconds: true} }
 
 // round6 rounds to 6 decimals, as ParseField does, never -0.
 func round6(f float64) float64 {

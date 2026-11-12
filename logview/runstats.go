@@ -30,6 +30,9 @@ func NewRunStats(runs []Run, keys []string, aggs []Agg) *RunStats {
 		all[i] = runs[i].N
 		s.byRun[&runs[i]], s.byN[runs[i].N] = i, i
 		s.accs[i] = make([]Acc, len(keys))
+		for j := range keys {
+			s.accs[i][j] = NewAcc(aggs)
+		}
 	}
 	s.sel = NewSelector(runs, Selection{Runs: all})
 	return s
