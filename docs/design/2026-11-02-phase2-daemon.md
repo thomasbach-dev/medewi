@@ -26,7 +26,7 @@ phase-2-relevant facts, all verified live on 2026-11-02:
 - The mode field (offset 4, len 3) plus field-masking gives power state
   without any extra query.
 - A full lifecycle capture (standby → wake → ramp → READY → flushes → shot
-  → eco → standby) exists in `captures/coldstart-ready/` (unpromoted) and
+  → eco → standby) exists in `captures/coldstart/` (unpromoted) and
   pins realistic thresholds: READY criterion (|temp−setpoint| ≤ 0.5 for 10
   reports) fired ~145 s after wake from 47 °C; the shot ran ~49 s above
   1 bar with a 8.9 bar peak; flushes stayed short.

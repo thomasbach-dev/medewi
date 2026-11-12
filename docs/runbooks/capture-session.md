@@ -93,17 +93,17 @@ end. (`MC ` also resets current machine state; that is accepted.)
 ## 2. Capture scenarios, in order
 
 Each capture is written straight into its `--out` directory (required; one
-directory per capture, named after what it holds): `log.jsonl` (raw JSON
+directory per capture, named after what it holds, without a date: the
+manifest records when and on which firmware): `log.jsonl` (raw JSON
 Lines, base64 bytes, timestamps) and `manifest.json` (firmware banner, XML
 name, XML sha256, address, notes). `levalog` reads such a directory as is.
 
 ```sh
-D=$(date +%F)
-go run ./cmd/levacap capture --commands --out "private/commands-$D"           # 1. each whitelist command once
-go run ./cmd/levacap capture --out "captures/idle-$D" --notes "idle, warm"    # 2. idle report stream
-go run ./cmd/levacap capture --out "captures/warmup-$D" --notes "cold start"  # 3. warmup
-go run ./cmd/levacap capture --out "captures/shot-$D" --notes "double, SOAK"  # 4. a real shot
-go run ./cmd/levacap capture --out "captures/ready-$D" --display-every 10s \
+go run ./cmd/levacap capture --commands --out private/commands             # 1. each whitelist command once
+go run ./cmd/levacap capture --out captures/idle --notes "idle, warm"       # 2. idle report stream
+go run ./cmd/levacap capture --out captures/warmup --notes "cold start"     # 3. warmup
+go run ./cmd/levacap capture --out captures/shot --notes "double, SOAK"     # 4. a real shot
+go run ./cmd/levacap capture --out captures/warmup-ready --display-every 10s \
   --notes "warm-up to READY"                                                  # 6. warm-up to READY
 ```
 
@@ -209,7 +209,8 @@ every firmware flash, before anything else talks to the machine:
 2. **Before** flashing, back up the settings and record the pre-flash state
    (nothing from here is committed):
    ```sh
-   PREFLASH_DIR="private/preflash-$(date +%F)"
+   FW=3.2   # firmware now on the machine, from the banner "$id: leva! (3.2)"
+   PREFLASH_DIR="private/preflash-$FW"
    go run ./cmd/levacap capture --commands --out "$PREFLASH_DIR"
    ```
    Then flash per the vendor procedure (`rancilio.org`, "Update").
