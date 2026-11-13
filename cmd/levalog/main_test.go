@@ -1539,3 +1539,22 @@ func TestUsageExamples(t *testing.T) {
 		t.Errorf("%d example command lines, want 6 to 8", lines)
 	}
 }
+
+// TestSplitTimeHint: a --since/--until time split at its space (lost
+// quotes, typically through ssh) leaves the clock part as a FILE argument;
+// the error says so instead of only failing to stat it.
+func TestSplitTimeHint(t *testing.T) {
+	noEnv(t)
+	for _, sub := range []string{"summary", "runs", "events"} {
+		code, _, stderr := runCmd(t, "--xml", synth, sub, "--dir", t.TempDir(),
+			"--since=2026-11-13", "05:06:33.530")
+		if code != 1 || !strings.Contains(stderr, `"05:06:33.530" looks like the time part of --since/--until`) {
+			t.Errorf("%s: code %d, stderr %q; want 1 and the split-time hint", sub, code, stderr)
+		}
+	}
+	// A missing file that is no time gets the plain error.
+	code, _, stderr := runCmd(t, "--xml", synth, "summary", "no-such-file")
+	if code != 1 || strings.Contains(stderr, "looks like") || !strings.Contains(stderr, "no-such-file") {
+		t.Errorf("plain missing file: code %d, stderr %q", code, stderr)
+	}
+}

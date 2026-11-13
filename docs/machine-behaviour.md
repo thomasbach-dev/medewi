@@ -112,6 +112,28 @@ Detection is issue #13; the data model for programs is issue #12.
   mode field `ECO`, setpoint 91 → 79, LCD shows `ECO` in the setpoint
   column.
 
+## Cold mode
+
+- With PID1 control switched off (Setup › PID1 › Control, as the pressure
+  test and flow meter calibration ask for), the mode field reads `CLD`.
+  Raw log of 2026-11-13, cold machine at 21 °C, controller in the run
+  menu: `CLD` for the whole 12-minute session. Temperatures stay live;
+  the setpoint, all PID1/PID2 terms, `Pressure SP` and the phase fields
+  are `?`-masked. The daemon reports power `cold`; it never switches power
+  from there (what `MCa` does in cold mode is unverified).
+
+## Valve test
+
+- Run menu › Test valve (switches the grouphead valve three times, pump
+  off) leaves no trace in the report stream. Raw log of 2026-11-13, cold
+  mode, 25 s between operator marks: across 93 reports no byte changed
+  except noise in `pressure_band_max` (0.01–0.05 bar, as in the rest of
+  the session); pressure, volume and flow stayed 0, pump marker `-`.
+- The five sampled LCD frames (500 ms every 5 s) all showed the Run menu,
+  `key=0`. Whether the LCD shows the test at all is unconfirmed; the
+  sampling may have missed it. The daemon cannot detect this program and
+  does not misrecord it either (no pump run).
+
 ## Connection
 
 - The banner is the idle heartbeat: while any client has a stream on, a new

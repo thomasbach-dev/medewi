@@ -13,6 +13,12 @@ import (
 
 func ecoLines(n int) [][]byte { return repeat(n, line('-', "ECO", 80, 79, 0, -1, 0, 0)) }
 
+// coldLines is the machine with PID1 control off: mode CLD, boiler cold.
+func coldLines(n int) [][]byte { return repeat(n, line('-', "CLD", 21.4, 0, 0, -1, 0, 0)) }
+
+// oddLines carry a mode field the daemon does not know.
+func oddLines(n int) [][]byte { return repeat(n, line('-', "XYZ", 93, 93, 0, -1, 0, 0)) }
+
 // pumpLines keeps a brew open: the pump marker is on in every line.
 func pumpLines(n int) [][]byte { return repeat(n, line('*', "PID", 93, 93, 9, 9, 120, 10)) }
 
@@ -186,6 +192,27 @@ func TestSetPowerRefusals(t *testing.T) {
 			wantErr: ErrDisconnected,
 		},
 		{
+			name: "cold mode",
+			cfg:  func() sim.Config { return powerSim(coldLines(20)) },
+			prepare: func(t *testing.T, _ *sim.Server, d *Daemon) {
+				waitFor(t, "cold", func() bool { return d.Status().Power == PowerCold })
+			},
+			want:    PowerActive,
+			wantErr: ErrColdMode,
+		},
+		{
+			name: "unknown mode",
+			cfg:  func() sim.Config { return powerSim(oddLines(20)) },
+			prepare: func(t *testing.T, _ *sim.Server, d *Daemon) {
+				waitFor(t, "reporting, mode unknown", func() bool {
+					st := d.Status()
+					return st.Reporting && st.Power == PowerUnknown
+				})
+			},
+			want:    PowerEco,
+			wantErr: ErrPowerUnknown,
+		},
+		{
 			name:    "already active",
 			cfg:     func() sim.Config { return powerSim(idleLines(20)) },
 			prepare: func(t *testing.T, _ *sim.Server, d *Daemon) { waitActive(t, d) },
@@ -272,6 +299,37 @@ func TestDumpMCm(t *testing.T) {
 		t.Errorf("DumpMCu = %+v, %v", u, err)
 	}
 	assertOnlyAllowed(t, s, "MCm", "MCu")
+}
+
+// TestDumpWhateverTheMode pins that a dump needs a report seen on the
+// connection, not a known power mode: cold mode (PID1 off) and an
+// unrecognised mode field both still allow a backup.
+func TestDumpWhateverTheMode(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		lines [][]byte
+		power PowerState
+	}{
+		{"cold", coldLines(20), PowerCold},
+		{"unknown", oddLines(20), PowerUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			shrinkDumpTimings(t)
+			s := startSim(t, dumpSim(tc.lines, fakeMCm))
+			d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
+			waitFor(t, "reporting in "+string(tc.power), func() bool {
+				st := d.Status()
+				return st.Connected && st.Reporting && st.Power == tc.power
+			})
+			if dump, err := d.DumpMCm(reqCtx(t)); err != nil || !slices.Equal(dump.Lines, fakeMCm) {
+				t.Errorf("DumpMCm = %q, %v; want the dump", dump.Lines, err)
+			}
+			if _, err := d.DumpMCu(reqCtx(t)); err != nil {
+				t.Errorf("DumpMCu: %v", err)
+			}
+			assertOnlyAllowed(t, s, "MCm", "MCu")
+		})
+	}
 }
 
 // TestDumpMCmTruncated pins Review Focus 5.

@@ -271,6 +271,14 @@ sudo levalog events --since=-5min   # the last five minutes on the wire
 sudo levalog runs -s yesterday      # the shots, flushes and wand draws since
 ```
 
+Through ssh, quote the whole remote command: ssh joins its arguments
+with spaces and the remote shell splits them again, so a timestamp with a
+space breaks apart (levalog then names the stray time part):
+
+```sh
+ssh -t brewhost "sudo levalog summary --since='2026-11-13 05:06:33' --until='2026-11-13 05:07'"
+```
+
 Each session's raw log names the XML it was recorded with. After a
 firmware update, keep the old XML next to the new one in a directory
 (`leva!-65FCB201.xml`, `leva!-NEWID.xml`). The wrapper's built-in `--xml`
@@ -329,9 +337,9 @@ services.prometheus.checkConfig = "syntax-only";
 | `medewi_machine_connected` | gauge | 1 while a machine connection is up | 0 when off |
 | `medewi_machine_released_until_seconds` | gauge | Unix time the release ends, 0 when not released | 0 |
 | `medewi_spec_mismatch` | gauge | 1 while the machine's XML name differs from the loaded spec | 0 |
-| `medewi_power_state{state}` | gauge | 1 for the current state: `active`, `eco`, `standby`, `unknown` | `unknown` when off, `standby` in standby |
+| `medewi_power_state{state}` | gauge | 1 for the current state: `active`, `eco`, `standby`, `cold` (PID1 control off), `unknown` | `unknown` when off, `standby` in standby |
 | `medewi_ready` | gauge | boiler settled on the setpoint, machine active | 0 |
-| `medewi_machine_ready` | gauge | the machine's own `[READY]`, until eco, standby or a disconnect | 0 |
+| `medewi_machine_ready` | gauge | the machine's own `[READY]`, until eco, standby, cold or a disconnect | 0 |
 | `medewi_boiler_celsius` | gauge | boiler temperature | **keeps its last value** |
 | `medewi_setpoint_celsius` | gauge | boiler setpoint (drops in eco) | **keeps its last value** |
 | `medewi_heater_percent` | gauge | heater output | **keeps its last value** |

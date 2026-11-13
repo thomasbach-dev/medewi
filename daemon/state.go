@@ -14,6 +14,9 @@ const (
 	PowerActive  PowerState = "active"
 	PowerEco     PowerState = "eco"
 	PowerStandby PowerState = "standby"
+	// PowerCold is mode CLD: PID1 control off (Setup › PID1 › Control),
+	// heating off, temperatures live, setpoint and PID fields masked.
+	PowerCold    PowerState = "cold"
 	PowerUnknown PowerState = "unknown"
 )
 
@@ -30,6 +33,8 @@ func powerFromPayload(p []byte) PowerState {
 		return PowerEco
 	case "???":
 		return PowerStandby
+	case "CLD":
+		return PowerCold
 	}
 	return PowerUnknown
 }
@@ -41,16 +46,20 @@ type Status struct {
 	SpecOK    bool // MC? named the loaded spec; reports run only then
 	Ready     bool // the boiler settled on the setpoint and the machine is active
 	// MachineReady is the machine's own whole-machine READY ("[READY]"),
-	// which comes minutes after Ready; cleared by eco, standby and
+	// which comes minutes after Ready; cleared by eco, standby, cold and
 	// disconnects.
 	MachineReady bool
 	BrewOpen     bool // a brew is pumping or coasting
-	Power        PowerState
-	Firmware     string // from the id banner, e.g. "3.2"
-	Temp         *float64
-	Setpoint     *float64
-	LastBrew     *store.Brew      // most recent stored brew
-	Display      *DisplaySnapshot // latest sampled LCD; nil without sampling
+	// Reporting: a checksum-valid report line has been seen on this
+	// connection, so a running brew would be known. Power can still be
+	// unknown (unrecognised mode field).
+	Reporting bool
+	Power     PowerState
+	Firmware  string // from the id banner, e.g. "3.2"
+	Temp      *float64
+	Setpoint  *float64
+	LastBrew  *store.Brew      // most recent stored brew
+	Display   *DisplaySnapshot // latest sampled LCD; nil without sampling
 	// ReleasedUntil is the end of a release (see Daemon.Release); nil when
 	// not released or the release has run out.
 	ReleasedUntil *time.Time
