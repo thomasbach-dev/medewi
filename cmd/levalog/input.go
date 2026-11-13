@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -214,7 +216,7 @@ func sourcePaths(args []string, dir string, since, until time.Time, neighbours b
 	for _, a := range args {
 		fi, err := os.Stat(a)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, splitTimeHint(a, err)
 		}
 		if !fi.IsDir() {
 			paths = append(paths, a)
@@ -307,4 +309,19 @@ func withNeighbours(dir string, sel []string) ([]string, error) {
 		return sel, nil
 	}
 	return all[max(i-1, 0):min(j+2, len(all))], nil
+}
+
+// splitTimeHint explains a missing FILE argument that parses as a
+// timestamp: most likely the time part of a --since/--until value split at
+// its space because the quotes were lost (typically through ssh, which
+// re-splits the remote command).
+func splitTimeHint(arg string, err error) error {
+	if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if _, perr := systime.ParseTimestamp(arg, time.Now(), time.Local); perr != nil {
+		return err
+	}
+	return fmt.Errorf("%w; %q looks like the time part of --since/--until: quote the whole timestamp "+
+		"(through ssh, also quote the remote command)", err, arg)
 }
