@@ -12,7 +12,8 @@ import (
 )
 
 // Request refusals and failures. A refusal (ErrReleased, ErrDisconnected,
-// ErrBrewOpen, ErrSpecMismatch, ErrInvalidPower) means nothing was sent.
+// ErrBrewOpen, ErrSpecMismatch, ErrInvalidPower, ErrColdMode,
+// ErrPowerUnknown) means nothing was sent.
 // ErrDisconnected also covers a connection on which no report line has been
 // observed yet (just connected, or a spec mismatch, which never starts
 // reports): until then nothing is known about a running brew.
@@ -23,6 +24,12 @@ var (
 	ErrVerifyFailed   = errors.New("daemon: machine did not reach the requested power state")
 	ErrIncompleteDump = errors.New("daemon: settings dump is incomplete")
 	ErrInvalidPower   = errors.New("daemon: invalid power state")
+	// ErrColdMode: PID1 control is off (mode CLD). What the power toggles
+	// do from there is unverified; leave cold mode on the machine.
+	ErrColdMode = errors.New("daemon: machine is in cold mode (PID1 control off); switch it on at the machine")
+	// ErrPowerUnknown: reports arrive but their mode field is not one the
+	// daemon knows, so a power switch could not be verified.
+	ErrPowerUnknown = errors.New("daemon: machine reports an unrecognised power mode")
 )
 
 // Timings of the command worker. Variables so tests can shrink them.
@@ -97,8 +104,9 @@ func (d *Daemon) do(ctx context.Context, run func(context.Context, *leva.Conn)) 
 }
 
 // refuse runs the checks a request makes before sending anything, in this
-// order: released (ErrReleased), disconnected, (power only) spec mismatch, no report observed yet on
-// this connection (power unknown), brew open.
+// order: released (ErrReleased), disconnected, (power only) spec mismatch,
+// no report observed yet on this connection (ErrDisconnected), (power only)
+// cold or unrecognised mode, brew open. A dump needs no known power mode.
 func (d *Daemon) refuse(conn *leva.Conn, st Status, power bool) error {
 	switch {
 	case st.ReleasedUntil != nil:
@@ -107,8 +115,12 @@ func (d *Daemon) refuse(conn *leva.Conn, st Status, power bool) error {
 		return ErrDisconnected
 	case power && !st.SpecOK:
 		return ErrSpecMismatch
-	case st.Power == PowerUnknown:
+	case !st.Reporting:
 		return ErrDisconnected
+	case power && st.Power == PowerCold:
+		return ErrColdMode
+	case power && st.Power == PowerUnknown:
+		return ErrPowerUnknown
 	case st.BrewOpen:
 		return ErrBrewOpen
 	}

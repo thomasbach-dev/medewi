@@ -62,7 +62,7 @@ func (f *fragmentCount) value() float64 {
 	return float64(n)
 }
 
-var powerStates = []PowerState{PowerActive, PowerEco, PowerStandby, PowerUnknown}
+var powerStates = []PowerState{PowerActive, PowerEco, PowerStandby, PowerCold, PowerUnknown}
 
 func newMetrics(reg prometheus.Registerer) *metrics {
 	g := func(name, help string) prometheus.Gauge {
@@ -75,7 +75,7 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 		connected:     g("medewi_machine_connected", "1 while a connection to the machine is up."),
 		specMismatch:  g("medewi_spec_mismatch", "1 while the machine's XML name differs from the loaded spec."),
 		ready:         g("medewi_ready", "1 while the boiler is settled on the setpoint and the machine is active."),
-		machineReady:  g("medewi_machine_ready", "1 from the machine's own [READY] until eco, standby or a disconnect."),
+		machineReady:  g("medewi_machine_ready", "1 from the machine's own [READY] until eco, standby, cold or a disconnect."),
 		boilerC:       g("medewi_boiler_celsius", "Boiler temperature; keeps its last value when masked."),
 		setpointC:     g("medewi_setpoint_celsius", "Boiler setpoint; keeps its last value when masked."),
 		heaterPercent: g("medewi_heater_percent", "Heater output."),

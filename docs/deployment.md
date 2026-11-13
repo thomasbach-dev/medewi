@@ -329,9 +329,9 @@ services.prometheus.checkConfig = "syntax-only";
 | `medewi_machine_connected` | gauge | 1 while a machine connection is up | 0 when off |
 | `medewi_machine_released_until_seconds` | gauge | Unix time the release ends, 0 when not released | 0 |
 | `medewi_spec_mismatch` | gauge | 1 while the machine's XML name differs from the loaded spec | 0 |
-| `medewi_power_state{state}` | gauge | 1 for the current state: `active`, `eco`, `standby`, `unknown` | `unknown` when off, `standby` in standby |
+| `medewi_power_state{state}` | gauge | 1 for the current state: `active`, `eco`, `standby`, `cold` (PID1 control off), `unknown` | `unknown` when off, `standby` in standby |
 | `medewi_ready` | gauge | boiler settled on the setpoint, machine active | 0 |
-| `medewi_machine_ready` | gauge | the machine's own `[READY]`, until eco, standby or a disconnect | 0 |
+| `medewi_machine_ready` | gauge | the machine's own `[READY]`, until eco, standby, cold or a disconnect | 0 |
 | `medewi_boiler_celsius` | gauge | boiler temperature | **keeps its last value** |
 | `medewi_setpoint_celsius` | gauge | boiler setpoint (drops in eco) | **keeps its last value** |
 | `medewi_heater_percent` | gauge | heater output | **keeps its last value** |

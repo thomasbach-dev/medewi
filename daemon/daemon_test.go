@@ -23,6 +23,7 @@ func TestPowerFromPayload(t *testing.T) {
 		{"{ - PID 93.0", PowerActive},
 		{"{ - ECO 79.0", PowerEco},
 		{"{ ? ??? ????", PowerStandby},
+		{"{ - CLD  21.4", PowerCold},
 		{"{ - XYZ 93.0", PowerUnknown},
 		{"{ -", PowerUnknown},
 	} {

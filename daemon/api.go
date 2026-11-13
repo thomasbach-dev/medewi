@@ -225,7 +225,8 @@ func statusFor(err error) int {
 	switch {
 	case errors.Is(err, ErrInvalidPower), errors.Is(err, ErrInvalidMark), errors.Is(err, ErrInvalidRelease):
 		return http.StatusBadRequest
-	case errors.Is(err, ErrBrewOpen), errors.Is(err, ErrSpecMismatch), errors.Is(err, ErrNoRawLog), errors.Is(err, ErrReleased):
+	case errors.Is(err, ErrBrewOpen), errors.Is(err, ErrSpecMismatch), errors.Is(err, ErrNoRawLog), errors.Is(err, ErrReleased),
+		errors.Is(err, ErrColdMode), errors.Is(err, ErrPowerUnknown):
 		return http.StatusConflict
 	case errors.Is(err, ErrDisconnected):
 		return http.StatusServiceUnavailable

@@ -470,7 +470,9 @@ func (d *Daemon) handle(ctx context.Context, raw []byte) {
 		d.decodeErrors.Add(1)
 		d.met.decodeErrors.Inc()
 		slog.Debug("report line skipped", "err", err)
-		d.update(func(s *Status) { s.Power, s.Ready = power, d.det.Ready() && power == PowerActive })
+		d.update(func(s *Status) {
+			s.Power, s.Ready, s.Reporting = power, d.det.Ready() && power == PowerActive, true
+		})
 		return
 	}
 	for _, ev := range d.det.Feed(rec) {
@@ -502,9 +504,9 @@ func (d *Daemon) handle(ctx context.Context, raw []byte) {
 	}
 	ready, open := d.det.Ready() && power == PowerActive, d.rec.Open()
 	d.update(func(s *Status) {
-		s.Power, s.Ready, s.BrewOpen = power, ready, open
+		s.Power, s.Ready, s.BrewOpen, s.Reporting = power, ready, open, true
 		s.Temp, s.Setpoint = smp.Temp, smp.Setpoint
-		if power == PowerEco || power == PowerStandby {
+		if power == PowerEco || power == PowerStandby || power == PowerCold {
 			s.MachineReady = false
 		}
 	})

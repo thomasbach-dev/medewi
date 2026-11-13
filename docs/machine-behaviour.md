@@ -112,6 +112,16 @@ Detection is issue #13; the data model for programs is issue #12.
   mode field `ECO`, setpoint 91 → 79, LCD shows `ECO` in the setpoint
   column.
 
+## Cold mode
+
+- With PID1 control switched off (Setup › PID1 › Control, as the pressure
+  test and flow meter calibration ask for), the mode field reads `CLD`.
+  Raw log of 2026-11-13, cold machine at 21 °C, controller in the run
+  menu: `CLD` for the whole 12-minute session. Temperatures stay live;
+  the setpoint, all PID1/PID2 terms, `Pressure SP` and the phase fields
+  are `?`-masked. The daemon reports power `cold`; it never switches power
+  from there (what `MCa` does in cold mode is unverified).
+
 ## Connection
 
 - The banner is the idle heartbeat: while any client has a stream on, a new

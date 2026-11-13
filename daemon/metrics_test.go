@@ -135,8 +135,8 @@ func TestPowerStateOneHot(t *testing.T) {
 	if got := val(t, reg, "medewi_boiler_celsius"); got != 77.7 {
 		t.Errorf("boiler = %v, want last value 77.7 kept while masked", got)
 	}
-	if got := testutil.CollectAndCount(reg, "medewi_power_state"); got != 4 {
-		t.Errorf("power_state series = %d, want 4", got)
+	if got := testutil.CollectAndCount(reg, "medewi_power_state"); got != len(powerStates) {
+		t.Errorf("power_state series = %d, want %d", got, len(powerStates))
 	}
 }
 

@@ -119,6 +119,8 @@ Details and evidence: [docs/machine-behaviour.md](docs/machine-behaviour.md).
 - Eco entry: mode field (offset 4) reads `ECO` and the setpoint drops
   (e.g. 91 → 79), temperatures stay live. STANDBY is the deeper state:
   nearly all report fields are `?`-masked while the stream keeps flowing.
+  PID1 control off: mode `CLD`, setpoint and PID fields masked,
+  temperatures live.
   Report lines can include user-defined profile/dose label strings.
 - Every report ends in `~ HH}` (bytes 284–287): HH = two's complement of
   the sum of bytes 0–283. `leva.VerifyChecksum` only recognises `~HH` at
