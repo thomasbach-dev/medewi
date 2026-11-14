@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -95,4 +96,34 @@ func LoadManifest(path string) (Manifest, error) {
 		return Manifest{}, fmt.Errorf("parse manifest: %w", err)
 	}
 	return m, nil
+}
+
+// WriteCapture writes the log and the manifest under dir (created if needed).
+// Both go to temp names first and are renamed into place only after both
+// succeeded, so a failure never leaves a half-written capture under the final
+// names or damages existing files.
+func WriteCapture(dir, logName, manName string, events []Event, m Manifest) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	logTmp := filepath.Join(dir, "."+logName+".tmp")
+	manTmp := filepath.Join(dir, "."+manName+".tmp")
+	f, err := os.Create(logTmp)
+	if err != nil {
+		return err
+	}
+	if err := WriteLog(f, events); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := m.Save(manTmp); err != nil {
+		return err
+	}
+	if err := os.Rename(logTmp, filepath.Join(dir, logName)); err != nil {
+		return err
+	}
+	return os.Rename(manTmp, filepath.Join(dir, manName))
 }

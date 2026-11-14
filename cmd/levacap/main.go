@@ -565,22 +565,6 @@ func captureStream(ctx context.Context, c *leva.Conn, sample displaySample, star
 // only after both succeeded, so a failure never leaves a half-written capture
 // under the final names or damages existing files.
 func writeOutput(dir, logName, manName, scenario, addr, banner, xmlName, xmlSHA, notes string, events []fixture.Event) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	logTmp := filepath.Join(dir, "."+logName+".tmp")
-	manTmp := filepath.Join(dir, "."+manName+".tmp")
-	f, err := os.Create(logTmp)
-	if err != nil {
-		return err
-	}
-	if err := fixture.WriteLog(f, events); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
 	m := fixture.Manifest{
 		Scenario:        scenario,
 		FirmwareVersion: banner,
@@ -590,11 +574,5 @@ func writeOutput(dir, logName, manName, scenario, addr, banner, xmlName, xmlSHA,
 		Notes:           notes,
 		Recorded:        time.Now(),
 	}
-	if err := m.Save(manTmp); err != nil {
-		return err
-	}
-	if err := os.Rename(logTmp, filepath.Join(dir, logName)); err != nil {
-		return err
-	}
-	return os.Rename(manTmp, filepath.Join(dir, manName))
+	return fixture.WriteCapture(dir, logName, manName, events, m)
 }
