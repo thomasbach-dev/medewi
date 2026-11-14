@@ -182,6 +182,9 @@
           # package builds, vendorHash, the VM test and the module eval.
           gate = pkgs.writeShellScriptBin "gate" ''
             set -e
+            # The sandbox and CI run in UTC; a test that only passes in the
+            # host's zone must fail here too.
+            export TZ=UTC
             repo=$(${pkgs.git}/bin/git rev-parse --show-toplevel)
             cd "$repo"
             set -x
