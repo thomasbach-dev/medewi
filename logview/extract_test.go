@@ -100,6 +100,64 @@ func TestExtractRebasesAndPrependsXMLNote(t *testing.T) {
 	}
 }
 
+func TestExtractXMLNoteBeforeWindowIsPrepended(t *testing.T) {
+	src := rawSrc(extractT0,
+		rxEv(0, "$id: leva! (3.2)\r\n"),
+		noteEv(10, "xml: OLD"),
+		rxEv(1000, "{a}\r\n"),
+		noteEv(1500, "xml: NEW"),
+		rxEv(2000, "{b}\r\n"),
+	)
+	got, err := Extract([]Source{src}, extractT0.Add(msec(900)), extractT0.Add(msec(3000)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []fixture.Event{
+		noteEv(0, "xml: OLD"),
+		rxEv(0, "{a}\r\n"),
+		noteEv(500, "xml: NEW"),
+		rxEv(1000, "{b}\r\n"),
+	}
+	if !reflect.DeepEqual(got.Events, want) {
+		t.Errorf("Events = %s\nwant   %s", showEvents(got.Events), showEvents(want))
+	}
+	if got.XMLName != "OLD" {
+		t.Errorf("XMLName = %q, want OLD", got.XMLName)
+	}
+	if hasNote(got.Notes, "XML named only") {
+		t.Errorf("Notes = %q", got.Notes)
+	}
+}
+
+func TestExtractXMLNoteOnlyInWindowIsNotPrepended(t *testing.T) {
+	src := rawSrc(extractT0,
+		rxEv(0, "$id: leva! (3.2)\r\n"),
+		txEv(100, "MC?\r\n"),
+		noteEv(1500, "xml: X"),
+		rxEv(2000, "{b}\r\n"),
+	)
+	got, err := Extract([]Source{src}, extractT0, extractT0.Add(msec(3000)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []fixture.Event{
+		rxEv(0, "$id: leva! (3.2)\r\n"),
+		txEv(100, "MC?\r\n"),
+		noteEv(1500, "xml: X"),
+		rxEv(2000, "{b}\r\n"),
+	}
+	if !reflect.DeepEqual(got.Events, want) {
+		t.Errorf("Events = %s\nwant   %s", showEvents(got.Events), showEvents(want))
+	}
+	if got.XMLName != "X" {
+		t.Errorf("XMLName = %q, want X", got.XMLName)
+	}
+	at := extractT0.Add(msec(1500)).Format(time.RFC3339Nano)
+	if !hasNote(got.Notes, "XML named only at "+at) {
+		t.Errorf("Notes = %q, want one naming %s", got.Notes, at)
+	}
+}
+
 func TestExtractStartsAtLineBoundary(t *testing.T) {
 	src := rawSrc(extractT0,
 		rxEv(0, "$id: leva! (3.2)\r\n"),

@@ -37,8 +37,11 @@ type Extracted struct {
 	Events      []fixture.Event // t rebased: first kept event at 0; XML note first
 	First, Last time.Time       // wall times of the first and last kept event
 	Files       []string        // basenames of the sources the events come from
-	XMLName     string          // from the session's last xml note before the window's end; "" if none
-	Firmware    string          // last "$id:" banner line of the session before or in the window, CRLF trimmed; "" if unknown
+	// XMLName is from the session's last xml note before the window (the
+	// one prepended); without one, from the first xml note in the window,
+	// kept where it is; "" if neither.
+	XMLName  string
+	Firmware string // last "$id:" banner line of the session before or in the window, CRLF trimmed; "" if unknown
 	// Reports and Frames count the kept rx lines starting with '{' and
 	// '<'; NoteEvents counts the note events in Events, the XML note
 	// included.
@@ -66,16 +69,21 @@ type keptEvent struct {
 // Every event with its wall time in the window is kept verbatim, except
 // that the first kept rx bytes start a line and the last ones end one,
 // and the XML note at t = 0 of a rotated file is replaced by one XML note
-// in front. A window that holds events of two sessions yields a
+// in front: the session's last one before the first kept event, if any.
+// Without rx bytes before the window (its first input file is a rotated
+// one), the window is taken to start at a line: rawlog emits rx events at
+// line boundaries. A window that holds events of two sessions yields a
 // *SessionBoundaryError; one without events an error.
 func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 	var (
 		out          Extracted
 		kept         []keptEvent
 		firmware     string
-		xmlName      string
-		sessionFirst string // basename of the session's first source in srcs
-		sessionKnown bool   // the session's first file is in srcs
+		xmlBefore    string    // the session's last xml note before anything kept
+		xmlIn        string    // the first xml note kept in the window
+		xmlInAt      time.Time // its wall time
+		sessionFirst string    // basename of the session's first source in srcs
+		sessionKnown bool      // the session's first file is in srcs
 		lineStart    = true
 		started      bool // an rx event was kept
 		dropped      int
@@ -87,7 +95,7 @@ func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 			if len(kept) > 0 && src.Start.Before(until) {
 				return Extracted{}, &SessionBoundaryError{At: src.Start}
 			}
-			firmware, xmlName, lineStart = "", "", true
+			firmware, xmlBefore, xmlIn, lineStart = "", "", "", true
 			sessionFirst, sessionKnown = base, true
 		case sessionFirst == "":
 			sessionFirst = base // a rotated file: the session began earlier
@@ -97,17 +105,17 @@ func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 			if !wall.Before(until) {
 				break
 			}
-			switch ev.Dir {
-			case fixture.RX:
+			if ev.Dir == fixture.RX {
 				if b, ok := lastBanner(ev.Data); ok {
 					firmware = b
 				}
-			case fixture.Note:
-				if name, ok := strings.CutPrefix(string(ev.Data), rawlog.XMLNotePrefix); ok {
-					xmlName = name
-				}
 			}
+			name, isXML := strings.CutPrefix(string(ev.Data), rawlog.XMLNotePrefix)
+			isXML = isXML && ev.Dir == fixture.Note
 			if wall.Before(since) || (i == 0 && isXMLNoteAtZero(ev)) {
+				if isXML && len(kept) == 0 {
+					xmlBefore = name
+				}
 				if ev.Dir == fixture.RX {
 					lineStart = bytes.HasSuffix(ev.Data, crlf)
 				}
@@ -131,6 +139,9 @@ func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 				started = true
 				ev.Data = data
 			}
+			if isXML && xmlIn == "" {
+				xmlIn, xmlInAt = name, wall
+			}
 			kept = append(kept, keptEvent{ev: ev, wall: wall, file: base})
 		}
 	}
@@ -147,7 +158,7 @@ func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 	}
 
 	out.First, out.Last = kept[0].wall, kept[len(kept)-1].wall
-	out.XMLName, out.Firmware = xmlName, firmware
+	out.Firmware = firmware
 	if firmware == "" {
 		if sessionKnown {
 			out.Notes = append(out.Notes, "firmware unknown: no $id: banner in the session")
@@ -156,8 +167,13 @@ func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 				"firmware unknown: the session's first file, before %s, is not in the input", sessionFirst))
 		}
 	}
-	if xmlName != "" {
-		out.Events = append(out.Events, fixture.Event{T: 0, Dir: fixture.Note, Data: []byte(rawlog.XMLNotePrefix + xmlName)})
+	switch {
+	case xmlBefore != "":
+		out.XMLName = xmlBefore
+		out.Events = append(out.Events, fixture.Event{T: 0, Dir: fixture.Note, Data: []byte(rawlog.XMLNotePrefix + xmlBefore)})
+	case xmlIn != "":
+		out.XMLName = xmlIn
+		out.Notes = append(out.Notes, fmt.Sprintf("XML named only at %s, inside the window", xmlInAt.Format(time.RFC3339Nano)))
 	}
 	var rxData []byte
 	for _, k := range kept {
