@@ -319,6 +319,54 @@ func TestNoHeartbeatWhileDisplay(t *testing.T) {
 	expect(t, r, c, displayFrame(2))
 }
 
+// realFrame is a 69-byte frame with a record start leva.SplitLine
+// recognises ("<1" + two digits), so it can be glued onto other records.
+var realFrame = fmt.Sprintf("<102%-64s>", "SOAK")
+
+// firstAfter sends cmd and returns the first replayed line (Once replay,
+// so the replayer starts at event 0).
+func firstAfter(t *testing.T, stream []fixture.Event, cmd string) string {
+	t.Helper()
+	s := start(t, Config{Speed: 10, Once: true, IdleTimeout: time10s, Stream: stream})
+	c, r := dial(t, s)
+	readLine(t, r, c)
+	send(t, c, cmd+"\r\n")
+	return readLine(t, r, c)
+}
+
+// A stream switch glues records: the record that completes an event
+// decides its class, since that is the stream the machine was sending.
+func TestGluedEventClassifiedByLastRecord(t *testing.T) {
+	cutFrameThenReport := "<102SOAK 1.0b  " + "{ - report}\r\n"
+	cutReportThenFrame := "{ - PID  93.0" + realFrame + "\r\n"
+	report := "{ - r}\r\n"
+	frame := realFrame + "\r\n"
+	for _, tc := range []struct {
+		name   string
+		stream []fixture.Event
+		cmd    string
+		want   string
+	}{
+		{"frame cut, report glued: MCr", []fixture.Event{rx(0, cutFrameThenReport), rx(10, frame), rx(20, report)}, "MCr", cutFrameThenReport},
+		{"frame cut, report glued: MC@", []fixture.Event{rx(0, cutFrameThenReport), rx(10, frame), rx(20, report)}, "MC@", frame},
+		{"report cut, frame glued: MC@", []fixture.Event{rx(0, cutReportThenFrame), rx(10, report), rx(20, frame)}, "MC@", cutReportThenFrame},
+		{"report cut, frame glued: MCr", []fixture.Event{rx(0, cutReportThenFrame), rx(10, frame), rx(20, report)}, "MCr", report},
+		// A continuation piece (no record start) follows the event before it.
+		{"frame continued: MC@", []fixture.Event{rx(0, "<102SOAK "), rx(5, "rest>\r\n"), rx(10, report)}, "MC@", "<102SOAK rest>\r\n"},
+		{"frame continued: MCr", []fixture.Event{rx(0, "<102SOAK "), rx(5, "rest>\r\n"), rx(10, report)}, "MCr", report},
+		{"report continued: MCr", []fixture.Event{rx(0, "{ - r1"), rx(5, "2}\r\n"), rx(10, frame)}, "MCr", "{ - r12}\r\n"},
+		{"report continued: MC@", []fixture.Event{rx(0, "{ - r1"), rx(5, "2}\r\n"), rx(10, frame)}, "MC@", frame},
+		// Notices stay report-stream traffic.
+		{"notice: MCr", []fixture.Event{rx(0, frame), rx(10, "[READY]\r\n")}, "MCr", "[READY]\r\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := firstAfter(t, tc.stream, tc.cmd); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestMCRResendsLastFrame(t *testing.T) {
 	cfg := slowCfg()
 	cfg.Stream = []fixture.Event{rx(0, displayFrame(1)), rx(10, "{r}\r\n"), rx(10000, displayFrame(2))}

@@ -11,6 +11,7 @@ package sim
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/thomasbach-dev/medewi/fixture"
+	"github.com/thomasbach-dev/medewi/leva"
 )
 
 const (
@@ -55,8 +57,12 @@ type Config struct {
 	Responses map[string][]string
 	// Stream is the recorded traffic for replay. Replay writes Event.Data
 	// verbatim (fixtures carry their own CRLF) as one queue item per RX event;
-	// TX events are skipped. An RX event starting with '<' is an LCD frame,
-	// any other is report-stream traffic. MCr starts replay of the reports,
+	// TX events are skipped. An RX event is an LCD frame or report-stream
+	// traffic (reports, notices, banners); the record that completes it
+	// decides: a stream switch glues records (see leva.SplitLine), and the
+	// last one is what the machine was sending then. An event with no
+	// record start (a continuation piece) takes the class of the RX event
+	// before it. MCr starts replay of the reports,
 	// MC@ of the frames (the last one sent wins, like on the machine), and
 	// MC<space> stops both. Switching between MCr and MC@ keeps the
 	// timeline: events of the other class are skipped but keep their time
@@ -412,9 +418,13 @@ func (s *Server) startReplay(display bool) {
 // events. s.mu held; no replayer may be running.
 func (s *Server) startReplayerLocked() {
 	var events []fixture.Event
+	var frames []bool
+	frame := false
 	for _, ev := range s.stream {
 		if ev.Dir == fixture.RX {
+			frame = isFrameEvent(ev.Data, frame)
 			events = append(events, ev)
+			frames = append(frames, frame)
 		}
 	}
 	if len(events) == 0 {
@@ -423,7 +433,27 @@ func (s *Server) startReplayerLocked() {
 	stop := make(chan struct{})
 	s.stopReplay = stop
 	s.wg.Add(1)
-	go s.replay(events, stop)
+	go s.replay(events, frames, stop)
+}
+
+// isFrameEvent reports whether an RX event belongs to the display stream:
+// its last record (as leva.SplitLine splits glued ones) starts with '<'.
+// Notices and banners are report-stream traffic; an event starting with
+// anything else is a continuation piece and keeps prev, the class of the
+// event before it.
+func isFrameEvent(data []byte, prev bool) bool {
+	line := bytes.TrimRight(data, "\r\n")
+	if len(line) == 0 {
+		return prev
+	}
+	switch line[0] {
+	case '<', '{':
+		pieces := leva.SplitLine(line)
+		return pieces[len(pieces)-1].Data[0] == '<'
+	case '[', '$':
+		return false
+	}
+	return prev
 }
 
 // switchStream handles a Switch command: replace the stream and, while
@@ -468,13 +498,13 @@ func (s *Server) resendLast() {
 // emit queues one replayed item to all clients unless stop was signalled.
 // An item of the class not selected (frame vs report traffic) is skipped;
 // it still used up its time slot.
-func (s *Server) emit(data []byte, stop chan struct{}) bool {
+func (s *Server) emit(data []byte, frame bool, stop chan struct{}) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopReplay != stop { // stopped (or superseded) since we last looked
 		return false
 	}
-	if isFrame := len(data) > 0 && data[0] == '<'; isFrame != s.display {
+	if frame != s.display {
 		return true
 	}
 	s.lastItem = data
@@ -484,19 +514,19 @@ func (s *Server) emit(data []byte, stop chan struct{}) bool {
 
 // replay emits events verbatim, paced by their T deltas / Speed, looping until
 // stop is closed (or, with Once, until the last event).
-func (s *Server) replay(events []fixture.Event, stop chan struct{}) {
+func (s *Server) replay(events []fixture.Event, frames []bool, stop chan struct{}) {
 	defer s.wg.Done()
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	<-timer.C
 	prev := events[0].T
 	for {
-		for _, ev := range events {
+		for i, ev := range events {
 			if !s.sleep(timer, time.Duration(float64(ev.T-prev)*float64(time.Millisecond)/s.cfg.Speed), stop) {
 				return
 			}
 			prev = ev.T
-			if !s.emit(ev.Data, stop) {
+			if !s.emit(ev.Data, frames[i], stop) {
 				return
 			}
 		}
