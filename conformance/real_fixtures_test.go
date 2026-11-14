@@ -15,22 +15,26 @@ import (
 const frameLen = 69
 
 // classify names one record of received traffic (CRLF stripped, already
-// split by leva.SplitLine). A report or frame cut off by a stream switch is
-// a "fragment"; unknown text is not ok.
-func classify(line []byte) (kind string, ok bool) {
+// split by leva.SplitLine). Only a piece SplitLine marked Fragment (a report
+// or frame cut off by a stream switch) is a "fragment"; anything else must be
+// a whole report, frame, notice or banner, or it is not ok.
+func classify(p leva.Piece) (kind string, ok bool) {
+	line := p.Data
 	switch {
 	case len(line) == 0:
 		return "", false
-	case line[0] == '{':
-		if line[len(line)-1] == '}' {
-			return "report", true
+	case p.Fragment:
+		// SplitLine marks any lone "<..." that is not a whole frame as a
+		// fragment; a real cut-off is shorter than a frame and lacks the
+		// closing '>', so an over- or under-long "<...>" line is corrupt.
+		if line[0] == '<' && (len(line) >= frameLen || line[len(line)-1] == '>') {
+			return "", false
 		}
 		return "fragment", true
-	case line[0] == '<':
-		if len(line) == frameLen && line[len(line)-1] == '>' {
-			return "frame", true
-		}
-		return "fragment", true
+	case line[0] == '{' && line[len(line)-1] == '}':
+		return "report", true
+	case len(line) == frameLen && line[0] == '<' && line[len(line)-1] == '>':
+		return "frame", true
 	case line[0] == '[' && line[len(line)-1] == ']':
 		return "notice", true
 	case bytes.HasPrefix(line, []byte("$id:")), bytes.HasPrefix(line, []byte("XML=")):
@@ -107,7 +111,7 @@ func TestCommittedFixturesShape(t *testing.T) {
 					if len(p.Data) == 0 {
 						continue
 					}
-					kind, ok := classify(p.Data)
+					kind, ok := classify(p)
 					if !ok {
 						t.Errorf("unclassified rx line: %q", p.Data[:min(len(p.Data), 60)])
 						continue
@@ -156,20 +160,21 @@ func TestFixtureGuardClassifies(t *testing.T) {
 		{"glued", cut + report, []string{"fragment", "report"}},
 		{"fragment", cut, []string{"fragment"}},
 		{"junk", "hello", []string{""}},
+		{"frame70", "<100" + strings.Repeat("a", 65) + ">", []string{""}},
+		{"frame68", "<100" + strings.Repeat("a", 63) + ">", []string{""}},
+		{"unterminated report", "{ -" + strings.Repeat("x", 285), []string{""}},
+		{"cut report before frame", "{ -" + strings.Repeat("x", 100) + frame, []string{"fragment", "frame"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var got []string
 			for _, p := range leva.SplitLine([]byte(tt.line)) {
-				kind, _ := classify(p.Data)
+				kind, _ := classify(p)
 				got = append(got, kind)
 			}
 			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
 				t.Fatalf("got %v, want %v", got, tt.want)
 			}
 		})
-	}
-	if _, ok := classify([]byte("hello")); ok {
-		t.Fatal("hello classified ok")
 	}
 }
