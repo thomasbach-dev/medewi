@@ -97,6 +97,37 @@ Observed 2026-11-05 from a cold start (boiler 34 °C):
 
 Detection is issue #13; the data model for programs is issue #12.
 
+## Backflush program (run menu)
+
+Observed 2026-11-14 from the raw log, warm machine (boiler 94 °C), blind
+basket in the portafilter, operator marks at start, at the key press and
+at the end. About 4:40 min from selecting the program to the return to
+the menu. Mode stays `PID`, setpoint 94, `Pressure SP` `?????`
+throughout; only the LCD (third menu row, in place of `Backflush`) and
+the pump marker show the program.
+
+1. Against the blind basket: 6 pump pulses (marker `*`), 5.5–5.8 s each,
+   starting every 16 s. The LCD alternates `PUMP` and `SOAK 00m:NNs`
+   (counting up during the pause). Pressure rises to the OPV, 10.9–11.7
+   bar, and holds there; 22–35 ml per pulse.
+2. `EMPTY`: the LCD asks to empty the blind basket and waits for a key
+   press, pump off, here for about 80 s. The pressure trapped above the
+   blind basket leaks down only slowly, 9.6 → 7.1 bar. The press itself
+   was not seen: the frame sampling (500 ms every 5 s) has a gap from the
+   last `EMPTY` frame to 3 s later, when the pump started.
+3. Rinse without the blind basket: 3 pump pulses of 19.6–19.9 s, starting
+   every 40 s; the LCD alternates `PUMP` and `WAIT`. Within each pulse the
+   pressure saws between about 0.3 and 12–13 bar with a period of about
+   3.3 s (6–7 cycles per pulse): about 1.7 s rising slowly from 0.3 to
+   2 bar, then about 1.3 s at the OPV. Hypothesis: the program opens and
+   closes the grouphead valve while the pump runs. 100–112 ml per pulse.
+4. The LCD returns to the run menu, `Backflush` selected.
+
+- The `Volume` field resets at every pump pulse of this program, unlike
+  the warm-up program, where it counts on through all pulses.
+- `levalog runs` lists each pulse as a flush of its own (9 runs): nothing
+  in the report stream marks the program (detection: issue #13).
+
 ## Steam
 
 - With the steam switch on, the boiler rises to about 120 °C while leva!'s
