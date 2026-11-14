@@ -18,7 +18,9 @@ import (
 // cet stands in for Europe/Berlin in November (UTC+1) without tzdata.
 var cet = time.FixedZone("CET", 3600)
 
-// inCET sets time.Local to cet for the test.
+// inCET sets time.Local to cet for the test. Every test that passes
+// winArgs or other local-time timestamps calls it, so it runs the same in
+// any TZ (CI and the flake sandbox run in UTC).
 func inCET(t *testing.T) {
 	t.Helper()
 	old := time.Local
@@ -182,6 +184,7 @@ func TestExtractStdout(t *testing.T) {
 
 func TestExtractRefusesNonEmptyOut(t *testing.T) {
 	noEnv(t)
+	inCET(t)
 	out := t.TempDir()
 	keep := filepath.Join(out, "keep")
 	if err := os.WriteFile(keep, []byte("mine"), 0o600); err != nil {
@@ -207,6 +210,7 @@ func TestExtractRefusesNonEmptyOut(t *testing.T) {
 
 func TestExtractUsageErrors(t *testing.T) {
 	noEnv(t)
+	inCET(t)
 	dir := extractDir(t)
 	capDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(capDir, "log.jsonl"), []byte(`{"t":0,"dir":"rx","data":"e2F9DQo="}`+"\n"), 0o600); err != nil {
@@ -245,6 +249,7 @@ func TestExtractUsageErrors(t *testing.T) {
 
 func TestExtractEmptyWindow(t *testing.T) {
 	noEnv(t)
+	inCET(t)
 	out := filepath.Join(t.TempDir(), "o")
 	code, _, stderr := runCmd(t, "extract", "--dir", extractDir(t),
 		"-s", "2026-11-14 08:58:36", "-u", "2026-11-14 08:58:40", "--out", out)
@@ -278,6 +283,7 @@ func TestExtractSessionBoundary(t *testing.T) {
 // session's first file is not looked for beyond them.
 func TestExtractFirmwareMissing(t *testing.T) {
 	noEnv(t)
+	inCET(t)
 	dir := extractDir(t)
 	f3Path := filepath.Join(dir, f3.Format("20060102T150405.000Z")+".jsonl.gz")
 	code, stdout, stderr := runCmd(t, append(append([]string{"extract", "--out", "-"}, winArgs...), f3Path)...)
@@ -291,6 +297,7 @@ func TestExtractFirmwareMissing(t *testing.T) {
 
 func TestExtractXMLSHA(t *testing.T) {
 	noEnv(t)
+	inCET(t)
 	xdir := t.TempDir()
 	content := []byte("<cfg version=\"4\"><values></values></cfg>\n")
 	match := filepath.Join(xdir, xmlName+".xml")
