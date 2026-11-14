@@ -32,10 +32,19 @@ Every command follows [docs/cli-conventions.md](docs/cli-conventions.md):
 pflag `--long` options, `--since/-s`/`--until/-u`, `systemd.time(7)` forms
 via `systime`, env vars as defaults, exit codes 0/1/2.
 
-The full gate — run it before EVERY commit (CI runs the same):
+The fast gate — run it before EVERY commit:
 
 ```sh
-nix flake check -L     # builds + lint, fmt, vet, test -race, tidy; each a cached check
+nix develop --command gate   # golangci-lint run + fmt --diff, go vet, go test -race, go mod tidy -diff
+```
+
+It runs the flake checks' commands with the same tools in the working
+tree, on warm caches. The full gate — run it before every push, and
+before committing changes to `go.mod`/`go.sum`, `flake.nix` or `nix/`
+(CI runs the same):
+
+```sh
+nix flake check -L     # builds + lint, fmt, vet, test -race, tidy, VM test, module eval
 nix build .#checks.x86_64-linux.test -L   # one check
 ```
 
@@ -77,7 +86,7 @@ local, gitignored `.envrc` — see the README's Configuration section.
 - Personas are "barista" and "regular" — no real personal names.
 - Pure Go, no cgo (protects cross-compile and gomobile paths).
 - TDD (failing test first), conventional commits, one feature branch + PR
-  per unit of work; CI runs the same gate as above.
+  per unit of work; CI runs the full gate.
 
 ## Architecture in one breath
 

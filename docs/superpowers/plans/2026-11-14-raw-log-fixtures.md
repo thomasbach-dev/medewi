@@ -14,7 +14,7 @@
 
 - Work in worktree `.claude/worktrees/backflush-fixture`, branch `backflush-fixture`; one rebased PR against main.
 - TDD: failing test first. Conventional commits; commit with `git -c commit.gpgsign=false commit`; trailer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
-- Gate before every commit: `nix flake check -L` (`git add` new files first). Tests needing the XML: `nix develop --command go test ./PKG/ -run NAME -v` (the local `.envrc` sets `MEDEWI_XML_PATH`).
+- Gate before every commit: `nix develop --command gate`; `nix flake check -L` (`git add` new files first) before committing go.mod/go.sum/flake.nix/nix changes and before the final push. Tests needing the XML: `nix develop --command go test ./PKG/ -run NAME -v` (the local `.envrc` sets `MEDEWI_XML_PATH`).
 - Never contact the machine. `extract` is offline.
 - Extracted bytes differ from the recorded ones only by the cut and the rebased `t`.
 - Existing fixtures (no `<` frames) replay byte-for-byte as before.
