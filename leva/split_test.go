@@ -36,3 +36,30 @@ func TestSplitLine(t *testing.T) {
 		})
 	}
 }
+
+func TestLastRecordStart(t *testing.T) {
+	report := "{ -1PID091.20091.0008-001.70009.20000.00000~ 6D}"
+	frame := "<102WARM-UP         01m:34s                       0% 0.0b\x05  4s 239ml>"
+	for _, tc := range []struct {
+		name string
+		b    string
+		want int
+	}{
+		{"report", report + "\r\n", 0},
+		{"intact frame", frame + "\r\n", 0},
+		{"notice", "[READY]\r\n", 0},
+		{"banner", "$id: leva! (3.2)\r\n", 0},
+		{"frame cut, report glued", frame[:40] + report, 40},
+		{"report cut, frame glued", report[:20] + frame, 20},
+		{"continuation with a glued report", "0.1b\x05  " + report[:10], 7},
+		{"continuation with a glued frame", "?????" + frame[:10], 5},
+		{"continuation only", "2}\r\n", -1},
+		{"reply text", "MCh  this help\r\n", -1},
+		{"empty", "", -1},
+		{"two glued", report[:5] + frame[:30] + report, 35},
+	} {
+		if got := LastRecordStart([]byte(tc.b)); got != tc.want {
+			t.Errorf("%s: LastRecordStart(%q) = %d, want %d", tc.name, tc.b, got, tc.want)
+		}
+	}
+}

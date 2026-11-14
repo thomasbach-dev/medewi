@@ -356,6 +356,12 @@ func TestGluedEventClassifiedByLastRecord(t *testing.T) {
 		{"frame continued: MCr", []fixture.Event{rx(0, "<102SOAK "), rx(5, "rest>\r\n"), rx(10, report)}, "MCr", report},
 		{"report continued: MCr", []fixture.Event{rx(0, "{ - r1"), rx(5, "2}\r\n"), rx(10, frame)}, "MCr", "{ - r12}\r\n"},
 		{"report continued: MC@", []fixture.Event{rx(0, "{ - r1"), rx(5, "2}\r\n"), rx(10, frame)}, "MC@", frame},
+		// A continuation piece with a glued record takes that record's class
+		// (chunked captures: the switch can fall inside a read).
+		{"report ends, frame glued in a piece: MC@", []fixture.Event{rx(0, "{ - r1"), rx(5, "2}\r\n<102SOAK"), rx(10, " rest>\r\n"), rx(15, report)}, "MC@", "2}\r\n"},
+		{"report ends, frame glued in a piece: MCr", []fixture.Event{rx(0, "{ - r1"), rx(5, "2}\r\n<102SOAK"), rx(10, " rest>\r\n"), rx(15, report)}, "MCr", "{ - r1" + report},
+		{"frame ends, report glued in a piece: MCr", []fixture.Event{rx(0, "<102SOAK 1.0b"), rx(5, "  { - PID"), rx(10, " 93}\r\n"), rx(15, frame)}, "MCr", "  { - PID 93}\r\n"},
+		{"frame ends, report glued in a piece: MC@", []fixture.Event{rx(0, "<102SOAK 1.0b"), rx(5, "  { - PID"), rx(10, " 93}\r\n"), rx(15, frame)}, "MC@", "<102SOAK 1.0b" + frame},
 		// Notices stay report-stream traffic.
 		{"notice: MCr", []fixture.Event{rx(0, frame), rx(10, "[READY]\r\n")}, "MCr", "[READY]\r\n"},
 	} {

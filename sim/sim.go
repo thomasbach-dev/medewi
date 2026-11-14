@@ -11,7 +11,6 @@ package sim
 
 import (
 	"bufio"
-	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -54,15 +53,18 @@ type Config struct {
 	Banner string
 	// Responses maps a received command line to the lines sent in reply to
 	// all clients. The sim appends CRLF to each. Must not be mutated after New.
+	// MCr, MC@, MC<space> and MCR are handled by the sim itself; entries
+	// for them are never sent.
 	Responses map[string][]string
 	// Stream is the recorded traffic for replay. Replay writes Event.Data
 	// verbatim (fixtures carry their own CRLF) as one queue item per RX event;
 	// TX events are skipped. An RX event is an LCD frame or report-stream
-	// traffic (reports, notices, banners); the record that completes it
-	// decides: a stream switch glues records (see leva.SplitLine), and the
-	// last one is what the machine was sending then. An event with no
-	// record start (a continuation piece) takes the class of the RX event
-	// before it. MCr starts replay of the reports,
+	// traffic (reports, notices, banners); the last record that starts in it
+	// decides (leva.LastRecordStart): a stream switch glues records, also
+	// inside a TCP read, and the last one is what the machine was sending
+	// then. An event with no record start (a continuation piece) takes the
+	// class of the RX event before it; a first event without one is
+	// report-stream traffic. MCr starts replay of the reports,
 	// MC@ of the frames (the last one sent wins, like on the machine), and
 	// MC<space> stops both. Switching between MCr and MC@ keeps the
 	// timeline: events of the other class are skipped but keep their time
@@ -437,23 +439,15 @@ func (s *Server) startReplayerLocked() {
 }
 
 // isFrameEvent reports whether an RX event belongs to the display stream:
-// its last record (as leva.SplitLine splits glued ones) starts with '<'.
-// Notices and banners are report-stream traffic; an event starting with
-// anything else is a continuation piece and keeps prev, the class of the
-// event before it.
+// the last record starting in it is a frame. Reports, notices and banners
+// are report-stream traffic; an event with no record start is a
+// continuation piece and keeps prev, the class of the event before it.
 func isFrameEvent(data []byte, prev bool) bool {
-	line := bytes.TrimRight(data, "\r\n")
-	if len(line) == 0 {
+	i := leva.LastRecordStart(data)
+	if i < 0 {
 		return prev
 	}
-	switch line[0] {
-	case '<', '{':
-		pieces := leva.SplitLine(line)
-		return pieces[len(pieces)-1].Data[0] == '<'
-	case '[', '$':
-		return false
-	}
-	return prev
+	return data[i] == '<'
 }
 
 // switchStream handles a Switch command: replace the stream and, while
