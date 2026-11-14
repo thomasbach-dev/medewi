@@ -5,8 +5,8 @@
 // Like the real module, all output is shared "UART" traffic: canned responses
 // to any client's command are fanned out to every connected client. The
 // banner is a connect greeting and goes only to the new client, unless
-// reporting is on: then, like the real machine, the new client gets only
-// the stream.
+// a stream (reports or the display mirror) is on: then, like the real
+// machine, the new client gets only the stream.
 package sim
 
 import (
@@ -55,14 +55,20 @@ type Config struct {
 	Responses map[string][]string
 	// Stream is the recorded traffic for replay. Replay writes Event.Data
 	// verbatim (fixtures carry their own CRLF) as one queue item per RX event;
-	// TX events are skipped. MCr starts replay, MC<space> stops it, MCR while
-	// reporting resends the last item. With no RX events, MCr sets the flag
-	// but emits nothing, and MCR sends nothing.
+	// TX events are skipped. An RX event starting with '<' is an LCD frame,
+	// any other is report-stream traffic. MCr starts replay of the reports,
+	// MC@ of the frames (the last one sent wins, like on the machine), and
+	// MC<space> stops both. Switching between MCr and MC@ keeps the
+	// timeline: events of the other class are skipped but keep their time
+	// slot. MCR while a stream is on resends the last item emitted. With no
+	// RX events (or none of the selected class), MCr/MC@ set the flag but
+	// emit nothing, and MCR sends nothing.
 	Stream []fixture.Event
 	// BannerInterval, if positive, makes the sim repeat Banner to all clients
-	// at this interval while reporting is off, like the real machine's idle
-	// heartbeat. It pauses while MCr reporting is active and resumes after
-	// MC<space>. Zero (default): the banner is sent once, on connect.
+	// at this interval while no stream is on, like the real machine's idle
+	// heartbeat. It pauses while MCr reporting or the MC@ display mirror is
+	// on and resumes after MC<space>. Zero (default): the banner is sent
+	// once, on connect.
 	BannerInterval time.Duration
 	// Switch maps a received command line to a replacement for Stream, so
 	// tests can model commands that change what the machine reports (eco,
@@ -86,9 +92,12 @@ type Server struct {
 	stopped  bool
 
 	// Global reporting state, like the real machine's single UART toggle.
-	// stopReplay is non-nil exactly while a replayer goroutine owns the
-	// stream; closing it (under mu) tells that replayer to exit.
+	// reporting means a stream is on; display says which one (MC@ frames,
+	// not MCr reports). stopReplay is non-nil exactly while a replayer
+	// goroutine owns the stream; closing it (under mu) tells that replayer
+	// to exit.
 	reporting  bool
+	display    bool
 	stopReplay chan struct{}
 	lastItem   []byte
 	stream     []fixture.Event // current replay source; Switch replaces it
@@ -163,7 +172,8 @@ func (s *Server) Start() error {
 }
 
 // heartbeat re-sends the banner to every client each BannerInterval unless
-// reporting is on. The banner is one whole queue item, like any other output.
+// a stream (reports or display) is on. The banner is one whole queue item,
+// like any other output.
 func (s *Server) heartbeat() {
 	defer s.wg.Done()
 	t := time.NewTicker(s.cfg.BannerInterval)
@@ -247,7 +257,7 @@ func (s *Server) acceptLoop(ln net.Listener) {
 			continue
 		}
 		c := &client{conn: conn, out: make(chan []byte, outQueueLen), done: make(chan struct{})}
-		if !s.reporting { // the real machine is silent while reporting
+		if !s.reporting { // the real machine is silent while a stream is on
 			c.out <- []byte(s.cfg.Banner + "\r\n") // empty queue: cannot block
 		}
 		s.clients[c] = struct{}{}
@@ -291,7 +301,10 @@ func (s *Server) readLoop(c *client) {
 		}
 		switch cmd {
 		case "MCr":
-			s.startReplay()
+			s.startReplay(false)
+			continue
+		case "MC@":
+			s.startReplay(true)
 			continue
 		case "MC ":
 			s.stopReporting()
@@ -378,15 +391,17 @@ func (c *client) close() {
 // spinning when it wraps around.
 const minLoopPause = time.Millisecond
 
-// startReplay handles MCr: set the global flag and, if no replayer runs yet
-// and there is something to replay, start exactly one.
-func (s *Server) startReplay() {
+// startReplay handles MCr (display false) and MC@ (display true): set the
+// global flags and, if no replayer runs yet and there is something to
+// replay, start exactly one. A running replayer keeps its timeline and
+// only switches which events it emits.
+func (s *Server) startReplay(display bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopped {
 		return
 	}
-	s.reporting = true
+	s.reporting, s.display = true, display
 	if s.stopReplay != nil {
 		return
 	}
@@ -424,12 +439,12 @@ func (s *Server) switchStream(events []fixture.Event) {
 	s.startReplayerLocked()
 }
 
-// stopReporting handles MC<space>: clear the flag and stop the replayer, for
-// every client regardless of who started it.
+// stopReporting handles MC<space>: clear the flags and stop the replayer,
+// for every client regardless of who started it.
 func (s *Server) stopReporting() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.reporting = false
+	s.reporting, s.display = false, false
 	s.stopReplayLocked()
 }
 
@@ -451,11 +466,16 @@ func (s *Server) resendLast() {
 }
 
 // emit queues one replayed item to all clients unless stop was signalled.
+// An item of the class not selected (frame vs report traffic) is skipped;
+// it still used up its time slot.
 func (s *Server) emit(data []byte, stop chan struct{}) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopReplay != stop { // stopped (or superseded) since we last looked
 		return false
+	}
+	if isFrame := len(data) > 0 && data[0] == '<'; isFrame != s.display {
+		return true
 	}
 	s.lastItem = data
 	s.fanOutLocked(data)

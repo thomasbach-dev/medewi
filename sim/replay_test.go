@@ -2,7 +2,10 @@ package sim
 
 import (
 	"bufio"
+	"fmt"
 	"net"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -190,4 +193,143 @@ func TestStopTerminatesReplayer(t *testing.T) {
 	done := make(chan struct{})
 	go func() { _ = s.Stop(); close(done) }()
 	<-done // Stop joins the replayer via wg; hangs (test timeout) on a leak
+}
+
+// displayFrame is a 69-byte LCD frame (MC@) carrying i in its text.
+func displayFrame(i int) string {
+	return fmt.Sprintf("<%-67d>\r\n", i)
+}
+
+// mixedStream alternates report lines and display frames, 50 ms apart, as
+// a raw log of a client switching between MCr and MC@ records them. Each
+// line carries its t.
+func mixedStream(n int) []fixture.Event {
+	evs := make([]fixture.Event, n)
+	for i := range evs {
+		t := int64(i * 50)
+		if i%2 == 0 {
+			evs[i] = rx(t, fmt.Sprintf("{%d}\r\n", t))
+		} else {
+			evs[i] = rx(t, displayFrame(int(t)))
+		}
+	}
+	return evs
+}
+
+// lineT returns the t a mixedStream line carries.
+func lineT(t *testing.T, line string) int {
+	t.Helper()
+	n, err := strconv.Atoi(strings.TrimSpace(strings.Trim(strings.TrimRight(line, "\r\n"), "{}<>")))
+	if err != nil {
+		t.Fatalf("line %q carries no t: %v", line, err)
+	}
+	return n
+}
+
+func TestMCAtReplaysFramesOnly(t *testing.T) {
+	s := start(t, Config{Speed: 10, IdleTimeout: time10s, Stream: mixedStream(20)})
+	c, r := dial(t, s)
+	readLine(t, r, c)
+	send(t, c, "MC@\r\n")
+	for i := range 6 {
+		if got := readLine(t, r, c); !strings.HasPrefix(got, "<") || len(got) != 71 {
+			t.Fatalf("line %d = %q, want a display frame", i, got)
+		}
+	}
+}
+
+func TestMCrSkipsFrames(t *testing.T) {
+	s := start(t, Config{Speed: 10, IdleTimeout: time10s, Stream: mixedStream(20)})
+	c, r := dial(t, s)
+	readLine(t, r, c)
+	send(t, c, "MCr\r\n")
+	for i := range 12 { // more than one loop of the stream
+		if got := readLine(t, r, c); !strings.HasPrefix(got, "{") {
+			t.Fatalf("line %d = %q, want a report", i, got)
+		}
+	}
+}
+
+// Switching from reports to display does not restart the timeline: the
+// first frame comes after the last report seen, not from the start.
+func TestStreamSwitchKeepsTimeline(t *testing.T) {
+	s := start(t, Config{Speed: 10, Once: true, IdleTimeout: time10s, Stream: mixedStream(400)})
+	c, r := dial(t, s)
+	readLine(t, r, c)
+	send(t, c, "MCr\r\n")
+	var last int
+	for range 3 {
+		line := readLine(t, r, c)
+		if !strings.HasPrefix(line, "{") {
+			t.Fatalf("got %q, want a report", line)
+		}
+		last = lineT(t, line)
+	}
+	send(t, c, "MC@\r\n")
+	line := readLine(t, r, c)
+	for strings.HasPrefix(line, "{") { // reports in flight before MC@
+		line = readLine(t, r, c)
+	}
+	if !strings.HasPrefix(line, "<") {
+		t.Fatalf("got %q, want a display frame", line)
+	}
+	if got := lineT(t, line); got <= last {
+		t.Errorf("first frame has t %d, not after the last report's %d: the timeline restarted", got, last)
+	}
+}
+
+func TestMCSpaceThenMCAtResumesFrames(t *testing.T) {
+	cfg := Config{Speed: 10, IdleTimeout: time10s, Stream: mixedStream(20), Responses: map[string][]string{"MCh": {"pong"}}}
+	s := start(t, cfg)
+	c, r := dial(t, s)
+	readLine(t, r, c)
+	send(t, c, "MC@\r\n")
+	if got := readLine(t, r, c); !strings.HasPrefix(got, "<") {
+		t.Fatalf("got %q, want a display frame", got)
+	}
+	send(t, c, "MC \r\n")
+	send(t, c, "MCh\r\n")
+	for line := readLine(t, r, c); line != "pong\r\n"; line = readLine(t, r, c) {
+		_ = line // drain in-flight frames
+	}
+	send(t, c, "MC@\r\n")
+	for i := range 3 {
+		if got := readLine(t, r, c); !strings.HasPrefix(got, "<") {
+			t.Fatalf("line %d = %q, want a display frame", i, got)
+		}
+	}
+}
+
+func TestNoHeartbeatWhileDisplay(t *testing.T) {
+	cfg := Config{
+		BannerInterval: 20 * time.Millisecond,
+		IdleTimeout:    time10s,
+		Stream:         []fixture.Event{rx(0, displayFrame(1)), rx(100, "{r}\r\n"), rx(300, displayFrame(2))},
+	}
+	s := start(t, cfg)
+	c, r := dial(t, s)
+	send(t, c, "MC@\r\n")
+	// Banners queued before MC@ was processed are fine; skip to the first frame.
+	for line := readLine(t, r, c); line != displayFrame(1); line = readLine(t, r, c) {
+		if line != bannerLine {
+			t.Fatalf("unexpected line %q", line)
+		}
+	}
+	// The 300 ms gap is 15 intervals: any banner (or the report) shows up first.
+	expect(t, r, c, displayFrame(2))
+}
+
+func TestMCRResendsLastFrame(t *testing.T) {
+	cfg := slowCfg()
+	cfg.Stream = []fixture.Event{rx(0, displayFrame(1)), rx(10, "{r}\r\n"), rx(10000, displayFrame(2))}
+	s := start(t, cfg)
+	c, r := dial(t, s)
+	readLine(t, r, c)
+	send(t, c, "MC@\r\n")
+	expect(t, r, c, displayFrame(1))
+	// Give the skipped report time to pass; if it has not, this test is
+	// merely weaker, never wrong.
+	time.Sleep(50 * time.Millisecond)
+	send(t, c, "MCR\r\n")
+	expect(t, r, c, displayFrame(1)) // frame 2 is ~10s away: only MCR can produce this
 }

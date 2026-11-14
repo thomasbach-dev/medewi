@@ -184,9 +184,11 @@ func TestMetricsCountsFailedReconnectAttempts(t *testing.T) {
 
 // A fragment shows up while the connection that saw it is still up.
 func TestMetricsFragmentsLive(t *testing.T) {
-	cut := "<102SOAK 1.0b       1: 91.0\xdf \x04 91.0\xdf\x01             5% 0"
+	// A cut-off report: the sim classifies a line by its first byte, so a
+	// cut-off frame ("<…") glued onto a report would only be replayed after MC@.
+	cut := line('-', "PID", 93, 93, 0, -1, 0, 0)[:40]
 	ls := idleLines(4)
-	ls = append(ls, append([]byte(cut), line('-', "PID", 93, 93, 0, -1, 0, 0)...))
+	ls = append(ls, append(append([]byte(nil), cut...), line('-', "PID", 93, 93, 0, -1, 0, 0)...))
 	ls = append(ls, line('-', "PID", 77.7, 93, 0, -1, 0, 0))
 	d, reg := metricsDaemon(t, ls)
 	waitSentinel(t, d)

@@ -332,8 +332,7 @@ func TestReleaseDuringConnect(t *testing.T) {
 func TestReleaseWithDisplaySampling(t *testing.T) {
 	shrinkBannerTimeout(t)
 	for range 5 {
-		cfg := simConfig(idleLines(40))
-		cfg.Responses["MC@"] = []string{readyFrame}
+		cfg := simConfig(withFrames(idleLines(40)))
 		s := startSim(t, cfg)
 		dcfg := daemonConfig(s.Addr().String(), openStore(t))
 		dcfg.DisplayEvery, dcfg.DisplayFor = 50*time.Millisecond, 30*time.Millisecond

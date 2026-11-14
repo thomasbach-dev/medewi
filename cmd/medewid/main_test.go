@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thomasbach-dev/medewi/fixture"
 	"github.com/thomasbach-dev/medewi/sim"
 )
 
@@ -284,12 +285,15 @@ func TestRawLogBadFlags(t *testing.T) {
 
 func TestDisplaySampling(t *testing.T) {
 	clearEnv(t)
+	frame := "<102SOAK 1.0b       1: 91.0\xdf   READY\x02             7% 0.1b\x05  0s   0ml>\r\n"
 	s := sim.New(sim.Config{
-		Addr:   "127.0.0.1:0",
-		Banner: "$id: leva! (3.2)",
-		Responses: map[string][]string{
-			"MC?": {"XML=synthetic"},
-			"MC@": {"<102SOAK 1.0b       1: 91.0\xdf   READY\x02             7% 0.1b\x05  0s   0ml>"},
+		Addr:      "127.0.0.1:0",
+		Banner:    "$id: leva! (3.2)",
+		Responses: map[string][]string{"MC?": {"XML=synthetic"}},
+		// Like the machine, the sim emits frames only after MC@.
+		Stream: []fixture.Event{
+			{T: 0, Dir: fixture.RX, Data: []byte(frame)},
+			{T: 10, Dir: fixture.RX, Data: []byte(frame)},
 		},
 	})
 	if err := s.Start(); err != nil {
