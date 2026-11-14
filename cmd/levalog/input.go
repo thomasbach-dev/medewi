@@ -34,11 +34,17 @@ type input struct {
 }
 
 func (in *input) register(fs *pflag.FlagSet) {
+	in.registerWindow(fs)
+	fs.StringVar(&in.format, "format", "text", "output format: text, jsonl or csv")
+}
+
+// registerWindow registers --dir, -s/--since and -u/--until: the input
+// flags without --format.
+func (in *input) registerWindow(fs *pflag.FlagSet) {
 	in.dir = envOr(defaultRawDir, "MEDEWID_RAW_DIR")
 	fs.StringVar(&in.dir, "dir", in.dir, "raw-log directory used without FILE (env MEDEWID_RAW_DIR)")
 	fs.VarP(&in.since, "since", "s", "from this time on (inclusive)")
 	fs.VarP(&in.until, "until", "u", "before this time (exclusive)")
-	fs.StringVar(&in.format, "format", "text", "output format: text, jsonl or csv")
 }
 
 // check validates the flags after parsing; code 0 means ok.

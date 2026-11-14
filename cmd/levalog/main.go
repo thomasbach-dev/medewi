@@ -1,6 +1,7 @@
 // Command levalog reads medewid's raw traffic logs and levacap captures: it
 // lists the report fields (fields), the pump runs and wand draws (runs) and
-// the events (events), as text, JSON Lines or CSV. It only reads files; it
+// the events (events), as text, JSON Lines or CSV, and cuts raw-log windows
+// out as captures (extract). It only reads files (and writes the capture); it
 // never talks to the machine.
 package main
 
@@ -27,6 +28,7 @@ func usage(w io.Writer) {
   runs     list pump runs (shot, flush) and wand draws, numbered
   events   print events, with selection, projection and formats
   summary  what each source holds: firmware, XML, events, modes, READY, runs, masked fields, gaps
+  extract  cut a window of the raw logs out as a capture (log.jsonl + manifest.json)
 
 Input, for all subcommands: FILE|DIR ... are raw logs (*.jsonl.gz) or captures
 (log.jsonl, plain or gzip). A DIR is a capture directory (containing
@@ -58,6 +60,17 @@ the unmasked values. A text field (pump, mode, ...) named with a numeric
 aggregate gets only key_last and a note, here and in events --every.
 events --margin SPAN (default 0) widens each run window on both sides and
 needs --run or --run-kind.
+
+extract (-s T -u T | --run N [--margin SPAN]) --out DIR|- [--scenario NAME]
+[--notes TEXT] reads raw logs only and keeps every event in the window
+verbatim (the first and last rx bytes cut to whole lines, t rebased to 0,
+the session's xml note first); with --run N the window is that run's, as
+events --run N --margin SPAN prints it. The window must lie in one raw-log
+session (exit 1 at a reconnect or restart). It reads back to the session's
+first file in the directory for the firmware banner. --out DIR must not
+exist or be empty; the manifest gets machine_addr machine.example:23, the
+XML's sha256 when --xml names it, and the provenance in its notes. --out -
+prints the lines log.jsonl would hold, and no manifest.
 
 events --every SPAN [--agg LIST] prints one row per bucket of SPAN instead:
 t (bucket start), wall, src (jsonl and csv: the source path), run and run_t
@@ -116,7 +129,9 @@ Examples:
   levalog runs --kind shot --stats pressure --agg max,tmax,srcmax  # peak, when, where
   levalog events --run 2 --every 1s --fields pressure,pressure_sp  # a shot per second
   levalog events --every 60s --agg min,max --fields temperature_pid1,heat_pid_average  # warm-up
-  levalog events --run 2 --format csv --fields pressure | awk -F, 'NR>1 && $6>=8.5{print $5; exit}'  # time to 8.5 bar`)
+  levalog events --run 2 --format csv --fields pressure | awk -F, 'NR>1 && $6>=8.5{print $5; exit}'  # time to 8.5 bar
+  levalog extract -s "2026-11-14 08:58:30" -u "2026-11-14 09:07" --out backflush --scenario backflush  # a fixture
+  levalog extract -s today --run 3 --margin 10s --out - | jq -c .                                  # a quick look`)
 }
 
 // envOr returns the first non-empty environment variable of keys, else def.
@@ -152,6 +167,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		"runs":    runsCmd,
 		"events":  events,
 		"summary": summaryCmd,
+		"extract": extractCmd,
 	}
 	cmd, ok := cmds[rest[0]]
 	if !ok {

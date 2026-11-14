@@ -139,6 +139,14 @@ levalog events -s yesterday --run 2 --margin 5s --format csv \
   --fields run_t,pump,pressure,pressure_sp,temperature_pid1,heat_pid,volume
 ```
 
+`levalog extract` cuts a window of the raw logs (or `--run N` with
+`--margin`) out as a capture directory, the shape levacap writes, to
+become a fixture; `--out -` prints its `log.jsonl` lines instead:
+
+```sh
+levalog extract -s '2026-11-14 08:58:30' -u '2026-11-14 09:07' --out backflush --scenario backflush
+```
+
 For statistics, `levalog summary` says what each log or capture holds
 (firmware, XML, modes, READY, runs, masked fields, gaps), `runs --stats
 KEYS --agg LIST` adds per-run aggregates such as `pressure_max`, and
