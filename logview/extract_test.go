@@ -297,6 +297,35 @@ func TestExtractRefusesSessionBoundary(t *testing.T) {
 	}
 }
 
+func TestExtractSessionAfterWindowKeepsWindowState(t *testing.T) {
+	until := extractT0.Add(msec(3000))
+	a := rawSrc(extractT0,
+		rxEv(0, "$id: leva! (3.1)\r\n"),
+		noteEv(10, "xml: X"),
+		rxEv(1000, "{a}\r\n"),
+		rxEv(2000, "$id: leva! (3.2)\r\n"), // a later banner overrides the earlier one
+		rxEv(3000, "{at-until}\r\n"),       // the window ends before until
+	)
+	b := rawSrc(until, rxEv(0, "$id: leva! (3.3)\r\n"), noteEv(10, "xml: NEXT"), rxEv(1000, "{b}\r\n"))
+	got, err := Extract([]Source{a, b}, extractT0.Add(msec(500)), until)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []fixture.Event{noteEv(0, "xml: X"), rxEv(0, "{a}\r\n"), rxEv(1000, "$id: leva! (3.2)\r\n")}
+	if !reflect.DeepEqual(got.Events, want) {
+		t.Errorf("Events = %s\nwant   %s", showEvents(got.Events), showEvents(want))
+	}
+	if got.Firmware != "$id: leva! (3.2)" || got.XMLName != "X" {
+		t.Errorf("Firmware, XMLName = %q, %q; want the window's session's", got.Firmware, got.XMLName)
+	}
+	if hasNote(got.Notes, "firmware unknown") {
+		t.Errorf("Notes = %q", got.Notes)
+	}
+	if want := []string{"20261114T060552.000Z.jsonl.gz"}; !reflect.DeepEqual(got.Files, want) {
+		t.Errorf("Files = %v, want %v", got.Files, want)
+	}
+}
+
 func TestExtractSessionBeforeWindowIsNoBoundary(t *testing.T) {
 	t1 := extractT0.Add(30 * time.Minute)
 	a := rawSrc(extractT0, rxEv(0, "$id: leva! (3.1)\r\n"), noteEv(10, "xml: OLD"), rxEv(1000, "{a"))

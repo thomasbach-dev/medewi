@@ -89,10 +89,13 @@ func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 		dropped      int
 	)
 	for _, src := range srcs {
+		if !src.Start.Before(until) {
+			break // this and every later source lie past the window
+		}
 		base := filepath.Base(src.Path)
 		switch {
 		case SessionStart(src):
-			if len(kept) > 0 && src.Start.Before(until) {
+			if len(kept) > 0 {
 				return Extracted{}, &SessionBoundaryError{At: src.Start}
 			}
 			firmware, xmlBefore, xmlIn, lineStart = "", "", "", true
