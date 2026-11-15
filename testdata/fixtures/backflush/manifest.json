@@ -4,6 +4,6 @@
   "xml_name": "leva!-65FCB201",
   "xml_sha256": "e63ed0ccef7d8a8dc77a20f3bc78c93a297387081a542ba91307b40687e95d63",
   "machine_addr": "machine.example:23",
-  "notes": "Backflush program from the run menu, blind basket inserted. Marks: 'S Backflush' at the start, 'Clicked' at the key press on EMPTY, 'F backflush' at the end.; extracted from 20261114T070552.646Z.jsonl.gz, 20261114T080552.882Z.jsonl.gz 2026-11-14 08:58:30.247 – 2026-11-14 09:06:59.846 by levalog extract",
+  "notes": "Backflush program from the run menu, blind basket inserted. Marks: 'S Backflush' at the start, 'Clicked' at the key press on EMPTY, 'F backflush' at the end.\nextracted from 20261114T070552.646Z.jsonl.gz, 20261114T080552.882Z.jsonl.gz 2026-11-14 08:58:30.247 +01:00 – 2026-11-14 09:06:59.846 +01:00 by levalog extract",
   "recorded": "2026-11-14T08:06:59.846Z"
 }
