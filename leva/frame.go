@@ -43,10 +43,12 @@ func ParseFrame(line []byte) (Frame, error) {
 			switch {
 			case c == 0xDF:
 				b.WriteRune('°')
-			case customGlyphs[c] != 0:
-				b.WriteRune(customGlyphs[c])
 			case c < 0x20:
-				b.WriteByte(' ')
+				if g, ok := customGlyphs[c]; ok {
+					b.WriteRune(g)
+				} else {
+					b.WriteByte(' ')
+				}
 			default:
 				b.WriteRune(rune(c))
 			}

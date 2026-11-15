@@ -17,9 +17,10 @@ capture that teaches something new, and mark hypotheses as such.
 - Custom characters (HD44780 CGRAM codes in the rows) and how `leva.ParseFrame`
   shows them (2026-11-15): `0x01` `▍`, `0x02` `▋`, `0x03` `█` are the bar's
   cell fills (partial, partial, full; the heat bar and the `PUMP` bar);
-  `0x04` is a dash `–` (between temperature and setpoint, operator-confirmed);
-  `0x05` is a check mark `✓` after the pressure unit (operator-confirmed;
-  it was "meaning unknown" before). `0xDF` is `°`. Other bytes below `0x20`
+  `0x04` is a dash `–` (operator-confirmed for an empty menu shortcut slot;
+  the same code also appears between temperature and setpoint on the main
+  screen, assumed to be the same dash); `0x05` is a check mark `✓` after the
+  pressure on the main screen (look operator-confirmed; meaning unknown). `0xDF` is `°`. Other bytes below `0x20`
   (`0x00`, `0x06`, `0x07`) are not seen and stay spaces. Rows are 16 runes,
   no longer 16 bytes.
 - `MCr` and `MC@` replace each other; the switch can cut the current line

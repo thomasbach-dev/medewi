@@ -7,7 +7,7 @@ import (
 	"unicode/utf8"
 )
 
-// A real frame (2026-11-05); \x02 and \x05 are custom bar-graph glyphs.
+// A real frame (2026-11-05); \x02 is a bar cell, \x05 the check mark.
 const readyFrame = "<102SOAK 1.0b       1: 91.0\xdf   READY\x02             7% 0.1b\x05  0s   0ml>"
 
 func TestParseFrame(t *testing.T) {
