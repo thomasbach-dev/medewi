@@ -2,6 +2,7 @@ package sim
 
 import (
 	"bufio"
+	"bytes"
 	"net"
 	"os"
 	"strings"
@@ -41,8 +42,36 @@ func backflushStream(t *testing.T) []fixture.Event {
 	return events
 }
 
+// backflushCounts counts the fixture's rx lines starting with '<' (display
+// frames) and '{' (reports): what a full MC@ or MCr replay must deliver.
+func backflushCounts(events []fixture.Event) (frames, reports int) {
+	var rx []byte
+	for _, ev := range events {
+		if ev.Dir == fixture.RX {
+			rx = append(rx, ev.Data...)
+		}
+	}
+	for _, l := range bytes.Split(rx, []byte("\r\n")) {
+		switch {
+		case bytes.HasPrefix(l, []byte("<")):
+			frames++
+		case bytes.HasPrefix(l, []byte("{")):
+			reports++
+		}
+	}
+	return frames, reports
+}
+
+// backflushSpeed replays the 510 s fixture in a quarter second of pacing
+// (about 3 s in practice: timer granularity per event): slow enough for the
+// client to keep up with its 256-item queue (an overflow disconnects it,
+// which the exact counts below catch).
+const backflushSpeed = 2000
+
 func TestBackflushFixtureDisplayStream(t *testing.T) {
-	s := start(t, Config{Speed: 100000, Once: true, IdleTimeout: time10s, Stream: backflushStream(t)})
+	events := backflushStream(t)
+	wantFrames, _ := backflushCounts(events)
+	s := start(t, Config{Speed: backflushSpeed, Once: true, IdleTimeout: time10s, Stream: events})
 	c, r := dial(t, s)
 	readLine(t, r, c)
 	send(t, c, "MC@\r\n")
@@ -56,23 +85,25 @@ func TestBackflushFixtureDisplayStream(t *testing.T) {
 			empty++
 		}
 	}
-	if len(lines) == 0 || empty == 0 {
-		t.Errorf("%d frames, %d with EMPTY; want frames including the EMPTY prompt", len(lines), empty)
+	if len(lines) != wantFrames || empty == 0 {
+		t.Errorf("%d frames, %d with EMPTY; want %d frames including the EMPTY prompt", len(lines), empty, wantFrames)
 	}
 }
 
 func TestBackflushFixtureReportStream(t *testing.T) {
-	s := start(t, Config{Speed: 100000, Once: true, IdleTimeout: time10s, Stream: backflushStream(t)})
+	events := backflushStream(t)
+	_, wantReports := backflushCounts(events)
+	s := start(t, Config{Speed: backflushSpeed, Once: true, IdleTimeout: time10s, Stream: events})
 	c, r := dial(t, s)
 	readLine(t, r, c)
 	send(t, c, "MCr\r\n")
 	lines := drain(t, c, r)
-	if len(lines) == 0 {
-		t.Fatal("no reports")
-	}
 	for _, l := range lines {
-		if strings.HasPrefix(l, "<") {
-			t.Fatalf("display frame %q in the report stream", l)
+		if !strings.HasPrefix(l, "{") {
+			t.Fatalf("line %q is not a report", l)
 		}
+	}
+	if len(lines) != wantReports {
+		t.Errorf("%d reports, want %d", len(lines), wantReports)
 	}
 }
