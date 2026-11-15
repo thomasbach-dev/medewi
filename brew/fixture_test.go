@@ -94,6 +94,20 @@ func TestFixtureRuns(t *testing.T) {
 		}
 	})
 
+	// Pins today's behaviour: the backflush program closes 9 flushes.
+	// Issue #13 (program detection) will change this on purpose.
+	t.Run("backflush", func(t *testing.T) {
+		closed, _ := replayFixture(t, spec, "backflush")
+		if len(closed) != 9 {
+			t.Fatalf("brews = %d, want 9 flushes: %+v", len(closed), closed)
+		}
+		for i, c := range closed {
+			if c.Kind != Flush {
+				t.Errorf("brew %d = %+v, want a flush", i, c)
+			}
+		}
+	})
+
 	t.Run("steam-eco", func(t *testing.T) {
 		closed, water := replayFixture(t, spec, "steam-eco")
 		if len(closed) != 0 {
