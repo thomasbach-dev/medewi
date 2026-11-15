@@ -42,9 +42,9 @@ func backflushStream(t *testing.T) []fixture.Event {
 	return events
 }
 
-// backflushCounts counts the fixture's rx lines starting with '<' (display
-// frames) and '{' (reports): what a full MC@ or MCr replay must deliver.
-func backflushCounts(events []fixture.Event) (frames, reports int) {
+// backflushReports counts the fixture's rx lines starting with '{': what a
+// full MCr replay must deliver.
+func backflushReports(events []fixture.Event) (reports int) {
 	var rx []byte
 	for _, ev := range events {
 		if ev.Dir == fixture.RX {
@@ -52,30 +52,44 @@ func backflushCounts(events []fixture.Event) (frames, reports int) {
 		}
 	}
 	for _, l := range bytes.Split(rx, []byte("\r\n")) {
-		switch {
-		case bytes.HasPrefix(l, []byte("<")):
-			frames++
-		case bytes.HasPrefix(l, []byte("{")):
+		if bytes.HasPrefix(l, []byte("{")) {
 			reports++
 		}
 	}
-	return frames, reports
+	return reports
 }
 
 // backflushSpeed replays the 510 s fixture in a quarter second of pacing
 // (about 3 s in practice: timer granularity per event): slow enough for the
 // client to keep up with its 256-item queue (an overflow disconnects it,
-// which the exact counts below catch).
+// which the counts below catch). The display mirror runs at its 1 ms floor.
 const backflushSpeed = 2000
 
+// The display mirror repeats the current LCD once per frame period
+// (100 ms / Speed, floored at 1 ms) for as long as the replay runs, like
+// the machine mirroring its LCD; the recorded frames only change what it
+// shows.
 func TestBackflushFixtureDisplayStream(t *testing.T) {
 	events := backflushStream(t)
-	wantFrames, _ := backflushCounts(events)
 	s := start(t, Config{Speed: backflushSpeed, Once: true, IdleTimeout: time10s, Stream: events})
+	period := s.displayPeriod()
 	c, r := dial(t, s)
 	readLine(t, r, c)
+	replaying := func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.stopReplay != nil
+	}
 	send(t, c, "MC@\r\n")
-	lines := drain(t, c, r)
+	waitUntil(t, "the replay to start", replaying)
+	begin := time.Now()
+	var lines []string
+	for replaying() { // read along: the client must keep up with its queue
+		lines = append(lines, strings.TrimRight(readLine(t, r, c), "\r\n"))
+	}
+	elapsed := time.Since(begin)
+	send(t, c, "MC \r\n")
+	lines = append(lines, drain(t, c, r)...)
 	empty := 0
 	for _, l := range lines {
 		if !strings.HasPrefix(l, "<") {
@@ -85,14 +99,19 @@ func TestBackflushFixtureDisplayStream(t *testing.T) {
 			empty++
 		}
 	}
-	if len(lines) != wantFrames || empty == 0 {
-		t.Errorf("%d frames, %d with EMPTY; want %d frames including the EMPTY prompt", len(lines), empty, wantFrames)
+	want := float64(elapsed/period) + 1
+	t.Logf("%d frames (%d with EMPTY) in %v at a %v period, want about %.0f", len(lines), empty, elapsed, period, want)
+	if n := float64(len(lines)); n < 0.9*want || n > 1.1*want {
+		t.Errorf("%d frames in %v, want %.0f ± 10 %% (one per %v)", len(lines), elapsed, want, period)
+	}
+	if empty == 0 {
+		t.Error("no frame shows the EMPTY prompt")
 	}
 }
 
 func TestBackflushFixtureReportStream(t *testing.T) {
 	events := backflushStream(t)
-	_, wantReports := backflushCounts(events)
+	wantReports := backflushReports(events)
 	s := start(t, Config{Speed: backflushSpeed, Once: true, IdleTimeout: time10s, Stream: events})
 	c, r := dial(t, s)
 	readLine(t, r, c)

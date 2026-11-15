@@ -100,8 +100,9 @@ machine's semantics (global reporting toggle, idle-banner heartbeat that
 pauses during reporting, whole-message client queues). `conformance/`
 asserts the protocol model against sim (CI) or machine (gated) — it is also
 the firmware-flash gate. `cmd/levacap` records fixtures atomically;
-`cmd/levasim` serves them, replaying recorded LCD frames after `MC@` and
-reports after `MCr` (the last one sent wins).
+`cmd/levasim` serves them, replaying reports after `MCr` and holding the
+current LCD (latest recorded frame passed), mirrored every 100 ms after
+`MC@` (the last one sent wins).
 
 ## Empirical machine facts (from real captures; keep code consistent)
 

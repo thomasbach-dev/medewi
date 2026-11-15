@@ -27,8 +27,13 @@ capture that teaches something new, and mark hypotheses as such.
   off without its CRLF and glue the next record onto it (report after
   report, frame after frame, report after frame). `leva` splits such lines
   and counts the cut-off part as a fragment.
-- `levasim` replays recorded frames after `MC@` and recorded reports after
-  `MCr`; as on the machine, the last one sent wins.
+- `levasim` replays recorded reports after `MCr` and holds the current
+  LCD: the latest whole recorded frame its timeline has passed (in every
+  mode; before the first, the stream's first frame). After `MC@` it
+  mirrors that LCD at once and then every 100 ms (divided by `--speed`,
+  at least 1 ms), so a client sampling out of phase with the recording
+  still sees the display. As on the machine, the last of `MCr`/`MC@`
+  sent wins.
 
 ## READY
 

@@ -11,6 +11,7 @@ package sim
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -56,21 +57,28 @@ type Config struct {
 	// MCr, MC@, MC<space> and MCR are handled by the sim itself; entries
 	// for them are never sent.
 	Responses map[string][]string
-	// Stream is the recorded traffic for replay. Replay writes Event.Data
-	// verbatim (fixtures carry their own CRLF) as one queue item per RX event;
-	// TX events are skipped. An RX event is an LCD frame or report-stream
-	// traffic (reports, notices, banners); the last record that starts in it
-	// decides (leva.LastRecordStart): a stream switch glues records, also
-	// inside a TCP read, and the last one is what the machine was sending
-	// then. An event with no record start (a continuation piece) takes the
-	// class of the RX event before it; a first event without one is
-	// report-stream traffic. MCr starts replay of the reports,
-	// MC@ of the frames (the last one sent wins, like on the machine), and
-	// MC<space> stops both. Switching between MCr and MC@ keeps the
-	// timeline: events of the other class are skipped but keep their time
-	// slot. MCR while a stream is on resends the last item emitted. With no
-	// RX events (or none of the selected class), MCr/MC@ set the flag but
-	// emit nothing, and MCR sends nothing.
+	// Stream is the recorded traffic for replay, on one timeline (T deltas /
+	// Speed). TX events are skipped. An RX event is an LCD frame or
+	// report-stream traffic (reports, notices, banners); the last record
+	// that starts in it decides (leva.LastRecordStart): a stream switch
+	// glues records, also inside a TCP read, and the last one is what the
+	// machine was sending then. An event with no record start (a
+	// continuation piece) takes the class of the RX event before it; a
+	// first event without one is report-stream traffic.
+	//
+	// MCr emits the report-stream events verbatim (fixtures carry their own
+	// CRLF), one queue item per event; frame events are skipped but keep
+	// their time slot. The sim holds the current LCD like the machine: the
+	// latest whole recorded frame (a lone intact "<…>" record) the timeline
+	// has passed, updated in every mode; before the first, the stream's
+	// first whole frame. MC@ mirrors it, at once and then every 100 ms /
+	// Speed (at least 1 ms), and skips the report events; recorded frames
+	// are never emitted themselves, and cut or glued frame pieces never
+	// become the LCD. The last of MCr and MC@ sent wins, like on the
+	// machine; switching between them keeps the timeline. MC<space> stops
+	// both. MCR resends the current LCD in display mode and the last report
+	// item otherwise. With no RX events (or no whole frames, or no reports),
+	// MCr/MC@ set the flag but emit nothing, and MCR sends nothing.
 	Stream []fixture.Event
 	// BannerInterval, if positive, makes the sim repeat Banner to all clients
 	// at this interval while no stream is on, like the real machine's idle
@@ -81,11 +89,13 @@ type Config struct {
 	// Switch maps a received command line to a replacement for Stream, so
 	// tests can model commands that change what the machine reports (eco,
 	// wake). If reporting is on, the current replay stops and the new stream
-	// starts from its beginning; otherwise it is used at the next MCr. A key
+	// starts from its beginning; otherwise it is used at the next MCr. The
+	// current LCD becomes the new stream's first whole frame. A key
 	// that is also in Responses gets both. Must not be mutated after New.
 	Switch map[string][]fixture.Event
 	// Once replays the stream a single time instead of looping. After the
-	// last event the replayer exits; reporting stays on (MCR still resends).
+	// last event the replayer exits; reporting stays on (MCR still resends)
+	// and the display mirror keeps showing the last frame.
 	Once bool
 }
 
@@ -103,12 +113,17 @@ type Server struct {
 	// reporting means a stream is on; display says which one (MC@ frames,
 	// not MCr reports). stopReplay is non-nil exactly while a replayer
 	// goroutine owns the stream; closing it (under mu) tells that replayer
-	// to exit.
+	// to exit. stopMirror is the same for the display mirror goroutine,
+	// which runs exactly while display is on.
 	reporting  bool
 	display    bool
 	stopReplay chan struct{}
-	lastItem   []byte
+	stopMirror chan struct{}
+	lastItem   []byte          // last report item emitted, for MCR
 	stream     []fixture.Event // current replay source; Switch replaces it
+	lcd        []byte          // current LCD: a whole frame plus CRLF, or nil
+	// framePeriod, if positive, overrides the display period (tests).
+	framePeriod time.Duration
 
 	received []string // every command line from any client, in order
 
@@ -135,7 +150,10 @@ func New(cfg Config) *Server {
 	if cfg.Banner == "" {
 		cfg.Banner = defaultBanner
 	}
-	return &Server{cfg: cfg, clients: make(map[*client]struct{}), quit: make(chan struct{}), stream: cfg.Stream}
+	return &Server{
+		cfg: cfg, clients: make(map[*client]struct{}), quit: make(chan struct{}),
+		stream: cfg.Stream, lcd: firstFrame(cfg.Stream),
+	}
 }
 
 // Received returns a copy of every command line received from any client so
@@ -235,6 +253,7 @@ func (s *Server) Stop() error {
 	s.stopped = true
 	close(s.quit)
 	s.stopReplayLocked()
+	s.stopMirrorLocked()
 	var errs []error
 	for _, l := range []net.Listener{s.ln, s.trip} {
 		if l != nil {
@@ -399,10 +418,28 @@ func (c *client) close() {
 // spinning when it wraps around.
 const minLoopPause = time.Millisecond
 
+// lcdFramePeriod is the machine's LCD mirror cadence; minFramePeriod is the
+// floor at high Speed (the sim's timers pace no finer, and a faster
+// mirror would only flood the client queues).
+const (
+	lcdFramePeriod = 100 * time.Millisecond
+	minFramePeriod = time.Millisecond
+)
+
+// displayPeriod is the display mirror's period: 100 ms / Speed, at least
+// 1 ms (or the test override).
+func (s *Server) displayPeriod() time.Duration {
+	if s.framePeriod > 0 {
+		return s.framePeriod
+	}
+	return max(time.Duration(float64(lcdFramePeriod)/s.cfg.Speed), minFramePeriod)
+}
+
 // startReplay handles MCr (display false) and MC@ (display true): set the
 // global flags and, if no replayer runs yet and there is something to
 // replay, start exactly one. A running replayer keeps its timeline and
-// only switches which events it emits.
+// only switches which events it emits. MC@ (re)starts the display mirror,
+// which sends the current LCD at once; MCr stops it.
 func (s *Server) startReplay(display bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -410,32 +447,110 @@ func (s *Server) startReplay(display bool) {
 		return
 	}
 	s.reporting, s.display = true, display
-	if s.stopReplay != nil {
-		return
+	if s.stopReplay == nil {
+		s.startReplayerLocked()
 	}
-	s.startReplayerLocked()
+	s.stopMirrorLocked()
+	if display {
+		s.startMirrorLocked()
+	}
 }
 
 // startReplayerLocked starts a replayer on the current stream if it has RX
-// events. s.mu held; no replayer may be running.
+// events; a new timeline starts with the stream's first whole frame on the
+// LCD. s.mu held; no replayer may be running.
 func (s *Server) startReplayerLocked() {
 	var events []fixture.Event
 	var frames []bool
+	var lcds [][]byte
 	frame := false
 	for _, ev := range s.stream {
 		if ev.Dir == fixture.RX {
 			frame = isFrameEvent(ev.Data, frame)
 			events = append(events, ev)
 			frames = append(frames, frame)
+			lcds = append(lcds, wholeFrame(ev.Data))
 		}
 	}
+	s.lcd = firstFrame(s.stream)
 	if len(events) == 0 {
 		return
 	}
 	stop := make(chan struct{})
 	s.stopReplay = stop
 	s.wg.Add(1)
-	go s.replay(events, frames, stop)
+	go s.replay(events, frames, lcds, stop)
+}
+
+// wholeFrame returns data as an LCD item (the frame plus CRLF) if it is
+// one intact display frame and nothing else, or nil: a cut frame, or one
+// glued to another record, is not what the LCD showed.
+func wholeFrame(data []byte) []byte {
+	line := bytes.TrimRight(data, "\r\n")
+	if _, err := leva.ParseFrame(line); err != nil {
+		return nil
+	}
+	return append(append(make([]byte, 0, len(line)+2), line...), '\r', '\n')
+}
+
+// firstFrame returns the first whole frame among events' RX events as an
+// LCD item, or nil if there is none.
+func firstFrame(events []fixture.Event) []byte {
+	for _, ev := range events {
+		if ev.Dir != fixture.RX {
+			continue
+		}
+		if f := wholeFrame(ev.Data); f != nil {
+			return f
+		}
+	}
+	return nil
+}
+
+// startMirrorLocked sends the current LCD to all clients and starts the
+// display mirror goroutine. s.mu held; no mirror may be running.
+func (s *Server) startMirrorLocked() {
+	if s.lcd != nil {
+		s.fanOutLocked(s.lcd)
+	}
+	stop := make(chan struct{})
+	s.stopMirror = stop
+	s.wg.Add(1)
+	go s.mirror(s.displayPeriod(), stop)
+}
+
+// stopMirrorLocked signals the display mirror, if any, to exit. s.mu held.
+func (s *Server) stopMirrorLocked() {
+	if s.stopMirror != nil {
+		close(s.stopMirror)
+		s.stopMirror = nil
+	}
+}
+
+// mirror sends the current LCD to all clients once per period until stop
+// closes. A ticker keeps the cadence (a late tick is dropped, never
+// caught up with a burst). With no LCD (a stream without whole frames) it
+// sends nothing.
+func (s *Server) mirror(period time.Duration, stop chan struct{}) {
+	defer s.wg.Done()
+	t := time.NewTicker(period)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			s.mu.Lock()
+			if s.stopMirror != stop {
+				s.mu.Unlock()
+				return
+			}
+			if s.lcd != nil {
+				s.fanOutLocked(s.lcd)
+			}
+			s.mu.Unlock()
+		}
+	}
 }
 
 // isFrameEvent reports whether an RX event belongs to the display stream:
@@ -450,12 +565,13 @@ func isFrameEvent(data []byte, prev bool) bool {
 	return data[i] == '<'
 }
 
-// switchStream handles a Switch command: replace the stream and, while
-// reporting, restart replay on it.
+// switchStream handles a Switch command: replace the stream, put its first
+// whole frame on the LCD and, while reporting, restart replay on it.
 func (s *Server) switchStream(events []fixture.Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stream = events
+	s.lcd = firstFrame(events)
 	if !s.reporting || s.stopped {
 		return
 	}
@@ -463,13 +579,14 @@ func (s *Server) switchStream(events []fixture.Event) {
 	s.startReplayerLocked()
 }
 
-// stopReporting handles MC<space>: clear the flags and stop the replayer,
-// for every client regardless of who started it.
+// stopReporting handles MC<space>: clear the flags and stop the replayer
+// and the display mirror, for every client regardless of who started them.
 func (s *Server) stopReporting() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.reporting, s.display = false, false
 	s.stopReplayLocked()
+	s.stopMirrorLocked()
 }
 
 // stopReplayLocked signals the current replayer, if any, to exit. s.mu held.
@@ -480,25 +597,35 @@ func (s *Server) stopReplayLocked() {
 	}
 }
 
-// resendLast handles MCR: while reporting, resend the last replayed item.
+// resendLast handles MCR: resend the current LCD in display mode, the last
+// replayed report item in report mode, nothing when no stream is on.
 func (s *Server) resendLast() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.reporting && s.lastItem != nil {
-		s.fanOutLocked(s.lastItem)
+	item := s.lastItem
+	if s.display {
+		item = s.lcd
+	}
+	if s.reporting && item != nil {
+		s.fanOutLocked(item)
 	}
 }
 
-// emit queues one replayed item to all clients unless stop was signalled.
-// An item of the class not selected (frame vs report traffic) is skipped;
-// it still used up its time slot.
-func (s *Server) emit(data []byte, frame bool, stop chan struct{}) bool {
+// emit handles one replayed event unless stop was signalled: a whole
+// frame (lcd non-nil) replaces the current LCD, in every mode; report
+// traffic is queued to all clients in report mode. Frame events are never
+// queued (the display mirror sends the LCD), and report events are
+// skipped in display mode; either still used up its time slot.
+func (s *Server) emit(data []byte, frame bool, lcd []byte, stop chan struct{}) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopReplay != stop { // stopped (or superseded) since we last looked
 		return false
 	}
-	if frame != s.display {
+	if lcd != nil {
+		s.lcd = lcd
+	}
+	if frame || s.display {
 		return true
 	}
 	s.lastItem = data
@@ -506,9 +633,9 @@ func (s *Server) emit(data []byte, frame bool, stop chan struct{}) bool {
 	return true
 }
 
-// replay emits events verbatim, paced by their T deltas / Speed, looping until
-// stop is closed (or, with Once, until the last event).
-func (s *Server) replay(events []fixture.Event, frames []bool, stop chan struct{}) {
+// replay walks events paced by their T deltas / Speed, looping until stop
+// is closed (or, with Once, until the last event); see emit.
+func (s *Server) replay(events []fixture.Event, frames []bool, lcds [][]byte, stop chan struct{}) {
 	defer s.wg.Done()
 	timer := time.NewTimer(0)
 	defer timer.Stop()
@@ -520,7 +647,7 @@ func (s *Server) replay(events []fixture.Event, frames []bool, stop chan struct{
 				return
 			}
 			prev = ev.T
-			if !s.emit(ev.Data, frames[i], stop) {
+			if !s.emit(ev.Data, frames[i], lcds[i], stop) {
 				return
 			}
 		}

@@ -80,6 +80,24 @@ func TestDisplaySampling(t *testing.T) {
 	assertOnlyAllowed(t, s, "MC@")
 }
 
+// A raw-log fixture holds frames only where the recording client sampled.
+// Here the one frame is recorded before medewid's first sample, while the
+// replay emits reports, and the Once replay (15 s) outlasts the test, so
+// it passes only then; the sim holds it as the current LCD, as the
+// machine holds its display, so a sample out of phase still shows it.
+func TestDisplaySampleOutOfPhaseWithRecording(t *testing.T) {
+	cfg := simConfig(append([][]byte{[]byte(readyFrame)}, idleLines(600)...))
+	cfg.Once = true
+	s := startSim(t, cfg)
+	dcfg := daemonConfig(s.Addr().String(), openStore(t))
+	dcfg.DisplayEvery, dcfg.DisplayFor = 100*time.Millisecond, 30*time.Millisecond
+	d, _ := runDaemon(t, dcfg)
+	waitFor(t, "the held frame in the status", func() bool {
+		ds := d.Status().Display
+		return ds != nil && ds.Rows[1] == "1: 91.0°   READY"
+	})
+}
+
 // The final "MC " must be the last thing sent, also when a sample is in
 // flight at shutdown; otherwise the machine keeps streaming after medewid
 // exits. Samples are made long and frequent to hit that window.
