@@ -401,8 +401,8 @@ func TestExtractCounts(t *testing.T) {
 
 func TestExtractEmptyWindow(t *testing.T) {
 	src := rawSrc(extractT0, rxEv(0, "$id: leva! (3.2)\r\n"))
-	if _, err := Extract([]Source{src}, extractT0.Add(time.Hour), extractT0.Add(2*time.Hour)); err == nil {
-		t.Error("err = nil, want an error for a window without events")
+	if _, err := Extract([]Source{src}, extractT0.Add(time.Hour), extractT0.Add(2*time.Hour)); !errors.Is(err, ErrNoEvents) {
+		t.Errorf("err = %v, want ErrNoEvents", err)
 	}
 }
 

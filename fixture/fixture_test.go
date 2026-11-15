@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -153,5 +154,16 @@ func TestWriteCaptureKeepsOldOnFailure(t *testing.T) {
 	got, rerr := os.ReadFile(logPath)
 	if rerr != nil || string(got) != "old" {
 		t.Errorf("log.jsonl = %q, %v; want untouched", got, rerr)
+	}
+	// No temp file is left behind (it would make the next extract refuse
+	// a non-empty --out).
+	entries, rerr := os.ReadDir(dir)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("%s left behind", e.Name())
+		}
 	}
 }

@@ -24,6 +24,10 @@ const extractAddr = "machine.example:23"
 // wallLayout formats wall times in extract's notes and messages.
 const wallLayout = "2006-01-02 15:04:05.000"
 
+// provenanceLayout formats the wall times of the manifest's provenance
+// line: with the zone offset, as the manifest outlives the local zone.
+const provenanceLayout = wallLayout + " -07:00"
+
 // extractOpts are the flags of extract beyond the input.
 type extractOpts struct {
 	run                  int
@@ -120,7 +124,8 @@ func extractCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		since, until = r.First.Wall.Add(-o.margin), r.Last.Wall.Add(o.margin+time.Millisecond)
 		paths = sc.paths
 	}
-	if until.IsZero() {
+	openEnd := until.IsZero()
+	if openEnd {
 		until = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
 	}
 
@@ -134,6 +139,13 @@ func extractCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	if errors.As(err, &sbe) {
 		return fail(stderr, 1, "the window crosses a raw-log session boundary at %s (a daemon reconnect or restart); extract one session at a time",
 			sbe.At.In(time.Local).Format(wallLayout))
+	}
+	if errors.Is(err, logview.ErrNoEvents) {
+		end := "open end"
+		if !openEnd {
+			end = until.In(time.Local).Format(wallLayout)
+		}
+		return fail(stderr, 1, "no events in [%s, %s)", since.In(time.Local).Format(wallLayout), end)
 	}
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
@@ -159,10 +171,10 @@ func extractCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	}
 	warn(stderr, sumNotes)
 	provenance := fmt.Sprintf("extracted from %s %s – %s by levalog extract", strings.Join(ex.Files, ", "),
-		ex.First.In(time.Local).Format(wallLayout), ex.Last.In(time.Local).Format(wallLayout))
+		ex.First.In(time.Local).Format(provenanceLayout), ex.Last.In(time.Local).Format(provenanceLayout))
 	mNotes := provenance
 	if o.notes != "" {
-		mNotes = o.notes + "; " + provenance
+		mNotes = o.notes + "\n" + provenance
 	}
 	m := fixture.Manifest{
 		Scenario:        o.scenario,

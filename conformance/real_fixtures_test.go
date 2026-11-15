@@ -25,9 +25,10 @@ func classify(p leva.Piece) (kind string, ok bool) {
 		return "", false
 	case p.Fragment:
 		// SplitLine marks any lone "<..." that is not a whole frame as a
-		// fragment; a real cut-off is shorter than a frame and lacks the
-		// closing '>', so an over- or under-long "<...>" line is corrupt.
-		if line[0] == '<' && (len(line) >= frameLen || line[len(line)-1] == '>') {
+		// fragment; a real cut-off is shorter than a frame, so a "<..."
+		// piece of frame length or more is corrupt. A shorter one is a cut
+		// whatever its last byte: the LCD text holds '>' (the menu cursor).
+		if line[0] == '<' && len(line) >= frameLen {
 			return "", false
 		}
 		return "fragment", true
@@ -161,7 +162,7 @@ func TestFixtureGuardClassifies(t *testing.T) {
 		{"fragment", cut, []string{"fragment"}},
 		{"junk", "hello", []string{""}},
 		{"frame70", "<100" + strings.Repeat("a", 65) + ">", []string{""}},
-		{"frame68", "<100" + strings.Repeat("a", 63) + ">", []string{""}},
+		{"cut after >", "<102>", []string{"fragment"}}, // the menu cursor at text offset 4
 		{"unterminated report", "{ -" + strings.Repeat("x", 285), []string{""}},
 		{"cut report before frame", "{ -" + strings.Repeat("x", 100) + frame, []string{"fragment", "frame"}},
 	}

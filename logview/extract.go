@@ -2,6 +2,7 @@ package logview
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -57,6 +58,9 @@ func (e *SessionBoundaryError) Error() string {
 	return fmt.Sprintf("logview: the window crosses a raw-log session boundary at %s", e.At.Format(time.RFC3339Nano))
 }
 
+// ErrNoEvents reports a window without events.
+var ErrNoEvents = errors.New("logview: no events in")
+
 // keptEvent is a kept event with its wall time, before rebasing.
 type keptEvent struct {
 	ev   fixture.Event
@@ -73,7 +77,7 @@ type keptEvent struct {
 // Without rx bytes before the window (its first input file is a rotated
 // one), the window is taken to start at a line: rawlog emits rx events at
 // line boundaries. A window that holds events of two sessions yields a
-// *SessionBoundaryError; one without events an error.
+// *SessionBoundaryError; one without events an error wrapping ErrNoEvents.
 func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 	var (
 		out          Extracted
@@ -156,7 +160,7 @@ func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 		out.Notes = append(out.Notes, fmt.Sprintf("window ends mid-line: dropped %d bytes", dropped))
 	}
 	if len(kept) == 0 {
-		return Extracted{}, fmt.Errorf("logview: no events in [%s, %s)",
+		return Extracted{}, fmt.Errorf("%w [%s, %s)", ErrNoEvents,
 			since.Format(time.RFC3339Nano), until.Format(time.RFC3339Nano))
 	}
 

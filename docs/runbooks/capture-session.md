@@ -209,9 +209,19 @@ it becomes a fixture without a capture session (no machine contact).
    `xml_sha256` is filled):
 
    ```sh
-   levalog extract --dir "$DEST" -s … -u … \
-     --out testdata/fixtures/NAME --scenario NAME --notes "…"
+   DEST=$HOME/tmp/medewi-raw         # as in step 1
+   SINCE='2026-11-14 08:58:30'       # window start, local time
+   UNTIL='2026-11-14 09:07:00'       # window end, local time
+   NAME=backflush                    # fixture directory and scenario
+   NOTES="What happened in the window, and the marks you set."
+
+   levalog extract --dir "$DEST" -s "$SINCE" -u "$UNTIL" \
+     --out "testdata/fixtures/$NAME" --scenario "$NAME" --notes "$NOTES"
    ```
+
+   If extract says the firmware is unknown (the session began on an
+   earlier UTC day), also copy the previous day's files: step 1 again with
+   `DAY=$(date -u -d yesterday +%Y%m%d)`, then extract again.
 
    For a quick look use `--out -` (e.g. `| jq`). Never run that through
    `ssh -t`: a pty turns LF into CRLF.

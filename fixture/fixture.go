@@ -101,13 +101,19 @@ func LoadManifest(path string) (Manifest, error) {
 // WriteCapture writes the log and the manifest under dir (created if needed).
 // Both go to temp names first and are renamed into place only after both
 // succeeded, so a failure never leaves a half-written capture under the final
-// names or damages existing files.
-func WriteCapture(dir, logName, manName string, events []Event, m Manifest) error {
+// names or damages existing files; the temp files are removed on failure.
+func WriteCapture(dir, logName, manName string, events []Event, m Manifest) (err error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	logTmp := filepath.Join(dir, "."+logName+".tmp")
 	manTmp := filepath.Join(dir, "."+manName+".tmp")
+	defer func() {
+		if err != nil {
+			_ = os.Remove(logTmp)
+			_ = os.Remove(manTmp)
+		}
+	}()
 	f, err := os.Create(logTmp)
 	if err != nil {
 		return err

@@ -141,7 +141,7 @@ func TestExtractWritesCapture(t *testing.T) {
 	if !m.Recorded.Equal(winFrom.Add(5000 * time.Millisecond)) {
 		t.Errorf("recorded = %v, want the last event's wall time", m.Recorded)
 	}
-	wantNotes := "the backflush; extracted from 20261114T070552.646Z.jsonl.gz 2026-11-14 08:58:30.100 – 2026-11-14 08:58:35.000 by levalog extract"
+	wantNotes := "the backflush\nextracted from 20261114T070552.646Z.jsonl.gz 2026-11-14 08:58:30.100 +01:00 – 2026-11-14 08:58:35.000 +01:00 by levalog extract"
 	if m.Notes != wantNotes {
 		t.Errorf("notes = %q, want %q", m.Notes, wantNotes)
 	}
@@ -253,8 +253,16 @@ func TestExtractEmptyWindow(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "o")
 	code, _, stderr := runCmd(t, "extract", "--dir", extractDir(t),
 		"-s", "2026-11-14 08:58:36", "-u", "2026-11-14 08:58:40", "--out", out)
-	if code != 1 || !strings.Contains(stderr, "no events in") {
-		t.Errorf("exit %d, stderr %q; want 1, no events in", code, stderr)
+	want := "no events in [2026-11-14 08:58:36.000, 2026-11-14 08:58:40.000)"
+	if code != 1 || !strings.Contains(stderr, want) {
+		t.Errorf("exit %d, stderr %q; want 1, %s", code, stderr, want)
+	}
+	// An open end reads as such, not as a far-future date.
+	code, _, stderr = runCmd(t, "extract", "--dir", extractDir(t),
+		"-s", "2026-11-14 10:00:00", "--out", out)
+	want = "no events in [2026-11-14 10:00:00.000, open end)"
+	if code != 1 || !strings.Contains(stderr, want) {
+		t.Errorf("open end: exit %d, stderr %q; want 1, %s", code, stderr, want)
 	}
 	if _, err := os.Stat(out); err == nil {
 		t.Error("output directory created")
