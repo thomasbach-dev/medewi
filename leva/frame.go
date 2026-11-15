@@ -10,9 +10,10 @@ type Frame struct {
 	Backlight bool
 	Key       byte // pressed key, '0' for none ('9' seen while the encoder was held)
 	Layout    byte // '2' main screen, '1' menu
-	// Rows are the four LCD lines, 16 characters each, as text: the LCD's
-	// 0xDF is the degree sign, control bytes (custom bar-graph glyphs)
-	// become spaces, other bytes are read as Latin-1.
+	// Rows are the four LCD lines, 16 characters (runes, not bytes) each:
+	// the LCD's 0xDF is the degree sign, the custom characters 0x01-0x05
+	// become ▍ ▋ █ (heat bar), – and ✓, other control bytes become spaces,
+	// other bytes are read as Latin-1.
 	Rows [4]string
 }
 
@@ -26,6 +27,10 @@ func isFrame(line []byte) bool {
 	return len(line) == frameLen && line[0] == '<' && line[frameLen-1] == '>'
 }
 
+// customGlyphs maps the HD44780 custom-character codes the firmware
+// uses to look-alike runes.
+var customGlyphs = map[byte]rune{1: '▍', 2: '▋', 3: '█', 4: '–', 5: '✓'}
+
 // ParseFrame decodes an intact display frame (CR+LF stripped).
 func ParseFrame(line []byte) (Frame, error) {
 	if !isFrame(line) {
@@ -38,6 +43,8 @@ func ParseFrame(line []byte) (Frame, error) {
 			switch {
 			case c == 0xDF:
 				b.WriteRune('°')
+			case customGlyphs[c] != 0:
+				b.WriteRune(customGlyphs[c])
 			case c < 0x20:
 				b.WriteByte(' ')
 			default:
