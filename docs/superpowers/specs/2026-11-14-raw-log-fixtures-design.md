@@ -177,6 +177,52 @@ levalog extract (-s T -u T | --run N [--margin SPAN] -s T -u T) \
 - No new flag: the mode comes from the commands, the frames from the
   fixture.
 
+#### Addendum 2026-11-15: the sim holds the LCD
+
+The real machine mirrors the LCD continuously (one frame every 100 ms)
+the moment `MC@` arrives; a raw-log fixture holds frames only where the
+recording client sampled (medewid: 500 ms every 5 s). Replaying only the
+recorded frames left a client that samples out of phase with the
+recording without any frame (medewid's ticker starts at connect, so it
+overlapped the recorded windows about 1 time in 5). The display is state,
+so the sim now models it as state:
+
+- The replayer keeps the **current LCD**: the latest recorded frame
+  whose time the timeline has passed, updated in every mode (also while
+  reports are emitted). Before the timeline has passed any frame, the
+  current LCD is the stream's first frame.
+- In display mode the sim emits the current LCD at once when `MC@`
+  arrives and then once per frame period (100 ms, divided by `Speed`, not
+  shorter than 1 ms). Recorded frames are not emitted themselves; they
+  only replace the current LCD. After a `Once` replay has ended, display
+  mode keeps emitting the last frame (the LCD holds it).
+- `MCR` in display mode resends the current LCD. A Switch resets the
+  current LCD to the new stream's first frame.
+- A stream with no frames emits nothing in display mode, as before.
+- Reports are not held or repeated: that would invent measurements. The
+  recorded gaps in the report stream stay.
+
+#### Addendum 2026-11-15: LCD custom characters
+
+The LCD's custom characters (CGRAM codes `0x01`–`0x05`) are on the wire;
+their glyph shapes are defined in the firmware and never sent.
+`leva.ParseFrame` maps them to spaces so far, which hides the program
+progress bar. From the backflush data and the operator's look at the
+display:
+
+| Code | Shown as | Meaning |
+|---|---|---|
+| `0x01` | `▍` | bar cell ⅓ full |
+| `0x02` | `▋` | bar cell ⅔ full |
+| `0x03` | `█` | bar cell full |
+| `0x04` | `–` | dash (an empty menu shortcut slot; also between temperature and setpoint) |
+| `0x05` | `✓` | check mark next to the pressure on the main screen (meaning unknown) |
+
+`ParseFrame` renders these as above in `Frame.Rows`; other control bytes
+stay spaces; `0xDF` stays `°`. The bar is a 9-cell program-progress bar
+in row 3 during programs (`PUMP ###1`), and the heat-output bar in row 3
+of the main screen.
+
 ### Fixture guard
 
 `TestCommittedFixturesShape` additionally accepts:

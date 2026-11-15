@@ -188,3 +188,43 @@ Flags: `-s/--since`, `-u/--until`, `--dir`, `--run N` (one number), `--margin SP
 - [ ] **Step 2: Runbook section**: copy the whole day's raw logs off the brewhost (the variables-first sudo/scp block from this session, with `$DAY`), `levalog extract … --out testdata/fixtures/NAME`, §3 review, commit; `--out -` for quick looks (`| jq`), not through `ssh -t`.
 - [ ] **Step 3: machine-behaviour.md and CLAUDE.md** lines as listed above.
 - [ ] **Step 4: Gate and commit** `docs: fixtures from the raw log`.
+
+## Addendum 2026-11-15 (spec addenda "the sim holds the LCD" and "LCD custom characters")
+
+### Task 8: LCD custom characters in `leva.ParseFrame`
+
+**Files:**
+- Modify: `leva/frame.go` (`ParseFrame`, the `Frame.Rows` doc comment)
+- Test: `leva/frame_test.go`; any test elsewhere that pinned the old spaces
+- Modify: `docs/machine-behaviour.md` ("Display mirror (`MC@`)": the table of codes, the bar, "meaning of ✓ unknown")
+
+**Interfaces:**
+- Produces: `Frame.Rows` with `0x01`→`▍`, `0x02`→`▋`, `0x03`→`█`, `0x04`→`–` (U+2013), `0x05`→`✓` (U+2713); other bytes `< 0x20` stay a space; `0xDF` stays `°`. Rows are then 16 runes, no longer 16 bytes.
+
+- [ ] **Step 1: Write the failing test** `TestParseFrameCustomGlyphs`: a 69-byte frame whose rows contain `1: 94.1\xdf \x04 94.0\xdf`, ` PUMP \x03\x03\x03\x01     `, `\x01             4%`, ` 1.8b\x05  0s 233ml` → rows `1: 94.1° – 94.0°`, ` PUMP ███▍     `, `▍             4%`, ` 1.8b✓  0s 233ml`; a row with `\x00`/`\x06`/`\x07` keeps spaces; each row has 16 runes (`utf8.RuneCountInString`).
+- [ ] **Step 2: Run** `nix develop --command go test ./leva/ -run ParseFrame -v` → FAIL.
+- [ ] **Step 3: Implement** a small lookup in `ParseFrame`.
+- [ ] **Step 4: Run** `nix develop --command go test -race ./...` → PASS; fix tests elsewhere that asserted spaces for these codes (daemon status/panel, levalog frame text); check that the ops panel (`daemon/panel.html`) shows rows with a monospace font so the runes line up.
+- [ ] **Step 5: Docs** machine-behaviour.md as listed. **Gate and commit** `feat(leva): show the LCD's bar, dash and check-mark glyphs`.
+
+### Task 9: levasim holds the LCD
+
+**Files:**
+- Modify: `sim/sim.go` (replayer: current-LCD state; display-mode emitter; `MCR`; Switch; `Config.Stream` doc)
+- Test: `sim/replay_test.go`, `sim/backflush_test.go`; daemon/levacap/medewid tests that count frames
+
+**Interfaces:**
+- Consumes: the classification of Task 2 (`isFrameEvent`, last-record rule).
+- Produces: in display mode one frame per period `max(100ms/Speed, 1ms)`, content = current LCD (latest recorded frame the timeline has passed; before any, the stream's first frame); first frame immediately on `MC@`. Recorded frames only update the current LCD. Report mode unchanged.
+
+- [ ] **Step 1: Write the failing tests**:
+  - `TestMCAtSendsCurrentLCDAtOnce`: stream with frames F1 (t=0) and F2 (t=1000) and reports in between; `MCr` first, wait until a report after t≥1000 has arrived, then `MC@` → the first frame arrives within 2 periods and equals F2.
+  - `TestMCAtBeforeFirstFrameSendsFirstFrame`: stream whose first frame is at t=1000; `MC@` at once → F1 (the stream's first frame) arrives within 2 periods.
+  - `TestDisplayRepeatsAtFramePeriod`: one frame in the stream, `Speed` 10 → several identical frames arrive, spaced ≥ the period (10 ms), none faster.
+  - `TestDisplayAfterOnceKeepsLastFrame`: `Once`; after the stream ends, display mode still emits the last frame.
+  - `TestMCRResendsCurrentLCD`; `TestSwitchResetsCurrentLCD`; `TestNoFramesNoDisplay` (stream without frames → nothing in display mode).
+  - Backflush: replace the exact-507 count with: every line a frame, ≥1 `EMPTY`, frame count within ±10 % of replay duration / period.
+- [ ] **Step 2: Run** `nix develop --command go test -race ./sim/ -v` → the new tests FAIL.
+- [ ] **Step 3: Implement**: the replayer updates the current LCD under `s.mu` as it passes frame events (in every mode); a display emitter goroutine (or the replayer's timer) emits the current LCD each period while `display` is on; `MC@` triggers an immediate emit. Keep race-clean; stop the emitter with the replay.
+- [ ] **Step 4: Run** `nix develop --command go test -race ./...` → PASS; update daemon/levacap/medewid tests that relied on frames only at recorded times (list each in the commit body).
+- [ ] **Step 5: Docs**: CLAUDE.md architecture line and the levasim bullet in machine-behaviour.md ("holds the current LCD"). **Gate and commit** `feat(sim): hold the current LCD and mirror it every 100 ms`.
