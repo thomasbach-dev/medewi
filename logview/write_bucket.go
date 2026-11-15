@@ -75,7 +75,7 @@ func (b *bucketWriter) textHead(r BucketRow) error {
 	if !b.started || r.Source.Path != b.path {
 		fmt.Fprintf(&s, "# %s\n", r.Source.Path)
 		if r.Source.Notes != "" {
-			fmt.Fprintf(&s, "# notes: %s\n", r.Source.Notes)
+			writeNotes(&s, r.Source.Notes)
 		}
 	}
 	if r.XML != b.xml {

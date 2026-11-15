@@ -89,7 +89,7 @@ events text: T WALL DIR EVENT, then RUN RUN_T with --run/--run-kind, then
 src=, src_end=, xml= when --fields names them, then report fields as
 key=value (pump and mode first) or the line's text. Comment lines: "# PATH"
 when the source changes, followed by "# notes: ..." for a capture with
-manifest notes, and "# xml: NAME" when the XML changes. --fields selects
+manifest notes (one comment line per line of notes), and "# xml: NAME" when the XML changes. --fields selects
 the data columns; csv and jsonl always start with t wall src run run_t
 (run and run_t empty or null outside a run window), naming them in
 --fields does not repeat them. jsonl: one object per event, always with
