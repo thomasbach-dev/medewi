@@ -18,6 +18,8 @@ capture that teaches something new, and mark hypotheses as such.
   off without its CRLF and glue the next record onto it (report after
   report, frame after frame, report after frame). `leva` splits such lines
   and counts the cut-off part as a fragment.
+- `levasim` replays recorded frames after `MC@` and recorded reports after
+  `MCr`; as on the machine, the last one sent wins.
 
 ## READY
 

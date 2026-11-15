@@ -183,6 +183,40 @@ Behavior of the tool you need to know:
    ```
    (For a new fixture directory, substitute it and its matching XML.)
 
+## Fixture from the raw log
+
+`medewid` writes every byte of machine traffic to its raw log. A window of
+it becomes a fixture without a capture session (no machine contact).
+
+1. Copy the whole day's raw logs off the brewhost. Copy the whole day, not
+   just the window: `levalog extract` refuses a window that crosses a
+   session boundary, and the firmware banner comes at session start, so
+   the file holding the start of your window must be present.
+
+   ```sh
+   HOST=brewhost                     # your brewhost's ssh name
+   DEST=$HOME/tmp/medewi-raw         # local scratch directory, outside the repo
+   DAY=$(date -u +%Y%m%d)            # UTC day of the raw-log file names
+   REMOTE_TMP=/tmp/medewi-raw-$DAY
+
+   mkdir -p "$DEST"
+   ssh -t "$HOST" "install -d -m 0700 $REMOTE_TMP && sudo sh -c 'cp /var/lib/private/medewid/raw/${DAY}T*.jsonl.gz $REMOTE_TMP/ && chown -R \$SUDO_USER $REMOTE_TMP'"
+   scp "$HOST:$REMOTE_TMP/*.jsonl.gz" "$DEST/"
+   ssh "$HOST" "rm -rf $REMOTE_TMP"
+   ```
+
+2. Extract the window (vendor XML via `--xml` or `MEDEWI_XML_PATH`, so
+   `xml_sha256` is filled):
+
+   ```sh
+   levalog extract --dir "$DEST" -s … -u … \
+     --out testdata/fixtures/NAME --scenario NAME --notes "…"
+   ```
+
+   For a quick look use `--out -` (e.g. `| jq`). Never run that through
+   `ssh -t`: a pty turns LF into CRLF.
+3. Review it as in section 3 (sanitization gate), then commit.
+
 ## 4. Assumptions to verify during the first session
 
 Each one is an `// ASSUMPTION:` in the code or a ledgered open question.
