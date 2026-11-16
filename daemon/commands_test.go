@@ -332,6 +332,64 @@ func TestDumpWhateverTheMode(t *testing.T) {
 	}
 }
 
+// TestDumpMCmFirmwareEOF pins that leva! 3.2's end record, which is one
+// hex digit short (":00000001F"), ends a complete dump.
+func TestDumpMCmFirmwareEOF(t *testing.T) {
+	shrinkDumpTimings(t)
+	mcm := append(slices.Clone(fakeMCm[:2]), ":00000001F")
+	s := startSim(t, dumpSim(idleLines(20), mcm))
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
+	waitActive(t, d)
+
+	dump, err := d.DumpMCm(reqCtx(t))
+	if err != nil {
+		t.Fatalf("DumpMCm: %v", err)
+	}
+	if !slices.Equal(dump.Lines, mcm) {
+		t.Errorf("Lines = %q, want %q", dump.Lines, mcm)
+	}
+}
+
+func TestCompleteMCm(t *testing.T) {
+	r0, r1 := fakeMCm[0], fakeMCm[1]
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		want  bool
+	}{
+		{"standard EOF", []string{r0, r1, ":00000001FF"}, true},
+		{"firmware EOF", []string{r0, r1, ":00000001F"}, true},
+		{"trailing blank", []string{r0, r1, ":00000001F", ""}, true},
+		{"empty", nil, false},
+		{"EOF only", []string{":00000001FF"}, false},
+		{"no EOF", []string{r0, r1}, false},
+		{"other short EOF", []string{r0, r1, ":00000001"}, false},
+		{"missing record", []string{r0, ":10002000202122232425262728292A2B2C2D2E2F58", ":00000001F"}, false},
+		{"not from 0", []string{r1, ":00000001F"}, false},
+		{"bad checksum", []string{r0, r1[:len(r1)-2] + "69", ":00000001F"}, false},
+		{"bad length", []string{r0, r1[:len(r1)-4] + "68", ":00000001F"}, false},
+		{"not hex", []string{r0, ":1000100010111213141516171819XX1B1C1D1E1F68", ":00000001F"}, false},
+		{"other record type", []string{r0, ":10001001101112131415161718191A1B1C1D1E1F67", ":00000001F"}, false},
+		{"line after EOF", []string{r0, ":00000001F", r1}, false},
+		{"banner inside", []string{r0, "$id: leva! (3.2)", r1, ":00000001F"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := complete("MCm", tc.lines); got != tc.want {
+				t.Errorf("complete(MCm, %q) = %v, want %v", tc.lines, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCompleteMCu(t *testing.T) {
+	if complete("MCu", nil) || complete("MCu", []string{"", " "}) {
+		t.Error("an empty MCu reply counts as complete")
+	}
+	if !complete("MCu", []string{"user setting 1 = 42"}) {
+		t.Error("a non-empty MCu reply counts as incomplete")
+	}
+}
+
 // TestDumpMCmTruncated pins Review Focus 5.
 func TestDumpMCmTruncated(t *testing.T) {
 	shrinkDumpTimings(t)

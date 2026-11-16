@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -48,8 +49,12 @@ var powerCmd = map[PowerState]string{
 	PowerStandby: "MCE",
 }
 
-// hexEOF is the Intel HEX end-of-file record that ends a complete MCm dump.
-const hexEOF = ":00000001FF"
+// MCm end records: the Intel HEX end-of-file record, and the form leva! 3.2
+// actually sends, one hex digit short of it (see machine-behaviour.md).
+const (
+	hexEOF         = ":00000001FF"
+	hexEOFFirmware = ":00000001F"
+)
 
 // Dump is a settings dump: the reply lines (CR+LF stripped), the firmware
 // version from the id banner ("unknown" if none) and the completion time.
@@ -193,7 +198,7 @@ func (d *Daemon) verifyPower(ctx context.Context, want PowerState) (PowerState, 
 func (d *Daemon) DumpMCu(ctx context.Context) (Dump, error) { return d.dump(ctx, "MCu") }
 
 // DumpMCm returns the machine's settings memory (MCm) as Intel HEX. A dump
-// whose last non-empty line is not the EOF record gives ErrIncompleteDump.
+// that fails completeMCm gives ErrIncompleteDump.
 func (d *Daemon) DumpMCm(ctx context.Context) (Dump, error) { return d.dump(ctx, "MCm") }
 
 // dump runs cmd with the dump timings. It refuses, sending nothing, while
@@ -231,14 +236,54 @@ func (d *Daemon) dump(ctx context.Context, cmd string) (Dump, error) {
 }
 
 // complete reports whether a dump reply is whole: non-empty, and for MCm
-// ending in the Intel HEX EOF record.
+// passing completeMCm. Trailing blank lines are ignored.
 func complete(cmd string, lines []string) bool {
-	last := ""
-	for i := len(lines) - 1; i >= 0 && last == ""; i-- {
-		last = strings.TrimSpace(lines[i])
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
 	}
-	if last == "" {
+	if len(lines) == 0 {
 		return false
 	}
-	return cmd != "MCm" || last == hexEOF
+	return cmd != "MCm" || completeMCm(lines)
+}
+
+// completeMCm reports whether lines are a whole MCm dump: at least one data
+// record, every data record checksum-valid and continuing at the address
+// where the previous one ended (starting at 0), and an end record
+// (standard or firmware form) as the last line and nowhere else.
+func completeMCm(lines []string) bool {
+	last := strings.TrimSpace(lines[len(lines)-1])
+	if last != hexEOF && last != hexEOFFirmware {
+		return false
+	}
+	data := lines[:len(lines)-1]
+	next := 0
+	for _, l := range data {
+		addr, n, ok := dataRecord(strings.TrimSpace(l))
+		if !ok || addr != next {
+			return false
+		}
+		next = addr + n
+	}
+	return len(data) > 0
+}
+
+// dataRecord parses an Intel HEX data record (type 00) and returns its load
+// address and byte count; ok is false for any other line or a bad checksum.
+func dataRecord(l string) (addr, n int, ok bool) {
+	if len(l) < 11 || l[0] != ':' {
+		return 0, 0, false
+	}
+	b, err := hex.DecodeString(l[1:])
+	if err != nil || len(b) != 5+int(b[0]) || b[3] != 0x00 {
+		return 0, 0, false
+	}
+	var sum byte
+	for _, c := range b {
+		sum += c
+	}
+	if sum != 0 {
+		return 0, 0, false
+	}
+	return int(b[1])<<8 | int(b[2]), int(b[0]), true
 }

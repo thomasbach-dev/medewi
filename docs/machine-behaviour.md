@@ -145,3 +145,13 @@ Detection is issue #13; the data model for programs is issue #12.
   included: switched off, the machine is gone from the network (operator,
   2026-11-05). A disconnect is therefore the normal "off" state, not a
   fault.
+
+## Settings dumps
+
+- `MCm` replies in Intel HEX: 256 data records of 16 bytes, addresses
+  0x0000–0x0FFF in order (4 KiB), every checksum valid, then the end
+  record, all within about 1.1 s. leva! 3.2 sends the end record as
+  `:00000001F`, one hex digit short of the standard `:00000001FF`. Seen
+  in the 2026-11-02 command capture and in both daemon backups on
+  2026-11-15 (257 lines each time). The idle banner follows right after.
+  The daemon's completeness check accepts both forms of the end record.
