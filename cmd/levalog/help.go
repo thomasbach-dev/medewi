@@ -44,15 +44,25 @@ so does the reason for an empty result (what each filter dropped, a --run
 that names no run).
 Exit codes: 0 ok, 1 read error, 2 usage error.`
 
-// helpPointer ends each SUBCOMMAND --help.
-const helpPointer = "Input FILE|DIR (raw logs, a raw-log or capture directory, - for stdin), " +
-	"-s/-u forms, --format, --xml F before SUBCOMMAND (env MEDEWI_XML_PATH): levalog --help"
+// helpXMLPointer names --xml in each pointer line.
+const helpXMLPointer = "--xml F before the subcommand (env MEDEWID_XML_PATH, then MEDEWI_XML_PATH): levalog --help"
 
 // subHelp is one subcommand's part of the help.
 type subHelp struct {
 	name     string
 	text     string   // synopsis and paragraphs
 	examples []string // "  levalog ...  # what" lines
+	rawOnly  bool     // reads raw logs only: no captures, no -, no --format
+}
+
+// pointer is the line ending h's SUBCOMMAND --help: the shared rules it
+// uses, found in levalog --help.
+func (h subHelp) pointer() string {
+	if h.rawOnly {
+		return "Input FILE|DIR (raw logs or a raw-log directory), the -s/-u time forms, " + helpXMLPointer
+	}
+	return "Input FILE|DIR (raw logs, captures, a raw-log or capture directory, - for stdin), the -s/-u time forms, --format, " +
+		helpXMLPointer
 }
 
 var subHelps = []subHelp{
@@ -173,7 +183,8 @@ when the first file is not in the input; times UTC); csv has no sessions.`,
 		},
 	},
 	{
-		name: "extract",
+		name:    "extract",
+		rawOnly: true,
 		text: `usage: levalog extract (-s T -u T | --run N) [--margin SPAN] --out DIR|- [--scenario NAME]
        [--notes TEXT] [--split-sessions] [FILE|DIR ...]
 
@@ -182,15 +193,15 @@ extract reads raw logs only and keeps every event in the window verbatim
 session's xml note first); with --run N the window is that run's, as
 events --run N --margin SPAN prints it. The window must lie in one raw-log
 session: at a reconnect or restart it exits 1 naming every boundary and
-the -s/-u of each part (tagged "# no events" when it holds none), or with
+the -s/-u of each part (tagged "# no events" or "# overlapping sessions"), or with
 --split-sessions writes one capture per part into DIR/01, DIR/02, ... (a
 part without events is skipped; at most 99 parts). It reads back to the
 session's first file in the directory for the firmware banner. --out DIR
 must not exist or be empty; the manifest gets machine_addr
 machine.example:23, the XML's sha256 when --xml names it, and the
 provenance in its notes. Each capture written prints as its log.jsonl
-with its counts (reports, frames, notes, other: commands and the other
-lines) and its manifest.json. --out - prints the lines log.jsonl would
+with its event counts (reports, frames, notes, commands, other rx; they
+sum to the total) and its manifest.json. --out - prints the lines log.jsonl would
 hold, and no manifest: JSON objects whose data is base64 (the fixture
 format); decode with jq -r '.data | @base64d', or read them back from
 stdin: extract ... --out - | levalog events --event frame -`,
@@ -224,7 +235,7 @@ func subUsage(w io.Writer, name string, fs *pflag.FlagSet) {
 		}
 		_, _ = fmt.Fprintf(w, "%s\n\nExamples:\n%s\n\n%s flags:\n", h.text, strings.Join(h.examples, "\n"), name)
 		fs.PrintDefaults()
-		_, _ = fmt.Fprintf(w, "\n%s\n", helpPointer)
+		_, _ = fmt.Fprintf(w, "\n%s\n", h.pointer())
 		return
 	}
 }

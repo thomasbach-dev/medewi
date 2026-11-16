@@ -43,11 +43,12 @@ type Extracted struct {
 	// kept where it is; "" if neither.
 	XMLName  string
 	Firmware string // last "$id:" banner line of the session before or in the window, CRLF trimmed; "" if unknown
-	// Reports and Frames count the kept rx lines starting with '{' and
-	// '<'; NoteEvents counts the note events in Events, the XML note
-	// included; Other counts the rest: tx events and the other rx lines.
-	Reports, Frames, NoteEvents, Other int
-	Notes                              []string // e.g. "window starts mid-line: dropped 120 bytes", "firmware unknown: …"
+	// The events of Events by kind, summing to len(Events): Reports and
+	// Frames are the rx events starting with '{' and '<', Other the other
+	// rx events; NoteEvents the note events, the XML note included;
+	// Commands the tx events.
+	Reports, Frames, NoteEvents, Commands, Other int
+	Notes                                        []string // e.g. "window starts mid-line: dropped 120 bytes", "firmware unknown: …"
 }
 
 // SessionBoundaryError reports that the window crosses into a new session
@@ -182,7 +183,6 @@ func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 		out.XMLName = xmlIn
 		out.Notes = append(out.Notes, fmt.Sprintf("XML named only at %s, inside the window", xmlInAt.In(time.Local).Format(sessionZoneLayout)))
 	}
-	var rxData []byte
 	for _, k := range kept {
 		ev := k.ev
 		ev.T = k.wall.Sub(out.First).Milliseconds()
@@ -190,25 +190,18 @@ func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 		if n := len(out.Files); n == 0 || out.Files[n-1] != k.file {
 			out.Files = append(out.Files, k.file)
 		}
-		if ev.Dir == fixture.RX {
-			rxData = append(rxData, ev.Data...)
-		}
 	}
 	for _, ev := range out.Events {
-		switch ev.Dir {
-		case fixture.Note:
-			out.NoteEvents++
-		case fixture.TX:
-			out.Other++
-		}
-	}
-	for _, line := range bytes.Split(rxData, crlf) {
 		switch {
-		case bytes.HasPrefix(line, []byte("{")):
+		case ev.Dir == fixture.Note:
+			out.NoteEvents++
+		case ev.Dir == fixture.TX:
+			out.Commands++
+		case bytes.HasPrefix(ev.Data, []byte("{")):
 			out.Reports++
-		case bytes.HasPrefix(line, []byte("<")):
+		case bytes.HasPrefix(ev.Data, []byte("<")):
 			out.Frames++
-		case len(line) > 0:
+		default:
 			out.Other++
 		}
 	}

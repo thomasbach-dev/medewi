@@ -114,7 +114,7 @@ func TestExtractWritesCapture(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
-	want := out + "/log.jsonl: 6 events (2 reports, 1 frames, 2 notes, 1 other)\n" + out + "/manifest.json\n"
+	want := out + "/log.jsonl: 6 events (2 reports, 1 frame, 2 notes, 1 command, 0 other)\n" + out + "/manifest.json\n"
 	if stdout != want {
 		t.Errorf("stdout = %q, want %q", stdout, want)
 	}
@@ -253,14 +253,14 @@ func TestExtractEmptyWindow(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "o")
 	code, _, stderr := runCmd(t, "extract", "--dir", extractDir(t),
 		"-s", "2026-11-14 08:58:36", "-u", "2026-11-14 08:58:40", "--out", out)
-	want := "no events in [2026-11-14 08:58:36.000, 2026-11-14 08:58:40.000)"
+	want := "no events in [2026-11-14 08:58:36.000, 2026-11-14 08:58:40.000) +01:00;"
 	if code != 1 || !strings.Contains(stderr, want) {
 		t.Errorf("exit %d, stderr %q; want 1, %s", code, stderr, want)
 	}
 	// An open end reads as such, not as a far-future date.
 	code, _, stderr = runCmd(t, "extract", "--dir", extractDir(t),
 		"-s", "2026-11-14 10:00:00", "--out", out)
-	want = "no events in [2026-11-14 10:00:00.000, open end)"
+	want = "no events in [2026-11-14 10:00:00.000, open end) +01:00;"
 	if code != 1 || !strings.Contains(stderr, want) {
 		t.Errorf("open end: exit %d, stderr %q; want 1, %s", code, stderr, want)
 	}
@@ -320,9 +320,11 @@ func TestExtractSessionBoundaries(t *testing.T) {
 		t.Error("output directory created")
 	}
 
-	// An open end leaves the last part's -u out.
+	// An open end leaves the last part's -u out. That part also holds f3's
+	// {after} (08:59:10), past the later sessions' starts: overlapping
+	// files, tagged so.
 	code, _, stderr = runCmd(t, "extract", "--dir", threeSessionDir(t), "-s", "2026-11-14 08:58:30", "--out", out)
-	if code != 1 || !strings.Contains(stderr, "  -s '2026-11-14 08:58:50.000'\n") {
+	if code != 1 || !strings.Contains(stderr, "  -s '2026-11-14 08:58:50.000'  # overlapping sessions\n") {
 		t.Errorf("open end: exit %d, stderr %q", code, stderr)
 	}
 }
@@ -336,9 +338,9 @@ func TestExtractSplitSessions(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 	p := func(n, f string) string { return filepath.Join(out, n, f) }
-	want := p("01", "log.jsonl") + ": 6 events (2 reports, 1 frames, 2 notes, 1 other)\n" + p("01", "manifest.json") + "\n" +
-		p("02", "log.jsonl") + ": 2 events (1 reports, 0 frames, 0 notes, 1 other)\n" + p("02", "manifest.json") + "\n" +
-		p("03", "log.jsonl") + ": 2 events (1 reports, 0 frames, 0 notes, 1 other)\n" + p("03", "manifest.json") + "\n"
+	want := p("01", "log.jsonl") + ": 6 events (2 reports, 1 frame, 2 notes, 1 command, 0 other)\n" + p("01", "manifest.json") + "\n" +
+		p("02", "log.jsonl") + ": 2 events (1 report, 0 frames, 0 notes, 0 commands, 1 other)\n" + p("02", "manifest.json") + "\n" +
+		p("03", "log.jsonl") + ": 2 events (1 report, 0 frames, 0 notes, 0 commands, 1 other)\n" + p("03", "manifest.json") + "\n"
 	if stdout != want {
 		t.Errorf("stdout = %q, want %q", stdout, want)
 	}
@@ -359,7 +361,7 @@ func TestExtractSplitSessions(t *testing.T) {
 	// A window inside one session gives 01 only.
 	out = filepath.Join(t.TempDir(), "o")
 	code, stdout, stderr = runCmd(t, extractArgs(extractDir(t), "--split-sessions", "--out", out)...)
-	if code != 0 || stdout != p("01", "log.jsonl")+": 6 events (2 reports, 1 frames, 2 notes, 1 other)\n"+p("01", "manifest.json")+"\n" {
+	if code != 0 || stdout != p("01", "log.jsonl")+": 6 events (2 reports, 1 frame, 2 notes, 1 command, 0 other)\n"+p("01", "manifest.json")+"\n" {
 		t.Errorf("one session: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	if entries, _ := os.ReadDir(out); len(entries) != 1 {
@@ -381,7 +383,7 @@ func TestExtractSplitSessionsSkipsEmpty(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
-	if !strings.Contains(stderr, "part 3 [2026-11-14 08:58:45.000, 2026-11-14 08:58:50.000) has no events; skipped") {
+	if !strings.Contains(stderr, "part 3 [2026-11-14 08:58:45.000, 2026-11-14 08:58:50.000) +01:00 has no events; skipped") {
 		t.Errorf("stderr = %q, want the skipped part named", stderr)
 	}
 	if strings.Count(stdout, "manifest.json") != 3 || strings.Contains(stdout, filepath.Join(out, "04")) {

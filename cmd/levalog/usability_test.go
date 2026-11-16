@@ -51,6 +51,9 @@ func TestExtractOverlappingSessions(t *testing.T) {
 			!strings.Contains(stderr, "FILE arguments") || strings.Contains(stderr, "T07:58:40") {
 			t.Errorf("%v: exit %d, stderr %q; want 1, the boundary in local time and a next step", mode, code, stderr)
 		}
+		if mode != nil && !strings.Contains(stderr, "levalog: part 1 [2026-11-14 08:58:45.000, 2026-11-14 08:59:15.000) +01:00: ") {
+			t.Errorf("split: stderr %q; want the part named with its zone", stderr)
+		}
 	}
 }
 
@@ -77,7 +80,7 @@ func TestExtractNoEventsNextStep(t *testing.T) {
 		args := append(append([]string{"extract", "--dir", extractDir(t), "-s", "2026-11-14 08:58:36", "-u", "2026-11-14 08:58:40"},
 			mode...), "--out", filepath.Join(t.TempDir(), "o"))
 		code, _, stderr := runCmd(t, args...)
-		if code != 1 || !strings.Contains(stderr, "no events in [2026-11-14 08:58:36.000, 2026-11-14 08:58:40.000)") ||
+		if code != 1 || !strings.Contains(stderr, "no events in [2026-11-14 08:58:36.000, 2026-11-14 08:58:40.000) +01:00;") ||
 			!strings.Contains(stderr, "levalog summary") {
 			t.Errorf("%v: exit %d, stderr %q; want no events and a next step", mode, code, stderr)
 		}
@@ -130,5 +133,38 @@ func TestXMLMismatchWarnsOnce(t *testing.T) {
 	code, _, stderr := runCmd(t, "--xml", synth, "events", "--dir", extractDir(t), "-s", "2026-11-14 06:00", "-u", "2026-11-14 09:00")
 	if code != 0 || strings.Count(stderr, "log names "+xmlName) != 1 || !strings.Contains(stderr, "(also in 2 more files)") {
 		t.Errorf("exit %d, stderr %q; want one warning for the three files", code, stderr)
+	}
+}
+
+// TestExtractRefusalTagsOverlap: a listed part that itself holds two
+// sessions' events (overlapping files) is tagged so.
+func TestExtractRefusalTagsOverlap(t *testing.T) {
+	noEnv(t)
+	inCET(t)
+	dir := overlapDir(t)
+	writeRaw(t, dir, winFrom.Add(50*time.Second), ev(0, fixture.RX, "$id: leva! (3.4)\r\n"))
+	code, _, stderr := runCmd(t, "extract", "--dir", dir, "-s", "2026-11-14 08:58:45", "-u", "2026-11-14 08:59:30",
+		"--out", filepath.Join(t.TempDir(), "o"))
+	if code != 1 || !strings.Contains(stderr, "  -s '2026-11-14 08:58:45.000' -u '2026-11-14 08:59:20.000'  # overlapping sessions\n") ||
+		!strings.Contains(stderr, "  -s '2026-11-14 08:59:20.000' -u '2026-11-14 08:59:30.000'\n") {
+		t.Errorf("exit %d, stderr %q; want the overlapping part tagged, the other not", code, stderr)
+	}
+}
+
+// TestHelpPointerPerSubcommand: each pointer line names only what its
+// subcommand takes, and both XML env vars.
+func TestHelpPointerPerSubcommand(t *testing.T) {
+	noEnv(t)
+	for sub := range subMarkers {
+		_, _, errs := runCmd(t, sub, "--help")
+		lines := strings.Split(strings.TrimRight(errs, "\n"), "\n")
+		last := lines[len(lines)-1]
+		if !strings.Contains(last, "MEDEWID_XML_PATH, then MEDEWI_XML_PATH") {
+			t.Errorf("%s pointer %q lacks the env vars", sub, last)
+		}
+		raw := sub == "extract"
+		if strings.Contains(last, "--format") == raw || strings.Contains(last, "- for stdin") == raw {
+			t.Errorf("%s pointer %q: --format and - for stdin only where the subcommand takes them", sub, last)
+		}
 	}
 }

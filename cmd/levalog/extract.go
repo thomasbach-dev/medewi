@@ -162,7 +162,8 @@ func extractCmd(args []string, xmlPath string, stdin io.Reader, stdout, stderr i
 		infos := make([]partInfo, len(parts))
 		for i, w := range parts {
 			_, perr := logview.Extract(opened, w.Since, w.Until)
-			infos[i] = partInfo{Window: w, empty: errors.Is(perr, logview.ErrNoEvents)}
+			var psbe *logview.SessionBoundaryError
+			infos[i] = partInfo{Window: w, empty: errors.Is(perr, logview.ErrNoEvents), overlap: errors.As(perr, &psbe)}
 		}
 		return refuseBoundaries(stderr, infos, sbe.At)
 	}
@@ -202,7 +203,7 @@ func fmtWindow(since, until time.Time) string {
 	if !until.Equal(openEndAt) {
 		end = until.In(time.Local).Format(wallLayout)
 	}
-	return fmt.Sprintf("[%s, %s)", since.In(time.Local).Format(wallLayout), end)
+	return fmt.Sprintf("[%s, %s) %s", since.In(time.Local).Format(wallLayout), end, since.In(time.Local).Format("-07:00"))
 }
 
 // noEvents is the refusal of a window without events, with what to run
@@ -212,15 +213,15 @@ func noEvents(stderr io.Writer, since, until time.Time) int {
 		fmtWindow(since, until))
 }
 
-// partInfo is a session part of the window and whether it has no events.
+// partInfo is a session part of the window and what its own cut gave.
 type partInfo struct {
 	logview.Window
-	empty bool
+	empty, overlap bool // no events; events of two sessions (overlapping files)
 }
 
 // refuseBoundaries names every session boundary inside the window and
 // prints the -s/-u pair of each part, as the window's refusal; a part
-// without events is tagged so. With fewer than two parts the window still
+// without events or with overlapping sessions is tagged so. With fewer than two parts the window still
 // holds two sessions' events, as their files overlap in wall time; the
 // refusal then names the boundary at, where the later session starts.
 func refuseBoundaries(stderr io.Writer, parts []partInfo, at time.Time) int {
@@ -245,6 +246,9 @@ func refuseBoundaries(stderr io.Writer, parts []partInfo, at time.Time) int {
 		}
 		if p.empty {
 			_, _ = fmt.Fprint(stderr, "  # no events")
+		}
+		if p.overlap {
+			_, _ = fmt.Fprint(stderr, "  # overlapping sessions")
 		}
 		_, _ = fmt.Fprintln(stderr)
 	}
@@ -326,10 +330,19 @@ func writeExtract(dir string, ex logview.Extracted, xmlPath string, o extractOpt
 	if err := fixture.WriteCapture(dir, "log.jsonl", "manifest.json", ex.Events, m); err != nil {
 		return fail(stderr, 1, "%v", err)
 	}
-	_, _ = fmt.Fprintf(stdout, "%s: %d events (%d reports, %d frames, %d notes, %d other)\n%s\n",
-		filepath.Join(dir, "log.jsonl"), len(ex.Events), ex.Reports, ex.Frames, ex.NoteEvents, ex.Other,
+	_, _ = fmt.Fprintf(stdout, "%s: %s (%s, %s, %s, %s, %d other)\n%s\n",
+		filepath.Join(dir, "log.jsonl"), plural(len(ex.Events), "event"), plural(ex.Reports, "report"),
+		plural(ex.Frames, "frame"), plural(ex.NoteEvents, "note"), plural(ex.Commands, "command"), ex.Other,
 		filepath.Join(dir, "manifest.json"))
 	return 0
+}
+
+// plural is "N word", with an s unless N is 1.
+func plural(n int, word string) string {
+	if n == 1 {
+		return "1 " + word
+	}
+	return fmt.Sprintf("%d %ss", n, word)
 }
 
 // checkOut refuses an --out that exists and is not an empty directory.

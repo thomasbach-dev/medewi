@@ -394,9 +394,36 @@ func TestExtractCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Reports != 2 || got.Frames != 2 || got.NoteEvents != 3 || got.Other != 2 {
-		t.Errorf("Reports, Frames, NoteEvents, Other = %d, %d, %d, %d; want 2, 2, 3 (the xml note counts), 2 (MC@, [READY])",
-			got.Reports, got.Frames, got.NoteEvents, got.Other)
+	// Per event, by its first byte: "{a}\r\n<BKL frame>\r\n" is a report,
+	// "-rest}\r\n[READY]\r\n" other.
+	if got.Reports != 2 || got.Frames != 1 || got.NoteEvents != 3 || got.Commands != 1 || got.Other != 1 {
+		t.Errorf("Reports, Frames, NoteEvents, Commands, Other = %d, %d, %d, %d, %d; want 2, 1, 3 (the xml note counts), 1, 1",
+			got.Reports, got.Frames, got.NoteEvents, got.Commands, got.Other)
+	}
+	if sum := got.Reports + got.Frames + got.NoteEvents + got.Commands + got.Other; sum != len(got.Events) {
+		t.Errorf("counts sum to %d, want len(Events) = %d", sum, len(got.Events))
+	}
+}
+
+// TestExtractCountsSumRawlogShaped: on rawlog-shaped input (one line per
+// rx event, a bare CRLF line among them) the counts sum to the total.
+func TestExtractCountsSumRawlogShaped(t *testing.T) {
+	src := rawSrc(extractT0,
+		rxEv(0, "$id: leva! (3.2)\r\n"),
+		noteEv(1, "xml: X"),
+		rxEv(100, "{a}\r\n"),
+		rxEv(200, "\r\n"),
+		txEv(300, "MC@"),
+		rxEv(400, "<BKL frame>\r\n"),
+		rxEv(500, "[READY]\r\n"),
+	)
+	got, err := Extract([]Source{src}, extractT0, extractT0.Add(msec(1000)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum := got.Reports + got.Frames + got.NoteEvents + got.Commands + got.Other; sum != len(got.Events) || got.Other != 3 {
+		t.Errorf("counts %d, %d, %d, %d, %d sum to %d, want len(Events) = %d with 3 other (banner, CRLF, READY)",
+			got.Reports, got.Frames, got.NoteEvents, got.Commands, got.Other, sum, len(got.Events))
 	}
 }
 
