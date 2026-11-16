@@ -35,22 +35,25 @@ type Source struct {
 // SourceInfo is what is kept of an opened source once its events are
 // decoded: enough to place it on a timeline.
 type SourceInfo struct {
-	Index       int // position in the input, from 0
-	Path        string
-	Start       time.Time // as in Source
-	HasWall     bool
-	Notes       string
-	Recorded    time.Time     // as in Source
-	Firmware    string        // as in Source
-	Events      int           // number of events
-	First, Last time.Duration // offsets of the first and last event; zero without events
+	Index    int // position in the input, from 0
+	Path     string
+	Start    time.Time // as in Source
+	HasWall  bool
+	Notes    string
+	Recorded time.Time // as in Source
+	Firmware string    // as in Source
+	// SessionStart is SessionStart of the source: it begins a raw-log
+	// session (meaningful only with HasWall).
+	SessionStart bool
+	Events       int           // number of events
+	First, Last  time.Duration // offsets of the first and last event; zero without events
 }
 
 // Info summarises s as the source at position index of an input.
 func (s Source) Info(index int) SourceInfo {
 	si := SourceInfo{
 		Index: index, Path: s.Path, Start: s.Start, HasWall: s.HasWall, Notes: s.Notes,
-		Recorded: s.Recorded, Firmware: s.Firmware, Events: len(s.Events),
+		Recorded: s.Recorded, Firmware: s.Firmware, Events: len(s.Events), SessionStart: SessionStart(s),
 	}
 	if n := len(s.Events); n > 0 {
 		si.First = time.Duration(s.Events[0].T) * time.Millisecond

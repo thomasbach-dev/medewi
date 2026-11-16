@@ -17,15 +17,22 @@ func TestSummarySessions(t *testing.T) {
 	}
 	for _, w := range []string{
 		"sessions:\n",
-		"  starts before 2026-11-14 07:05:52.646 +01:00 (first file not in input); firmware unknown; xml " + xmlName + "; covers [2026-11-14 08:58:35.000, 2026-11-14 08:58:40.000)\n",
-		"  2026-11-14 08:58:40.000 +01:00; first file 20261114T075840.000Z.jsonl.gz; firmware $id: leva! (3.3); xml unknown; covers [2026-11-14 08:58:40.000, 2026-11-14 08:58:50.000)\n",
-		"  2026-11-14 08:58:50.000 +01:00; first file 20261114T075850.000Z.jsonl.gz; firmware $id: leva! (3.4); xml unknown; covers [2026-11-14 08:58:50.000, 2026-11-14 08:59:00.000)\n",
+		"  starts before 2026-11-14 07:05:52.646 +01:00 (first file not in input); firmware unknown; xml " + xmlName + "; covers [2026-11-14 08:58:35.000, 2026-11-14 08:58:40.000) +01:00\n",
+		"  2026-11-14 08:58:40.000 +01:00; first file 20261114T075840.000Z.jsonl.gz; firmware $id: leva! (3.3); xml unknown; covers [2026-11-14 08:58:40.000, 2026-11-14 08:58:50.000) +01:00\n",
+		"  2026-11-14 08:58:50.000 +01:00; first file 20261114T075850.000Z.jsonl.gz; firmware $id: leva! (3.4); xml unknown; covers [2026-11-14 08:58:50.000, 2026-11-14 08:59:00.000) +01:00\n",
 		"firmware (in this file):",
-		"xml (in this file):",
+		"xml (in effect):",
 	} {
 		if !strings.Contains(out, w) {
 			t.Errorf("output lacks %q:\n%s", w, out)
 		}
+	}
+	// Session 2 names no XML (its sessions line says unknown); its file's
+	// reports decode with the one carried over: the label says "in effect".
+	_, block, _ := strings.Cut(out, "20261114T075840.000Z.jsonl.gz\nkind:")
+	block, _, _ = strings.Cut(block, "\n\n")
+	if !strings.Contains(block, "\nxml (in effect): "+xmlName+"\n") || strings.Contains(out, "xml (in this file)") {
+		t.Errorf("session 2's file block lacks the carried XML as in effect:\n%s", out)
 	}
 	if strings.Contains(out, "\nfirmware:") || strings.Contains(out, "\nxml:") {
 		t.Errorf("old per-file labels remain:\n%s", out)

@@ -64,7 +64,7 @@ func extractCmd(args []string, xmlPath string, stdin io.Reader, stdout, stderr i
 	case fs.Changed("margin") && !byRun && !in.window():
 		return fail(stderr, 2, "--margin needs a window (-s/-u) or --run")
 	case !byRun && !in.window():
-		return fail(stderr, 2, "extract needs a window: -s/--since and -u/--until, or --run N")
+		return fail(stderr, 2, "extract needs a window: -s/--since, -u/--until or both, or --run N")
 	case !since.IsZero() && !until.IsZero() && !until.After(since):
 		return fail(stderr, 2, "--until must be after --since")
 	case byRun && xmlPath == "":
@@ -187,7 +187,7 @@ func extractCmd(args []string, xmlPath string, stdin io.Reader, stdout, stderr i
 		}
 		return 0
 	}
-	return writeExtract(o.out, ex, xmlPath, o, stdout, stderr)
+	return writeExtract(o.out, "", ex, xmlPath, o, stdout, stderr)
 }
 
 // maxParts is the most parts --split-sessions numbers (two digits).
@@ -296,23 +296,30 @@ func extractParts(opened []logview.Source, parts []logview.Window, since, until 
 		return noEvents(stderr, since, until)
 	}
 	for n, ex := range cut {
+		// Notes name the output directory; the window part number differs
+		// once an empty part was skipped.
+		sub := fmt.Sprintf("%02d", n+1)
+		label := fmt.Sprintf("%s (window part %d): ", sub, nums[n])
 		for _, note := range ex.Notes {
-			warn(stderr, []string{fmt.Sprintf("part %d: %s", nums[n], note)})
+			warn(stderr, []string{label + note})
 		}
-		if code := writeExtract(filepath.Join(o.out, fmt.Sprintf("%02d", n+1)), ex, xmlPath, o, stdout, stderr); code != 0 {
+		if code := writeExtract(filepath.Join(o.out, sub), label, ex, xmlPath, o, stdout, stderr); code != 0 {
 			return code
 		}
 	}
 	return 0
 }
 
-// writeExtract writes ex as a capture into dir and lists it on stdout.
-func writeExtract(dir string, ex logview.Extracted, xmlPath string, o extractOpts, stdout, stderr io.Writer) int {
+// writeExtract writes ex as a capture into dir and lists it on stdout;
+// label prefixes its notes (--split-sessions names the part).
+func writeExtract(dir, label string, ex logview.Extracted, xmlPath string, o extractOpts, stdout, stderr io.Writer) int {
 	sum, sumNotes, err := xmlSHA(xmlPath, ex.XMLName)
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
 	}
-	warn(stderr, sumNotes)
+	for _, n := range sumNotes {
+		warn(stderr, []string{label + n})
+	}
 	provenance := fmt.Sprintf("extracted from %s %s – %s by levalog extract", strings.Join(ex.Files, ", "),
 		ex.First.In(time.Local).Format(provenanceLayout), ex.Last.In(time.Local).Format(provenanceLayout))
 	mNotes := provenance
@@ -422,7 +429,41 @@ func openSession(paths, dirs []string) ([]logview.Source, []string, error) {
 		}
 		srcs = append([]logview.Source{s}, srcs...)
 	}
-	return srcs, nil, nil
+	srcs, err := readOn(srcs, dir, all)
+	return srcs, nil, err
+}
+
+// readOn appends to srcs the later raw logs of dir while the last session
+// in srcs has no banner: its banner may come after the window (a stream
+// was on since connect), and is the session's firmware. It stops after
+// the first file that starts a new session, at the newest file, or after
+// maxExtend files. all lists dir, or is nil.
+func readOn(srcs []logview.Source, dir string, all []string) ([]logview.Source, error) {
+	ss := logview.Sessions(srcs)
+	if ss[len(ss)-1].Firmware != "" {
+		return srcs, nil
+	}
+	if all == nil {
+		var err error
+		if all, err = logview.Select(dir, time.Time{}, time.Time{}); err != nil {
+			return nil, err
+		}
+	}
+	i := slices.Index(all, srcs[len(srcs)-1].Path)
+	if i < 0 {
+		return srcs, nil
+	}
+	for _, p := range all[i+1 : min(i+1+maxExtend, len(all))] {
+		s, err := logview.Open(p)
+		if err != nil {
+			return nil, err
+		}
+		srcs = append(srcs, s)
+		if logview.SessionStart(s) || logview.Sessions([]logview.Source{s})[0].Firmware != "" {
+			break // the session ended, or its banner is found
+		}
+	}
+	return srcs, nil
 }
 
 // xmlSHA returns the sha256 of the XML named name in effect: xmlPath if it

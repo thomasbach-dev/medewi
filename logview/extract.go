@@ -41,8 +41,11 @@ type Extracted struct {
 	// XMLName is from the session's last xml note before the window (the
 	// one prepended); without one, from the first xml note in the window,
 	// kept where it is; "" if neither.
-	XMLName  string
-	Firmware string // last "$id:" banner line of the session before or in the window, CRLF trimmed; "" if unknown
+	XMLName string
+	// Firmware is the session's last "$id:" banner line before or in the
+	// window, else its first one after the window; CRLF trimmed, "" if
+	// unknown.
+	Firmware string
 	// The events of Events by kind, summing to len(Events): Reports and
 	// Frames are the rx events starting with '{' and '<', Other the other
 	// rx events; NoteEvents the note events, the XML note included;
@@ -70,7 +73,8 @@ type keptEvent struct {
 }
 
 // Extract cuts [since, until) out of srcs: raw logs of one directory in
-// start order, possibly beginning before the window (for the firmware).
+// start order, possibly beginning before the window and going on after it
+// (for the firmware).
 // Every event with its wall time in the window is kept verbatim, except
 // that the first kept rx bytes start a line and the last ones end one,
 // and the XML note at t = 0 of a rotated file is replaced by one XML note
@@ -92,8 +96,9 @@ func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 		lineStart    = true
 		started      bool // an rx event was kept
 		dropped      int
+		session      int // index in srcs of the window's session's first source
 	)
-	for _, src := range srcs {
+	for si, src := range srcs {
 		if !src.Start.Before(until) {
 			break // this and every later source lie past the window
 		}
@@ -104,7 +109,7 @@ func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 				return Extracted{}, &SessionBoundaryError{At: src.Start}
 			}
 			firmware, xmlBefore, xmlIn, lineStart = "", "", "", true
-			sessionFirst, sessionKnown = base, true
+			sessionFirst, sessionKnown, session = base, true, si
 		case sessionFirst == "":
 			sessionFirst = base // a rotated file: the session began earlier
 		}
@@ -166,11 +171,20 @@ func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 	}
 
 	out.First, out.Last = kept[0].wall, kept[len(kept)-1].wall
+	sessionEnd := false // a later session starts in srcs: the session was read whole
+	if firmware == "" {
+		// The banner is a per-connection fact: one after the window (the
+		// stream stopped later) is the session's firmware too.
+		firmware, sessionEnd = bannerAfter(srcs[session:], until)
+	}
 	out.Firmware = firmware
 	if firmware == "" {
-		if sessionKnown {
-			out.Notes = append(out.Notes, "firmware unknown: no $id: banner in the session; the daemon connected while another client had a stream on, so the machine sent none (nothing to add)")
-		} else {
+		switch {
+		case sessionKnown && sessionEnd:
+			out.Notes = append(out.Notes, "firmware unknown: no $id: banner in the session (a stream was on since connect, so the machine sent none; nothing to add)")
+		case sessionKnown:
+			out.Notes = append(out.Notes, "firmware unknown: no $id: banner in the session's raw logs read (a stream was on since connect)")
+		default:
 			out.Notes = append(out.Notes, fmt.Sprintf(
 				"firmware unknown: the session's first file, before %s, is not in the input; add the earlier raw logs (e.g. the previous UTC day's files) to the input", sessionFirst))
 		}
@@ -231,6 +245,29 @@ func trimTail(kept []keptEvent) ([]keptEvent, int) {
 		kept = append(kept[:i], kept[i+1:]...)
 	}
 	return kept, dropped
+}
+
+// bannerAfter returns the first "$id:" banner line (CRLF trimmed) at or
+// after until in the session that srcs[0] belongs to: srcs up to the next
+// source that starts a session. ended reports that such a source was
+// reached, so the session's raw logs were all read.
+func bannerAfter(srcs []Source, until time.Time) (banner string, ended bool) {
+	for i, src := range srcs {
+		if i > 0 && SessionStart(src) {
+			return "", true
+		}
+		for _, ev := range src.Events {
+			if ev.Dir != fixture.RX || src.Wall(ev).Before(until) {
+				continue
+			}
+			for _, line := range bytes.Split(ev.Data, crlf) {
+				if bytes.HasPrefix(line, []byte("$id:")) {
+					return string(line), false
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 // lastBanner returns the last line of data starting with "$id:", CRLF

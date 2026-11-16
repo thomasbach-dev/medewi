@@ -453,14 +453,62 @@ func showEvents(evs []fixture.Event) string {
 }
 
 // TestExtractFirmwareUnknownNoBanner: the first file is in the input but
-// holds no banner: a stream was on, nothing to add.
+// holds no banner: a stream was on since connect. Only once the session's
+// end is in the input (a later session starts) is there nothing to add.
 func TestExtractFirmwareUnknownNoBanner(t *testing.T) {
 	first := rawSrc(extractT0, noteEv(10, "xml: X"), rxEv(1000, "{a}\r\n"))
 	got, err := Extract([]Source{first}, extractT0, extractT0.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasNote(got.Notes, "firmware unknown") || !hasNote(got.Notes, "another client had a stream on") || hasNote(got.Notes, "add the earlier raw logs") {
+	if !hasNote(got.Notes, "firmware unknown: no $id: banner in the session's raw logs read (a stream was on since connect)") ||
+		hasNote(got.Notes, "another client") || hasNote(got.Notes, "nothing to add") || hasNote(got.Notes, "add the earlier raw logs") {
 		t.Errorf("Notes = %q", got.Notes)
+	}
+
+	next := rawSrc(extractT0.Add(time.Hour), rxEv(0, "$id: leva! (3.3)\r\n"))
+	got, err = Extract([]Source{first, next}, extractT0, extractT0.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Firmware != "" {
+		t.Errorf("Firmware = %q; the next session's banner is not this one's", got.Firmware)
+	}
+	if !hasNote(got.Notes, "firmware unknown: no $id: banner in the session") || !hasNote(got.Notes, "nothing to add") {
+		t.Errorf("whole session read: Notes = %q", got.Notes)
+	}
+}
+
+// TestExtractFirmwareAfterWindow: the session's banner came only after the
+// window (the stream stopped later): it is the same connection's firmware.
+func TestExtractFirmwareAfterWindow(t *testing.T) {
+	t1 := extractT0.Add(time.Hour)
+	// In the window's own file, after the window.
+	a := rawSrc(extractT0, txEv(0, "MCr"), noteEv(5, "xml: X"), rxEv(1000, "{a}\r\n"), rxEv(2000, "{b}\r\n"),
+		rxEv(30000, "$id: leva! (3.2)\r\n"))
+	got, err := Extract([]Source{a}, extractT0.Add(msec(500)), extractT0.Add(msec(5000)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Firmware != "$id: leva! (3.2)" || hasNote(got.Notes, "firmware unknown") {
+		t.Errorf("same file: Firmware %q, Notes %q", got.Firmware, got.Notes)
+	}
+	if len(got.Events) != 3 {
+		t.Errorf("Events = %s; the banner after the window is not kept", showEvents(got.Events))
+	}
+
+	// In a later rotated file of the session.
+	a = rawSrc(extractT0, txEv(0, "MCr"), noteEv(5, "xml: X"), rxEv(1000, "{a}\r\n"))
+	rot := rawSrc(t1, noteEv(0, "xml: X"), rxEv(100, "{c}\r\n"), rxEv(200, "$id: leva! (3.2)\r\n"))
+	next := rawSrc(t1.Add(time.Hour), rxEv(0, "$id: leva! (3.9)\r\n"))
+	got, err = Extract([]Source{a, rot, next}, extractT0, extractT0.Add(msec(5000)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Firmware != "$id: leva! (3.2)" || hasNote(got.Notes, "firmware unknown") {
+		t.Errorf("rotated file: Firmware %q, Notes %q", got.Firmware, got.Notes)
+	}
+	if want := []string{"20261114T060552.000Z.jsonl.gz"}; !reflect.DeepEqual(got.Files, want) {
+		t.Errorf("Files = %v, want %v", got.Files, want)
 	}
 }

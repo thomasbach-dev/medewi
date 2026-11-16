@@ -428,7 +428,7 @@ func TestExtractSplitSessionsTooMany(t *testing.T) {
 	}
 }
 
-// TestExtractSplitSessionsClamped:a window starting before the first raw
+// TestExtractSplitSessionsClamped: a window starting before the first raw
 // log is cut to its start, and stderr says so.
 func TestExtractSplitSessionsClamped(t *testing.T) {
 	noEnv(t)
@@ -560,5 +560,77 @@ func TestExtractMarginWidensWindow(t *testing.T) {
 		if got == "" || got != want {
 			t.Errorf("%s: --margin output differs from the widened window\n got %q\nwant %q", c.name, got, want)
 		}
+	}
+}
+
+// TestExtractFirmwareAfterWindow: a stream was on at connect, so the
+// session's banner came only after the window; the manifest still gets
+// the firmware, from the window's file or from a later file of the
+// session that the window does not select.
+func TestExtractFirmwareAfterWindow(t *testing.T) {
+	noEnv(t)
+	inCET(t)
+	a := winFrom.Add(-time.Minute) // 08:57:30 local
+	reports := func(head ...fixture.Event) []fixture.Event {
+		for i := 1; i < 40; i++ {
+			head = append(head, ev(int64(i)*250, fixture.RX, "{r}\r\n"))
+		}
+		return head
+	}
+	firmware := func(dir string) (string, string) {
+		t.Helper()
+		out := filepath.Join(t.TempDir(), "o")
+		code, _, stderr := runCmd(t, "extract", "--dir", dir, "-s", "2026-11-14 08:57:32", "-u", "2026-11-14 08:57:35", "--out", out)
+		if code != 0 {
+			t.Fatalf("exit %d, stderr %q", code, stderr)
+		}
+		m, err := fixture.LoadManifest(filepath.Join(out, "manifest.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m.FirmwareVersion, stderr
+	}
+
+	// The banner later in the window's own file.
+	dir := t.TempDir()
+	writeRaw(t, dir, a, append(reports(ev(0, fixture.TX, "MCr")), ev(30000, fixture.RX, "$id: leva! (3.2)\r\n"))...)
+	if fw, stderr := firmware(dir); fw != "$id: leva! (3.2)" || strings.Contains(stderr, "firmware unknown") {
+		t.Errorf("same file: firmware %q, stderr %q", fw, stderr)
+	}
+
+	// The banner in the session's third file: the window selects the
+	// first file and its neighbour only.
+	dir = t.TempDir()
+	writeRaw(t, dir, a, reports(ev(0, fixture.TX, "MCr"), ev(5, fixture.Note, "xml: "+xmlName))...)
+	writeRaw(t, dir, a.Add(10*time.Second), reports(ev(0, fixture.Note, "xml: "+xmlName))...)
+	writeRaw(t, dir, a.Add(20*time.Second), ev(0, fixture.Note, "xml: "+xmlName), ev(100, fixture.RX, "$id: leva! (3.2)\r\n"))
+	writeRaw(t, dir, a.Add(30*time.Second), ev(0, fixture.RX, "$id: leva! (3.9)\r\n"))
+	if fw, stderr := firmware(dir); fw != "$id: leva! (3.2)" || strings.Contains(stderr, "firmware unknown") {
+		t.Errorf("later file: firmware %q, stderr %q", fw, stderr)
+	}
+}
+
+// TestExtractSplitNotesNameTheDirectory: with an empty first part
+// skipped, the second part is written to 01, and its notes say so.
+func TestExtractSplitNotesNameTheDirectory(t *testing.T) {
+	noEnv(t)
+	inCET(t)
+	dir := t.TempDir()
+	writeRaw(t, dir, winFrom.Add(-time.Minute), ev(0, fixture.RX, "$id: leva! (3.2)\r\n"), ev(100, fixture.RX, "{a}\r\n"))
+	// A new session without a banner (a stream was on) at 08:58:40.
+	writeRaw(t, dir, winFrom.Add(10*time.Second), ev(0, fixture.TX, "MCr"), ev(100, fixture.RX, "{b}\r\n"))
+	out := filepath.Join(t.TempDir(), "o")
+	code, stdout, stderr := runCmd(t, extractArgs(dir, "--split-sessions", "--out", out)...)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	if !strings.Contains(stderr, "part 1 [2026-11-14 08:58:30.000, 2026-11-14 08:58:40.000) +01:00 has no events; skipped") {
+		t.Errorf("stderr = %q, want part 1 skipped", stderr)
+	}
+	if !strings.Contains(stderr, "levalog: 01 (window part 2): firmware unknown") || strings.Contains(stderr, "levalog: part 2:") {
+		t.Errorf("stderr = %q, want the note labelled with its directory 01", stderr)
+	}
+	if !strings.Contains(stdout, filepath.Join(out, "01", "log.jsonl")) || strings.Contains(stdout, filepath.Join(out, "02")) {
+		t.Errorf("stdout = %q, want 01 only", stdout)
 	}
 }

@@ -265,7 +265,7 @@ kind: capture
 start: 2026-11-02 06:46:33.916
 duration: 3.5
 firmware (in this file): $id: leva! (3.2)
-xml (in this file): a b
+xml (in effect): a b
 notes: two words
 events: report=4 banner=1 notice=1
 modes: ECO=1.235 PID=1.5 standby=0.25
@@ -280,7 +280,7 @@ kind: rawlog
 start:
 duration: 0
 firmware (in this file):
-xml (in this file):
+xml (in effect):
 notes:
 events:
 modes:

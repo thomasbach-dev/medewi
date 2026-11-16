@@ -28,26 +28,77 @@ type Window struct {
 // SessionStart rule. A first source that continues a session (it starts
 // with the xml note) opens a session whose start is not known.
 func Sessions(srcs []Source) []Session {
-	var out []Session
-	for _, src := range srcs {
-		start := SessionStart(src)
-		if start || len(out) == 0 {
-			out = append(out, Session{Start: src.Start, StartKnown: start})
-		}
-		s := &out[len(out)-1]
-		s.Files = append(s.Files, filepath.Base(src.Path))
+	var b SessionBuilder
+	for i, src := range srcs {
+		b.Source(src.Info(i))
 		for _, ev := range src.Events {
 			if ev.Dir == fixture.RX {
-				if b, ok := lastBanner(ev.Data); ok {
-					s.Firmware = b
+				if line, ok := lastBanner(ev.Data); ok {
+					b.banner(line)
 				}
 			}
 			if name, ok := xmlNoteName(ev); ok {
-				s.XML = name
+				b.xml(name)
 			}
 		}
 	}
-	return out
+	return b.Sessions()
+}
+
+// SessionBuilder groups raw logs into sessions one file at a time, as
+// Sessions does, without holding their events: feed it each file's
+// SourceInfo, then that file's decoded entries (Stream.OnSource and
+// OnEntry). The zero value is ready to use.
+type SessionBuilder struct {
+	out    []Session
+	noWall bool // a source without wall time (a capture) was fed
+}
+
+// Source starts the file si; files come in Start order.
+func (b *SessionBuilder) Source(si SourceInfo) {
+	if !si.HasWall {
+		b.noWall = true
+		return
+	}
+	if si.SessionStart || len(b.out) == 0 {
+		b.out = append(b.out, Session{Start: si.Start, StartKnown: si.SessionStart})
+	}
+	s := &b.out[len(b.out)-1]
+	s.Files = append(s.Files, filepath.Base(si.Path))
+}
+
+// Entry takes a decoded entry of the current file: a banner sets the
+// session's firmware, an xml note its XML.
+func (b *SessionBuilder) Entry(e *Entry) {
+	switch e.Kind {
+	case KindBanner:
+		b.banner(string(e.Raw))
+	case KindNote:
+		if name, ok := strings.CutPrefix(string(e.Raw), rawlog.XMLNotePrefix); ok {
+			b.xml(name)
+		}
+	}
+}
+
+func (b *SessionBuilder) banner(line string) {
+	if len(b.out) > 0 && !b.noWall {
+		b.out[len(b.out)-1].Firmware = line
+	}
+}
+
+func (b *SessionBuilder) xml(name string) {
+	if len(b.out) > 0 && !b.noWall {
+		b.out[len(b.out)-1].XML = name
+	}
+}
+
+// Sessions returns the sessions so far; nil once a source without wall
+// time was fed, as such an input has no sessions.
+func (b *SessionBuilder) Sessions() []Session {
+	if b.noWall {
+		return nil
+	}
+	return b.out
 }
 
 // xmlNoteName returns the name of an "xml: " note event.
@@ -59,7 +110,8 @@ func xmlNoteName(ev fixture.Event) (string, bool) {
 }
 
 // SplitWindow returns the parts of [since, until) per session, cut at each
-// session's Start, in order. The first part starts no earlier than the
+// session's Start, in order; ss must be sorted by Start, as Sessions and
+// SessionBuilder return them. The first part starts no earlier than the
 // first session's Start. Empty parts are dropped.
 func SplitWindow(ss []Session, since, until time.Time) []Window {
 	var out []Window

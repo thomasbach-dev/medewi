@@ -113,12 +113,46 @@ func TestHelpSummarySessions(t *testing.T) {
 	}
 }
 
+// TestHelpParagraphWidth: the paragraphs after each synopsis keep to the
+// paragraph width.
+func TestHelpParagraphWidth(t *testing.T) {
+	for _, h := range subHelps {
+		_, body, _ := strings.Cut(h.text, "\n\n")
+		for _, l := range strings.Split(body, "\n") {
+			if len(l) > 80 {
+				t.Errorf("%s help: %d chars: %q", h.name, len(l), l)
+			}
+		}
+	}
+}
+
+// TestHelpExtractSynopsis: the synopsis shows that one bound is enough.
+func TestHelpExtractSynopsis(t *testing.T) {
+	noEnv(t)
+	_, _, errs := runCmd(t, "extract", "--help")
+	if !strings.HasPrefix(errs, "usage: levalog extract (-s T [-u T] | -u T | --run N) ") {
+		t.Errorf("extract synopsis:\n%s", errs)
+	}
+}
+
+// TestHelpSummaryInputDiffers: summary help says it reads only the
+// window's files, unlike extract.
+func TestHelpSummaryInputDiffers(t *testing.T) {
+	noEnv(t)
+	_, _, errs := runCmd(t, "summary", "--help")
+	if !strings.Contains(strings.Join(strings.Fields(errs), " "),
+		"summary reads only the files of the window; extract reads back to the session's first file") {
+		t.Errorf("summary --help lacks the input difference:\n%s", errs)
+	}
+}
+
 // TestHelpExtractMargin: extract help shows --margin with -s/-u too.
 func TestHelpExtractMargin(t *testing.T) {
 	noEnv(t)
 	_, _, errs := runCmd(t, "extract", "--help")
+	flat := strings.Join(strings.Fields(errs), " ") // paragraphs rewrap
 	for _, w := range []string{"-s 09:00 -u 09:05 --margin 30s", "--margin widens the -s/-u window, or the run window, on both sides"} {
-		if !strings.Contains(errs, w) {
+		if !strings.Contains(flat, w) {
 			t.Errorf("extract --help lacks %q", w)
 		}
 	}

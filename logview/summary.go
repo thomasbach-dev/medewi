@@ -293,6 +293,7 @@ func (p SessionPart) text(loc *time.Location) string {
 	} else {
 		b.WriteString(p.Until.In(loc).Format(wallLayout) + ")")
 	}
+	b.WriteString(" " + p.Since.In(loc).Format("-07:00"))
 	return b.String()
 }
 
@@ -401,10 +402,14 @@ func WriteSummariesSessions(w io.Writer, f Format, ss []Summary, sessions []Sess
 }
 
 // textLabel is the label of key in the text form: firmware and xml say
-// they describe the file (or window), not the session.
+// they describe the file (or window), not the session. The xml is the one
+// in effect, possibly carried over from an earlier file or session.
 func textLabel(key string) string {
-	if key == "firmware" || key == "xml" {
+	switch key {
+	case "firmware":
 		return key + " (in this file)"
+	case "xml":
+		return key + " (in effect)"
 	}
 	return key
 }

@@ -38,6 +38,30 @@ func TestSessions(t *testing.T) {
 	}
 }
 
+// TestSessionBuilder: fed one file at a time (its SourceInfo, then its
+// decoded entries), the builder groups as Sessions does.
+func TestSessionBuilder(t *testing.T) {
+	var b SessionBuilder
+	for i, src := range sessSrcs() {
+		b.Source(src.Info(i))
+		if _, err := DecodeEach(src, Options{}, func(e *Entry) error { b.Entry(e); return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, want := b.Sessions(), Sessions(sessSrcs()); !reflect.DeepEqual(got, want) {
+		t.Errorf("builder =\n%+v\nSessions =\n%+v", got, want)
+	}
+	var none SessionBuilder
+	if none.Sessions() != nil {
+		t.Error("empty builder: Sessions != nil")
+	}
+	// A capture has no wall time: no sessions at all.
+	b.Source(SourceInfo{Index: 5, Path: "c/log.jsonl"})
+	if got := b.Sessions(); got != nil {
+		t.Errorf("with a capture: %+v, want nil", got)
+	}
+}
+
 func TestSplitWindow(t *testing.T) {
 	ss := Sessions(sessSrcs())
 	h := func(n int) time.Time { return sessT0.Add(time.Duration(n) * time.Hour) }

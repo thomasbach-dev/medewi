@@ -137,8 +137,9 @@ events text: T WALL DIR EVENT, then RUN RUN_T with --run/--run-kind, then
 src=, src_end=, xml= when --fields names them, then report fields as
 key=value (pump and mode first) or the line's text. Comment lines: "# PATH"
 when the source changes, followed by "# notes: ..." for a capture with
-manifest notes (one comment line per line of notes), and "# xml: NAME" when the XML changes. --fields selects
-the data columns; csv and jsonl always start with t wall src run run_t
+manifest notes (one comment line per line of notes), and "# xml: NAME"
+when the XML changes. --fields selects the data columns; csv and jsonl
+always start with t wall src run run_t
 (run and run_t empty or null outside a run window), naming them in
 --fields does not repeat them. jsonl: one object per event, always with
 event and glued too; csv: reports only, with a header row.
@@ -177,7 +178,10 @@ raw-log session overlapping the window, with its start (local, with zone;
 "starts before" when its first file is not in the input), its first file,
 firmware, XML and the part of the window it covers. jsonl carries the
 same as a "sessions" array on every record (start and first_file null
-when the first file is not in the input; times UTC); csv has no sessions.`,
+when the first file is not in the input; times UTC); csv has no sessions.
+summary reads only the files of the window; extract reads back to the
+session's first file, so it can know a firmware that summary shows as
+unknown.`,
 		examples: []string{
 			"  levalog summary captures/                                      # each capture",
 		},
@@ -185,26 +189,30 @@ when the first file is not in the input; times UTC); csv has no sessions.`,
 	{
 		name:    "extract",
 		rawOnly: true,
-		text: `usage: levalog extract (-s T -u T | --run N) [--margin SPAN] --out DIR|- [--scenario NAME]
-       [--notes TEXT] [--split-sessions] [FILE|DIR ...]
+		text: `usage: levalog extract (-s T [-u T] | -u T | --run N) [--margin SPAN] --out DIR|-
+       [--scenario NAME] [--notes TEXT] [--split-sessions] [FILE|DIR ...]
 
 extract reads raw logs only and keeps every event in the window verbatim
 (the first and last rx bytes cut to whole lines, t rebased to 0, the
-session's xml note first); with --run N the window is that run's, as
-events --run N --margin SPAN prints it; --margin widens the -s/-u window, or the run window, on both sides. The window must lie in one raw-log
-session: at a reconnect or restart it exits 1 naming every boundary and
-the -s/-u of each part (tagged "# no events" or "# overlapping sessions"), or with
+session's xml note first); one bound is enough, the other end stays open.
+With --run N the window is that run's, as events --run N --margin SPAN
+prints it; --margin widens the -s/-u window, or the run window, on both
+sides. The window must lie in one raw-log session: at a reconnect or
+restart it exits 1 naming every boundary and the -s/-u of each part
+(tagged "# no events" or "# overlapping sessions"), or with
 --split-sessions writes one capture per part into DIR/01, DIR/02, ... (a
-part without events is skipped; at most 99 parts). It reads back to the
-session's first file in the directory for the firmware banner. --out DIR
-must not exist or be empty; the manifest gets machine_addr
-machine.example:23, the XML's sha256 when --xml names it, and the
-provenance in its notes. Each capture written prints as its log.jsonl
-with its event counts (reports, frames, notes, commands, other rx; they
-sum to the total) and its manifest.json. --out - prints the lines log.jsonl would
-hold, and no manifest: JSON objects whose data is base64 (the fixture
-format); decode with jq -r '.data | @base64d', or read them back from
-stdin: extract ... --out - | levalog events --event frame -`,
+part without events is skipped; at most 99 parts; notes name the
+directory and the window part, as in "01 (window part 2): ..."). For the
+firmware banner it reads back to the session's first file in the
+directory, and on past the window while the session has shown none (a
+stream was on since connect). --out DIR must not exist or be empty; the
+manifest gets machine_addr machine.example:23, the XML's sha256 when --xml
+names it, and the provenance in its notes. Each capture written prints as
+its log.jsonl with its event counts (reports, frames, notes, commands,
+other rx; they sum to the total) and its manifest.json. --out - prints the
+lines log.jsonl would hold, and no manifest: JSON objects whose data is
+base64 (the fixture format); decode with jq -r '.data | @base64d', or read
+them back from stdin: extract ... --out - | levalog events --event frame -`,
 		examples: []string{
 			"  levalog extract -s 09:00 -u 09:05 --margin 30s --out backflush --scenario backflush  # a fixture, 30 s wider",
 			"  levalog extract -s today --run 3 --margin 10s --out - | levalog events --event frame -  # its LCD frames",
