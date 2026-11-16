@@ -22,6 +22,16 @@ func withNotice(lines [][]byte, n int) [][]byte {
 	return append(out, lines[n:]...)
 }
 
+// withFrames puts readyFrame after each line. Like the machine, the sim
+// emits the frames only after MC@ and the reports only after MCr.
+func withFrames(lines [][]byte) [][]byte {
+	out := make([][]byte, 0, 2*len(lines))
+	for _, l := range lines {
+		out = append(out, l, []byte(readyFrame))
+	}
+	return out
+}
+
 func TestMachineReadyFromNotice(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "events")
 	cfg := simConfig(withNotice(idleLines(40), 5))
@@ -52,8 +62,7 @@ func TestMachineReadyClearedByEco(t *testing.T) {
 }
 
 func TestDisplaySampling(t *testing.T) {
-	cfg := simConfig(idleLines(40))
-	cfg.Responses["MC@"] = []string{readyFrame}
+	cfg := simConfig(withFrames(idleLines(40)))
 	s := startSim(t, cfg)
 	dcfg := daemonConfig(s.Addr().String(), openStore(t))
 	dcfg.DisplayEvery, dcfg.DisplayFor = 100*time.Millisecond, 30*time.Millisecond
@@ -71,13 +80,30 @@ func TestDisplaySampling(t *testing.T) {
 	assertOnlyAllowed(t, s, "MC@")
 }
 
+// A raw-log fixture holds frames only where the recording client sampled.
+// Here the one frame is recorded before medewid's first sample, while the
+// replay emits reports, and the Once replay (15 s) outlasts the test, so
+// it passes only then; the sim holds it as the current LCD, as the
+// machine holds its display, so a sample out of phase still shows it.
+func TestDisplaySampleOutOfPhaseWithRecording(t *testing.T) {
+	cfg := simConfig(append([][]byte{[]byte(readyFrame)}, idleLines(600)...))
+	cfg.Once = true
+	s := startSim(t, cfg)
+	dcfg := daemonConfig(s.Addr().String(), openStore(t))
+	dcfg.DisplayEvery, dcfg.DisplayFor = 100*time.Millisecond, 30*time.Millisecond
+	d, _ := runDaemon(t, dcfg)
+	waitFor(t, "the held frame in the status", func() bool {
+		ds := d.Status().Display
+		return ds != nil && ds.Rows[1] == "1: 91.0°   READY"
+	})
+}
+
 // The final "MC " must be the last thing sent, also when a sample is in
 // flight at shutdown; otherwise the machine keeps streaming after medewid
 // exits. Samples are made long and frequent to hit that window.
 func TestShutdownStopsAfterSample(t *testing.T) {
 	for range 5 {
-		cfg := simConfig(idleLines(40))
-		cfg.Responses["MC@"] = []string{readyFrame}
+		cfg := simConfig(withFrames(idleLines(40)))
 		s := startSim(t, cfg)
 		dcfg := daemonConfig(s.Addr().String(), openStore(t))
 		dcfg.DisplayEvery, dcfg.DisplayFor = 20*time.Millisecond, 15*time.Millisecond
@@ -94,8 +120,7 @@ func TestShutdownStopsAfterSample(t *testing.T) {
 
 // Sampled frames reach the raw traffic log through the daemon.
 func TestSampledFramesInRawLog(t *testing.T) {
-	cfg := simConfig(idleLines(40))
-	cfg.Responses["MC@"] = []string{readyFrame}
+	cfg := simConfig(withFrames(idleLines(40)))
 	s := startSim(t, cfg)
 	dcfg, rl, dir := rawDaemonConfig(t, s.Addr().String())
 	dcfg.DisplayEvery, dcfg.DisplayFor = 100*time.Millisecond, 30*time.Millisecond
@@ -111,8 +136,7 @@ func TestSampledFramesInRawLog(t *testing.T) {
 }
 
 func TestNoSamplingByDefault(t *testing.T) {
-	cfg := simConfig(idleLines(20))
-	cfg.Responses["MC@"] = []string{readyFrame}
+	cfg := simConfig(withFrames(idleLines(20)))
 	s := startSim(t, cfg)
 	d, stop := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
 	waitActive(t, d)

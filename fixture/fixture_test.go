@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -84,6 +85,85 @@ func TestManifestRoundTrip(t *testing.T) {
 	for _, k := range wantKeys {
 		if _, ok := keys[k]; !ok {
 			t.Errorf("manifest missing key %q", k)
+		}
+	}
+}
+
+func TestWriteCaptureWritesBoth(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "sub", "cap")
+	events := []Event{
+		{T: 0, Dir: TX, Data: []byte("MCr\r\n")},
+		{T: 250, Dir: RX, Data: []byte{0x00, 0x7b, 0xff}},
+	}
+	m := Manifest{
+		Scenario:    "s",
+		MachineAddr: "machine.example:23",
+		Notes:       "n",
+		Recorded:    time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC),
+	}
+	if err := WriteCapture(dir, "log.jsonl", "manifest.json", events, m); err != nil {
+		t.Fatalf("WriteCapture: %v", err)
+	}
+	f, err := os.Open(filepath.Join(dir, "log.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	got, err := ReadLog(f)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if !reflect.DeepEqual(got, events) {
+		t.Errorf("events = %v, want %v", got, events)
+	}
+	gm, err := LoadManifest(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	if !gm.Recorded.Equal(m.Recorded) {
+		t.Errorf("recorded = %v, want %v", gm.Recorded, m.Recorded)
+	}
+	gm.Recorded, m.Recorded = time.Time{}, time.Time{}
+	if gm != m {
+		t.Errorf("manifest = %+v, want %+v", gm, m)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Errorf("dir has %d entries, want exactly the two files", len(entries))
+	}
+}
+
+func TestWriteCaptureKeepsOldOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "log.jsonl")
+	if err := os.WriteFile(logPath, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A directory in the manifest's temp slot makes the manifest write fail.
+	if err := os.Mkdir(filepath.Join(dir, ".manifest.json.tmp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := WriteCapture(dir, "log.jsonl", "manifest.json",
+		[]Event{{T: 0, Dir: RX, Data: []byte("x")}}, Manifest{})
+	if err == nil {
+		t.Fatal("WriteCapture succeeded, want error")
+	}
+	got, rerr := os.ReadFile(logPath)
+	if rerr != nil || string(got) != "old" {
+		t.Errorf("log.jsonl = %q, %v; want untouched", got, rerr)
+	}
+	// No temp file is left behind (it would make the next extract refuse
+	// a non-empty --out).
+	entries, rerr := os.ReadDir(dir)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("%s left behind", e.Name())
 		}
 	}
 }

@@ -176,6 +176,24 @@
             ${pkgs.coreutils}/bin/rmdir "$tmp"
             exec "$cache/levalog" "$@"
           '';
+          # The per-commit gate: the lint, fmt, vet, test and tidy checks'
+          # commands with the same tools, run in the working tree with warm
+          # caches (seconds instead of minutes). `nix flake check` adds the
+          # package builds, vendorHash, the VM test and the module eval.
+          gate = pkgs.writeShellScriptBin "gate" ''
+            set -e
+            # The sandbox and CI run in UTC; a test that only passes in the
+            # host's zone must fail here too.
+            export TZ=UTC
+            repo=$(${pkgs.git}/bin/git rev-parse --show-toplevel)
+            cd "$repo"
+            set -x
+            golangci-lint run
+            golangci-lint fmt --diff
+            go vet ./...
+            go test -race ./...
+            go mod tidy -diff
+          '';
         in
         pkgs.mkShell {
           packages = with pkgs; [
@@ -185,6 +203,7 @@
             gofumpt
             govulncheck
             levalogDev
+            gate
           ];
           shellHook = ''
             export MEDEWI_REPO=$PWD

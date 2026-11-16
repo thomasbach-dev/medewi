@@ -30,6 +30,10 @@ type Selection struct {
 	Margin time.Duration
 	// Events keeps only entries of these kinds; empty keeps all.
 	Events []Kind
+	// Match keeps only entries whose text contains it, ignoring case: the
+	// raw bytes, and for a display frame also its four rows joined with
+	// "|". Empty keeps all.
+	Match string
 	// SkipStandby drops reports whose pump marker is '?'.
 	SkipStandby bool
 	// Changes drops a report whose ChangeKeys values equal those of the
@@ -62,6 +66,7 @@ func timeline(hasWall bool, source int) int {
 // count.
 type Selector struct {
 	sel   Selection
+	match string // sel.Match, lower-cased
 	byRun bool
 	wins  map[int][]window // by timeline, in run order
 
@@ -80,6 +85,7 @@ const (
 	filterWindow = iota
 	filterRuns
 	filterEvents
+	filterMatch
 	filterStandby
 	filterChanges
 	nFilters
@@ -96,7 +102,7 @@ type Drop struct {
 func (s *Selector) Seen() int { return s.seen }
 
 // Drops lists what each active filter dropped, in the order they apply:
-// window, run selection, event kinds, standby, changes.
+// window, run selection, event kinds, match, standby, changes.
 func (s *Selector) Drops() []Drop {
 	sel := &s.sel
 	var out []Drop
@@ -134,6 +140,7 @@ func (s *Selector) Drops() []Drop {
 		ks[i] = string(k)
 	}
 	add(filterEvents, len(sel.Events) > 0, "--event "+strings.Join(ks, ","))
+	add(filterMatch, sel.Match != "", "--match "+sel.Match)
 	add(filterStandby, sel.SkipStandby, "--skip-standby")
 	add(filterChanges, sel.Changes, "--changes")
 	return out
@@ -144,6 +151,7 @@ func (s *Selector) Drops() []Drop {
 func NewSelector(runs []Run, sel Selection) *Selector {
 	s := &Selector{
 		sel:   sel,
+		match: strings.ToLower(sel.Match),
 		byRun: len(sel.Runs) > 0 || len(sel.RunKinds) > 0,
 		wins:  map[int][]window{},
 		cache: map[*leva.RecordSpec]*specKeys{},
@@ -234,6 +242,10 @@ func (s *Selector) keep(e *Entry, run *Run) bool {
 		s.drops[filterEvents]++
 		return false
 	}
+	if s.match != "" && !matches(e, s.match) {
+		s.drops[filterMatch]++
+		return false
+	}
 	if e.Kind == KindReport {
 		if sel.SkipStandby && len(e.Raw) > 2 && e.Raw[2] == '?' {
 			s.drops[filterStandby]++
@@ -314,4 +326,16 @@ func (sk *specKeys) sig(b []byte, e *Entry) []byte {
 		b = append(b, 0)
 	}
 	return b
+}
+
+// matches says whether e's raw text, or a frame's rows joined with "|",
+// contains lower (lower-cased), ignoring case.
+func matches(e *Entry, lower string) bool {
+	if strings.Contains(strings.ToLower(string(e.Raw)), lower) {
+		return true
+	}
+	if e.Frame != nil {
+		return strings.Contains(strings.ToLower(strings.Join(e.Frame.Rows[:], "|")), lower)
+	}
+	return false
 }

@@ -91,6 +91,38 @@ func TestWriteBucketNoRunCols(t *testing.T) {
 	}
 }
 
+// TestTextNotesMultiline: capture notes with newlines stay inside "#"
+// comment lines in both text writers.
+func TestTextNotesMultiline(t *testing.T) {
+	src := SourceInfo{Path: "c/log.jsonl", Notes: "first\nsecond\nthird"}
+	want := "# c/log.jsonl\n# notes: first\n#        second\n#        third\n"
+
+	var b bytes.Buffer
+	w := NewWriter(&b, FormatText, WriterOptions{})
+	w.Source(src)
+	if err := w.Write(Row{Entry: &Entry{Path: src.Path, Kind: KindBanner, Raw: []byte("x")}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(b.String(), want) {
+		t.Errorf("events text:\n%s\nwant prefix\n%s", b.String(), want)
+	}
+
+	b.Reset()
+	bw := NewBucketWriter(&b, FormatText, []BucketCol{{Key: "pressure", Agg: Agg{Name: "max"}}}, false, time.UTC)
+	if err := bw.Write(BucketRow{Source: src, Values: []AggValue{{}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := bw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(b.String(), want) {
+		t.Errorf("bucket text:\n%s\nwant prefix\n%s", b.String(), want)
+	}
+}
+
 func TestAggTextCell(t *testing.T) {
 	x, empty, spaced := 1.5, "", "a b"
 	for _, tc := range []struct {

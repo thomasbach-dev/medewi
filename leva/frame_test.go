@@ -2,10 +2,12 @@ package leva
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
-// A real frame (2026-11-05); \x02 and \x05 are custom bar-graph glyphs.
+// A real frame (2026-11-05); \x02 is a bar cell, \x05 the check mark.
 const readyFrame = "<102SOAK 1.0b       1: 91.0\xdf   READY\x02             7% 0.1b\x05  0s   0ml>"
 
 func TestParseFrame(t *testing.T) {
@@ -16,13 +18,13 @@ func TestParseFrame(t *testing.T) {
 	if !f.Backlight || f.Key != '0' || f.Layout != '2' {
 		t.Errorf("header = %v %q %q", f.Backlight, f.Key, f.Layout)
 	}
-	if f.Rows[0] != "SOAK 1.0b       " || f.Rows[1] != "1: 91.0°   READY" || f.Rows[2] != "              7%" {
+	if f.Rows[0] != "SOAK 1.0b       " || f.Rows[1] != "1: 91.0°   READY" || f.Rows[2] != "▋             7%" {
 		t.Errorf("rows = %q", f.Rows)
 	}
 }
 
 func TestParseFrameGlyphs(t *testing.T) {
-	// Custom glyphs (bar graph) are control bytes; they become spaces.
+	// Unknown control bytes become spaces; known ones: TestParseFrameCustomGlyphs.
 	line := "<002SOAK 1.0b       1: 91.0\xdf \x04 91.0\xdf\x01             5% 0.1b\x05  0s   0ml>"
 	if len(line) != 69 {
 		t.Fatalf("test frame is %d bytes", len(line))
@@ -31,8 +33,37 @@ func TestParseFrameGlyphs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.Rows[1] != "1: 91.0°   91.0°" || f.Backlight {
+	if f.Rows[1] != "1: 91.0° – 91.0°" || f.Backlight {
 		t.Errorf("row 1 = %q backlight %v", f.Rows[1], f.Backlight)
+	}
+}
+
+func TestParseFrameCustomGlyphs(t *testing.T) {
+	line := "<002" +
+		"1: 94.1\xdf \x04 94.0\xdf" +
+		" PUMP \x03\x03\x03\x01      " +
+		"\x01             4%" +
+		" 1.8b\x05  0s 233ml" + ">"
+	f, err := ParseFrame([]byte(line))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [4]string{"1: 94.1° – 94.0°", " PUMP ███▍      ", "▍             4%", " 1.8b✓  0s 233ml"}
+	if f.Rows != want {
+		t.Errorf("rows = %q, want %q", f.Rows, want)
+	}
+	for i, r := range f.Rows {
+		if n := utf8.RuneCountInString(r); n != 16 {
+			t.Errorf("row %d has %d runes", i, n)
+		}
+	}
+	other := "<002a\x00b\x06c\x07d         " + strings.Repeat(" ", 48) + ">"
+	g, err := ParseFrame([]byte(other))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Rows[0] != "a b c d         " {
+		t.Errorf("row 0 = %q", g.Rows[0])
 	}
 }
 

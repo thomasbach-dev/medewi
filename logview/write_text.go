@@ -59,6 +59,18 @@ func rawText(b []byte) string {
 	return latin1(b)
 }
 
+// writeNotes writes capture notes as "# notes: " comment lines, one per
+// line of notes, continuation lines aligned under the first.
+func writeNotes(b *strings.Builder, notes string) {
+	for i, l := range strings.Split(strings.TrimRight(notes, "\n"), "\n") {
+		if i == 0 {
+			fmt.Fprintf(b, "# notes: %s\n", l)
+		} else {
+			fmt.Fprintf(b, "#        %s\n", l)
+		}
+	}
+}
+
 // textWriter writes T WALL DIR EVENT [RUN RUN_T], then src, src_end and xml
 // when Fields names them, then the entry's text; reports as key=value. A
 // "# PATH" line precedes a change of source, followed by "# notes: …" for
@@ -81,7 +93,7 @@ func (t *textWriter) Write(r Row) error {
 		fmt.Fprintf(&b, "# %s\n", e.Path)
 		t.path = e.Path
 		if t.src.Path == e.Path && t.src.Notes != "" {
-			fmt.Fprintf(&b, "# notes: %s\n", t.src.Notes)
+			writeNotes(&b, t.src.Notes)
 		}
 	}
 	if e.XML != t.xml {

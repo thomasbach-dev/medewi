@@ -182,11 +182,14 @@ func TestMetricsCountsFailedReconnectAttempts(t *testing.T) {
 	}
 }
 
-// A fragment shows up while the connection that saw it is still up.
+// A fragment shows up while the connection that saw it is still up. The
+// fragment is a cut-off report with the next one glued on: a cut frame
+// would not reach a client in report mode (the sim drops frame pieces
+// there, as the machine sends no frames then).
 func TestMetricsFragmentsLive(t *testing.T) {
-	cut := "<102SOAK 1.0b       1: 91.0\xdf \x04 91.0\xdf\x01             5% 0"
+	cut := line('-', "PID", 93, 93, 0, -1, 0, 0)[:20]
 	ls := idleLines(4)
-	ls = append(ls, append([]byte(cut), line('-', "PID", 93, 93, 0, -1, 0, 0)...))
+	ls = append(ls, append(append([]byte(nil), cut...), line('-', "PID", 93, 93, 0, -1, 0, 0)...))
 	ls = append(ls, line('-', "PID", 77.7, 93, 0, -1, 0, 0))
 	d, reg := metricsDaemon(t, ls)
 	waitSentinel(t, d)

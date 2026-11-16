@@ -242,6 +242,21 @@ func TestFindRunsFixture(t *testing.T) {
 		}
 	})
 
+	// Pins today's behaviour: the backflush program (6 pulses, EMPTY prompt,
+	// 3 rinse pulses) reads as 9 flushes. Issue #13 (program detection)
+	// will change this on purpose.
+	t.Run("backflush", func(t *testing.T) {
+		runs := load(t, "backflush")
+		if len(runs) != 9 {
+			t.Fatalf("runs = %d, want 9: %+v", len(runs), runs)
+		}
+		for i, r := range runs {
+			if r.Kind != RunFlush || r.Truncated {
+				t.Errorf("run %d = %+v, want a complete flush", i, r)
+			}
+		}
+	})
+
 	t.Run("steam-eco", func(t *testing.T) {
 		runs := load(t, "steam-eco")
 		if len(runs) != 1 || runs[0].Kind != RunDraw || runs[0].VolumeML != 144 {

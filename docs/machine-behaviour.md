@@ -14,10 +14,26 @@ capture that teaches something new, and mark hypotheses as such.
   heat output (with a bar); pressure, shot time, volume. During a shot the
   first row becomes the timer and volume, during programs the program name
   (`WARM-UP`, `FLUSH`) and a countdown.
+- Custom characters (HD44780 CGRAM codes in the rows) and how `leva.ParseFrame`
+  shows them (2026-11-15): `0x01` `▍`, `0x02` `▋`, `0x03` `█` are the bar's
+  cell fills (partial, partial, full; the heat bar and the `PUMP` bar);
+  `0x04` is a dash `–` (operator-confirmed for an empty menu shortcut slot;
+  the same code also appears between temperature and setpoint on the main
+  screen, assumed to be the same dash); `0x05` is a check mark `✓` after the
+  pressure on the main screen (look operator-confirmed; meaning unknown). `0xDF` is `°`. Other bytes below `0x20`
+  (`0x00`, `0x06`, `0x07`) are not seen and stay spaces. Rows are 16 runes,
+  no longer 16 bytes.
 - `MCr` and `MC@` replace each other; the switch can cut the current line
   off without its CRLF and glue the next record onto it (report after
   report, frame after frame, report after frame). `leva` splits such lines
   and counts the cut-off part as a fragment.
+- `levasim` replays recorded reports after `MCr` and holds the current
+  LCD: the latest whole recorded frame its timeline has passed (in every
+  mode; before the first, the stream's first frame). After `MC@` it
+  mirrors that LCD at once and then every 100 ms (divided by `--speed`,
+  at least 1 ms), so a client sampling out of phase with the recording
+  still sees the display. As on the machine, the last of `MCr`/`MC@`
+  sent wins.
 
 ## READY
 
@@ -101,8 +117,9 @@ Detection is issue #13; the data model for programs is issue #12.
 
 Observed 2026-11-14 from the raw log, warm machine (boiler 94 °C), blind
 basket in the portafilter, operator marks at start, at the key press and
-at the end. About 4:40 min from selecting the program to the return to
-the menu. Mode stays `PID`, setpoint 94, `Pressure SP` `?????`
+at the end. Fixture: `testdata/fixtures/backflush` (cut with `levalog
+extract`; the LCD frames show the phases and the progress bar). About
+4:40 min from selecting the program to the return to the menu. Mode stays `PID`, setpoint 94, `Pressure SP` `?????`
 throughout; only the LCD (third menu row, in place of `Backflush`) and
 the pump marker show the program.
 

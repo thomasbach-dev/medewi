@@ -10,7 +10,8 @@ machine simulator (`sim/`, `cmd/levasim`), conformance suite
 (`conformance/`), capture tooling (`cmd/levacap`). Phase 2 (implemented):
 the always-on daemon `medewid` (`daemon/`, `watch/`, `brew/`, `store/`, `rawlog/`:
 exporter, brew DB, power control, release/reclaim of the machine, ops panel, raw traffic log), the client `cmd/medewictl`,
-the log decoder `cmd/levalog` (`logview/`, `systime/`)
+the log decoder `cmd/levalog` (`logview/`, `systime/`; its `extract`
+turns a raw-log window into a fixture)
 and the NixOS module `nix/module.nix`; recipe execution is still to come.
 Start with
 [docs/architecture.md](docs/architecture.md); decisions live in
@@ -32,10 +33,19 @@ Every command follows [docs/cli-conventions.md](docs/cli-conventions.md):
 pflag `--long` options, `--since/-s`/`--until/-u`, `systemd.time(7)` forms
 via `systime`, env vars as defaults, exit codes 0/1/2.
 
-The full gate — run it before EVERY commit (CI runs the same):
+The fast gate — run it before EVERY commit:
 
 ```sh
-nix flake check -L     # builds + lint, fmt, vet, test -race, tidy; each a cached check
+nix develop --command gate   # golangci-lint run + fmt --diff, go vet, go test -race, go mod tidy -diff
+```
+
+It runs the flake checks' commands with the same tools in the working
+tree, on warm caches. The full gate — run it before every push, and
+before committing changes to `go.mod`/`go.sum`, `flake.nix` or `nix/`
+(CI runs the same):
+
+```sh
+nix flake check -L     # builds + lint, fmt, vet, test -race, tidy, VM test, module eval
 nix build .#checks.x86_64-linux.test -L   # one check
 ```
 
@@ -77,7 +87,7 @@ local, gitignored `.envrc` — see the README's Configuration section.
 - Personas are "barista" and "regular" — no real personal names.
 - Pure Go, no cgo (protects cross-compile and gomobile paths).
 - TDD (failing test first), conventional commits, one feature branch + PR
-  per unit of work; CI runs the same gate as above.
+  per unit of work; CI runs the full gate.
 
 ## Architecture in one breath
 
@@ -90,7 +100,9 @@ machine's semantics (global reporting toggle, idle-banner heartbeat that
 pauses during reporting, whole-message client queues). `conformance/`
 asserts the protocol model against sim (CI) or machine (gated) — it is also
 the firmware-flash gate. `cmd/levacap` records fixtures atomically;
-`cmd/levasim` serves them.
+`cmd/levasim` serves them, replaying reports after `MCr` and holding the
+current LCD (latest recorded frame passed), mirrored every 100 ms after
+`MC@` (the last one sent wins).
 
 ## Empirical machine facts (from real captures; keep code consistent)
 

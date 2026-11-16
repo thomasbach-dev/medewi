@@ -233,3 +233,36 @@ func TestOpenLines(t *testing.T) {
 		t.Errorf("raw Lines = %v, err %v", src.Lines, err)
 	}
 }
+
+// ReadCapture decodes a log.jsonl held in memory, plain or gzip, as a
+// capture without manifest or wall time; a Stream decodes Stdin for
+// StdinPath.
+func TestReadCaptureAndStreamStdin(t *testing.T) {
+	var plain bytes.Buffer
+	evs := []fixture.Event{{T: 0, Dir: fixture.Note, Data: []byte("hi")}, {T: 5, Dir: fixture.RX, Data: []byte("[READY]\r\n")}}
+	if err := fixture.WriteLog(&plain, evs); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string][]byte{"plain": plain.Bytes(), "gzip": gzipEvents(t, 2)} {
+		src, err := ReadCapture(StdinPath, data)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if src.Path != "-" || src.HasWall || src.Notes != "" || len(src.Events) != 2 || !reflect.DeepEqual(src.Lines, []int{1, 2}) {
+			t.Errorf("%s: %+v", name, src)
+		}
+	}
+	var got []SourceInfo
+	entries := 0
+	s := Stream{
+		Stdin:    plain.Bytes(),
+		OnSource: func(si SourceInfo) error { got = append(got, si); return nil },
+		OnEntry:  func(*Entry) error { entries++; return nil },
+	}
+	if err := s.Add(StdinPath); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Path != "-" || got[0].Events != 2 || entries != 2 {
+		t.Errorf("sources %+v, %d entries", got, entries)
+	}
+}

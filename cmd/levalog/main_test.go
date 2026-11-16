@@ -73,7 +73,7 @@ func rawDir(t *testing.T) string {
 func runCmd(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var out, errb bytes.Buffer
-	code = run(args, &out, &errb)
+	code = run(args, strings.NewReader(""), &out, &errb)
 	return code, out.String(), errb.String()
 }
 
@@ -258,7 +258,7 @@ func TestEventsUsageErrors(t *testing.T) {
 		{"bad run-kind", []string{"--xml", synth, "events", "--run-kind", "espresso"}, "--run-kind"},
 		{"bad kind", []string{"--xml", synth, "runs", "--kind", "espresso"}, "--kind"},
 		{"bad margin", []string{"--xml", synth, "events", "--margin", "-5s"}, "--margin"},
-		{"margin without runs", []string{"--xml", synth, "events", "--margin", "2s"}, "--margin needs --run or --run-kind"},
+		{"margin without window or runs", []string{"--xml", synth, "events", "--margin", "2s"}, "--margin needs"},
 		{"hide-masked with jsonl", []string{"--xml", synth, "events", "--format", "jsonl", "--hide-masked"}, "--hide-masked"},
 		{"csv with other events", []string{"--xml", synth, "events", "--format", "csv", "--event", "report,note"}, "--event"},
 	}
@@ -710,14 +710,24 @@ func TestEventsXMLDirTwoNoName(t *testing.T) {
 
 func TestHelpExplainsColumns(t *testing.T) {
 	noEnv(t)
-	for _, args := range [][]string{{"--help"}, {"events", "--help"}, {"runs", "--help"}, {"fields", "--help"}} {
-		code, _, errs := runCmd(t, args...)
+	all := []string{"src", "run_t", "medewi adds", "fields", "runs", "events", "UTC", "directory of NAME.xml", "T WALL DIR EVENT", "# xml: NAME", "PEAK_BAR", "do not change the exit code", "the -s/-u window instead", "--every 1d starts at 00:00 UTC", "negative t"}
+	// levalog --help has it all; each subcommand's help its own part.
+	for _, c := range []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"--help"}, all},
+		{[]string{"events", "--help"}, []string{"src", "run_t", "medewi adds", "UTC", "T WALL DIR EVENT", "# xml: NAME", "the -s/-u window instead", "--every 1d starts at 00:00 UTC", "negative t"}},
+		{[]string{"runs", "--help"}, []string{"PEAK_BAR", "run_t", "src", "events --run N"}},
+		{[]string{"fields", "--help"}, []string{"fields", "key, name, unit"}},
+	} {
+		code, _, errs := runCmd(t, c.args...)
 		if code != 0 {
-			t.Errorf("%q: exit %d", args, code)
+			t.Errorf("%q: exit %d", c.args, code)
 		}
-		for _, w := range []string{"src", "run_t", "medewi adds", "fields", "runs", "events", "UTC", "directory of NAME.xml", "T WALL DIR EVENT", "# xml: NAME", "PEAK_BAR", "do not change the exit code", "needs --run or --run-kind", "--every 1d starts at 00:00 UTC", "negative t"} {
+		for _, w := range c.want {
 			if !strings.Contains(errs, w) {
-				t.Errorf("%q: help does not mention %q", args, w)
+				t.Errorf("%q: help does not mention %q", c.args, w)
 			}
 		}
 	}
@@ -804,7 +814,7 @@ func peakHeap(t *testing.T, args ...string) uint64 {
 		}
 	}()
 	var errb bytes.Buffer
-	code := run(args, io.Discard, &errb)
+	code := run(args, strings.NewReader(""), io.Discard, &errb)
 	close(done)
 	p := <-sampled
 	if code != 0 {
@@ -1260,7 +1270,7 @@ func TestSummaryCmd(t *testing.T) {
 	for _, w := range []string{
 		"src: " + filepath.Join(capture, "log.jsonl") + "\n",
 		"kind: capture\n",
-		"firmware: $id: leva! (3.2)\n",
+		"firmware (in this file): $id: leva! (3.2)\n",
 		"events: report=36 banner=1\n",
 		"modes: PID=8.75\n",
 		"runs: shot=1 flush=0 draw=0 (1)\n",
@@ -1556,5 +1566,41 @@ func TestSplitTimeHint(t *testing.T) {
 	code, _, stderr := runCmd(t, "--xml", synth, "summary", "no-such-file")
 	if code != 1 || strings.Contains(stderr, "looks like") || !strings.Contains(stderr, "no-such-file") {
 		t.Errorf("plain missing file: code %d, stderr %q", code, stderr)
+	}
+}
+
+func TestEventsMarginWidensWindow(t *testing.T) {
+	noEnv(t)
+	dir := rawDir(t)
+	cases := []struct {
+		name      string
+		got, want []string
+	}{
+		{
+			"both",
+			[]string{"-s", "2026-11-10 10:00:15 UTC", "-u", "2026-11-10 10:30:05 UTC", "--margin", "10s"},
+			[]string{"-s", "2026-11-10 10:00:05 UTC", "-u", "2026-11-10 10:30:15 UTC"},
+		},
+		{"since only", []string{"-s", "2026-11-10 10:00:15 UTC", "--margin", "10s"}, []string{"-s", "2026-11-10 10:00:05 UTC"}},
+		{"until only", []string{"-u", "2026-11-10 10:30:05 UTC", "--margin", "10s"}, []string{"-u", "2026-11-10 10:30:15 UTC"}},
+		{
+			"every",
+			[]string{"-s", "2026-11-10 10:00:15 UTC", "-u", "2026-11-10 10:30:05 UTC", "--margin", "10s", "--every", "1m", "--fields", "pressure"},
+			[]string{"-s", "2026-11-10 10:00:05 UTC", "-u", "2026-11-10 10:30:15 UTC", "--every", "1m", "--fields", "pressure"},
+		},
+	}
+	for _, c := range cases {
+		run1 := func(w []string) string {
+			args := append([]string{"--xml", synth, "events", "--dir", dir}, w...)
+			code, out, errs := runCmd(t, args...)
+			if code != 0 {
+				t.Fatalf("%s %v: exit %d, stderr %q", c.name, w, code, errs)
+			}
+			return out
+		}
+		got, want := run1(c.got), run1(c.want)
+		if got == "" || got != want {
+			t.Errorf("%s: --margin output differs from the widened window\n got %q\nwant %q", c.name, got, want)
+		}
 	}
 }

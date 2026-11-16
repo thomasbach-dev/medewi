@@ -380,10 +380,12 @@ func TestCaptureDisplayRecordsFramesAndMarks(t *testing.T) {
 	cmdWait = 50 * time.Millisecond
 	t.Cleanup(func() { cmdWait = old })
 	frame := "<002SOAK 1.0b       1: 91.0\xdf     PID|             4% 0.0b\x05  0s   0ml>"
-	s := startSim(t, sim.Config{Responses: map[string][]string{
-		"MC?": {"XML=synthetic"},
-		"MC@": {frame},
-	}})
+	// The frame is in the stream: like the machine, the sim emits it only
+	// after MC@ (startSim appends the reports, emitted only after MCr).
+	s := startSim(t, sim.Config{
+		Responses: map[string][]string{"MC?": {"XML=synthetic"}},
+		Stream:    []fixture.Event{{T: 0, Dir: fixture.RX, Data: []byte(frame + "\r\n")}},
+	})
 	dir := t.TempDir()
 	var out, errb bytes.Buffer
 	// One mark; a mistyped line must not stop; an empty line does.

@@ -8,9 +8,26 @@ import (
 	"github.com/thomasbach-dev/medewi/logview"
 )
 
+// sessionParts are the parts of [since, until) that sessions cover, an
+// open end (zero until) kept open.
+func sessionParts(sessions []logview.Session, since, until time.Time) []logview.SessionPart {
+	if until.IsZero() {
+		until = openEndAt
+	}
+	var out []logview.SessionPart
+	for _, w := range logview.SplitWindow(sessions, since, until) {
+		p := logview.SessionPart{Session: sessions[w.Session], Since: w.Since, Until: w.Until}
+		if until.Equal(openEndAt) && w.Until.Equal(openEndAt) {
+			p.Until = time.Time{}
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 // summaryCmd prints what each source of the input holds.
-func summaryCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
-	var in input
+func summaryCmd(args []string, xmlPath string, stdin io.Reader, stdout, stderr io.Writer) int {
+	in := input{stdin: stdin}
 	fs := subFlags("summary", stderr)
 	in.register(fs)
 	if code, done := parse(fs, args, stderr); done {
@@ -34,23 +51,28 @@ func summaryCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	if cat != nil {
 		var err error
 		keepAll := func(logview.Run) bool { return true }
-		if sc, err = scan(paths, in.dir, true, in.fromDir(), cat, false, in.since.T, in.until.T, keepAll); err != nil {
+		if sc, err = scan(paths, in.stdinData, in.dir, true, in.fromDir(), cat, false, in.since.T, in.until.T, keepAll); err != nil {
 			return fail(stderr, 1, "%v", err)
 		}
 	}
 	ss := logview.NewSummaryScanner()
 	ss.Since, ss.Until = in.since.T, in.until.T
+	// The sessions are gathered in the same pass, one file at a time:
+	// captures have no wall time, hence no sessions.
+	var sb logview.SessionBuilder
 	s := logview.Stream{
 		Catalog:  cat,
-		OnSource: func(si logview.SourceInfo) error { ss.Source(si); return nil },
-		OnEntry:  func(e *logview.Entry) error { ss.Entry(e); return nil },
+		Stdin:    in.stdinData,
+		OnSource: func(si logview.SourceInfo) error { ss.Source(si); sb.Source(si); return nil },
+		OnEntry:  func(e *logview.Entry) error { ss.Entry(e); sb.Entry(e); return nil },
 	}
 	if err := s.Add(sc.paths...); err != nil {
 		return fail(stderr, 1, "%v", err)
 	}
 	sums := ss.Summaries(sc.runs)
+	sessions := sessionParts(sb.Sessions(), in.since.T, in.until.T)
 	w := bufio.NewWriter(stdout)
-	err := logview.WriteSummaries(w, in.f, sums, time.Local)
+	err := logview.WriteSummariesSessions(w, in.f, sums, sessions, time.Local)
 	if ferr := w.Flush(); err == nil {
 		err = ferr
 	}

@@ -53,6 +53,7 @@ func parseRuns(s string) (runSet, error) {
 // eventsOpts are the flags of events beyond the input.
 type eventsOpts struct {
 	run, runKind, event, fields string
+	match                       string
 	agg                         string
 	margin, every               time.Duration
 	skipStandby, hideMasked     bool
@@ -61,15 +62,17 @@ type eventsOpts struct {
 }
 
 // events prints the selected events of the input.
-func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
-	var in input
+func events(args []string, xmlPath string, stdin io.Reader, stdout, stderr io.Writer) int {
+	in := input{stdin: stdin}
 	var o eventsOpts
 	fs := subFlags("events", stderr)
 	in.register(fs)
 	fs.StringVar(&o.run, "run", "", "only the windows of these runs, by number: 12, 3,5 or 7-9")
 	fs.StringVar(&o.runKind, "run-kind", "", "only the windows of runs of these kinds: shot, flush, draw")
-	fs.Var(systime.NewSpan(&o.margin), "margin", "widen each run window on both sides (systemd.time span, default 0; needs --run or --run-kind)")
+	fs.Var(systime.NewSpan(&o.margin), "margin", "widen each run window, or the -s/-u window without --run, on both sides (systemd.time span, default 0; needs -s/-u, --run or --run-kind)")
 	fs.StringVar(&o.event, "event", "", "only these event kinds, comma-separated: "+kindList())
+	fs.StringVar(&o.match, "match", "", "only events whose text contains this, ignoring case: note, notice, banner and reply text, "+
+		"a report's raw line, a frame's rows joined with | (not with --every)")
 	fs.BoolVar(&o.skipStandby, "skip-standby", false, "drop reports whose pump marker is ?")
 	fs.StringVar(&o.fields, "fields", "", "only these data columns, by key (see levalog fields), in this order; csv/jsonl always start with t wall src run run_t")
 	fs.BoolVar(&o.hideMasked, "hide-masked", false, "text: omit masked report fields")
@@ -86,6 +89,9 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		return code
 	}
 
+	if fs.Changed("match") && o.match == "" {
+		return fail(stderr, 2, "--match: want non-empty text")
+	}
 	every := fs.Changed("every")
 	aggGiven := fs.Changed("agg")
 	aggs, code := checkEvery(&o, every, aggGiven, stderr)
@@ -128,14 +134,15 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
-	sel.Since, sel.Until, sel.Margin = in.since.T, in.until.T, o.margin
+	sel.Match = o.match
+	sel.Margin = o.margin
 	sel.SkipStandby, sel.Changes = o.skipStandby || every, o.changes
 	if every {
 		sel.Events = []logview.Kind{logview.KindReport}
 	}
 	byRun := len(runSel) > 0 || len(sel.RunKinds) > 0
-	if o.margin != 0 && !byRun {
-		return fail(stderr, 2, "--margin needs --run or --run-kind")
+	if fs.Changed("margin") && !byRun && !in.window() {
+		return fail(stderr, 2, "--margin needs a window (-s/-u), --run or --run-kind")
 	}
 	if o.hideMasked && in.f != logview.FormatText {
 		return fail(stderr, 2, "--hide-masked applies to --format text only")
@@ -144,14 +151,18 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	// A selected run is printed whole: with its margins, from files before
 	// and after the window.
 	since, until := in.since.T, in.until.T
-	if byRun {
-		if !since.IsZero() {
-			since = since.Add(-o.margin)
-		}
-		if !until.IsZero() {
-			until = until.Add(o.margin)
-		}
+	if !since.IsZero() {
+		since = since.Add(-o.margin)
 	}
+	if !until.IsZero() {
+		until = until.Add(o.margin)
+	}
+	if !byRun {
+		// An explicit window takes the margin itself; with --run the
+		// window only picks the input and the run windows take it.
+		in.since.T, in.until.T = since, until
+	}
+	sel.Since, sel.Until = in.since.T, in.until.T
 	paths, code := in.paths(since, until, stderr)
 	if code != 0 || len(paths) == 0 {
 		return code
@@ -173,7 +184,7 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	detect := cat != nil && (byRun || in.f != logview.FormatText)
 	var sc scanned
 	if detect || len(keys) > 0 || every {
-		if sc, err = scan(paths, in.dir, detect, byRun && in.fromDir(), cat, o.showDumps, in.since.T, in.until.T, keep); err != nil {
+		if sc, err = scan(paths, in.stdinData, in.dir, detect, byRun && in.fromDir(), cat, o.showDumps, in.since.T, in.until.T, keep); err != nil {
 			return fail(stderr, 1, "%v", err)
 		}
 		paths = sc.paths
@@ -197,7 +208,7 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		if code != 0 {
 			return code
 		}
-		return eventsEvery(paths, cat, sc, sel, o, cols, byRun, in.f, append(in.notes, textNotes...), noRun, stdout, stderr)
+		return eventsEvery(paths, in.stdinData, cat, sc, sel, o, cols, byRun, in.f, append(in.notes, textNotes...), noRun, stdout, stderr)
 	}
 
 	out := bufio.NewWriter(stdout)
@@ -209,7 +220,7 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	rows := 0
 	if !byRun || len(sel.Runs) > 0 || len(sel.RunKinds) > 0 { // --run naming no run prints nothing
 		s := logview.Stream{
-			Catalog: cat, ShowDumps: o.showDumps,
+			Catalog: cat, ShowDumps: o.showDumps, Stdin: in.stdinData,
 			OnSource: func(si logview.SourceInfo) error {
 				w.Source(si)
 				return nil
@@ -339,6 +350,9 @@ func checkEvery(o *eventsOpts, every, aggGiven bool, stderr io.Writer) ([]logvie
 	if o.every <= 0 {
 		return nil, fail(stderr, 2, "--every: want a span above 0, not %q", systime.FormatSpan(o.every))
 	}
+	if o.match != "" {
+		return nil, fail(stderr, 2, "--match does not apply to --every (buckets aggregate reports)")
+	}
 	for _, k := range splitList(o.event) {
 		if logview.Kind(k) != logview.KindReport {
 			return nil, fail(stderr, 2, "--event %s: --every aggregates reports only", k)
@@ -395,7 +409,7 @@ func bucketCols(keys []string, aggs []logview.Agg, aggGiven bool, sc scanned, ca
 }
 
 // eventsEvery streams the input into buckets and writes them.
-func eventsEvery(paths []string, cat *logview.Catalog, sc scanned, sel logview.Selection, o eventsOpts,
+func eventsEvery(paths []string, stdin []byte, cat *logview.Catalog, sc scanned, sel logview.Selection, o eventsOpts,
 	cols []logview.BucketCol, byRun bool, f logview.Format, notes, noRun []string, stdout, stderr io.Writer,
 ) int {
 	out := bufio.NewWriter(stdout)
@@ -416,7 +430,7 @@ func eventsEvery(paths []string, cat *logview.Catalog, sc scanned, sel logview.S
 	var err error
 	if !byRun || len(sel.Runs) > 0 || len(sel.RunKinds) > 0 { // --run naming no run prints nothing
 		s := logview.Stream{
-			Catalog: cat,
+			Catalog: cat, Stdin: stdin,
 			OnSource: func(si logview.SourceInfo) error {
 				return write(b.Source(si))
 			},
