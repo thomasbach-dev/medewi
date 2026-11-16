@@ -33,14 +33,6 @@ var (
 	ErrPowerUnknown = errors.New("daemon: machine reports an unrecognised power mode")
 )
 
-// Timings of the command worker. Variables so tests can shrink them.
-var (
-	verifyTimeout = 10 * time.Second // bound on the verify-after-write poll
-	verifyPoll    = 250 * time.Millisecond
-	dumpFirstLine = 5 * time.Second
-	dumpIdleGap   = 2 * time.Second // MCm/MCu replies pause mid-stream
-)
-
 // powerCmd maps a target state to its power toggle. These and the dump
 // commands are the only writes medewid ever sends.
 var powerCmd = map[PowerState]string{
@@ -140,7 +132,7 @@ func (d *Daemon) refuse(conn *leva.Conn, st Status, power bool) error {
 // while a brew is open, pumping or coasting (ErrBrewOpen); it succeeds
 // without sending anything when the machine is already in want.
 // ErrVerifyFailed means the command went out but the state did not follow
-// within verifyTimeout.
+// within tuning.verifyTimeout.
 func (d *Daemon) SetPower(ctx context.Context, want PowerState) (PowerState, error) {
 	cmd, ok := powerCmd[want]
 	if !ok {
@@ -172,10 +164,10 @@ func (d *Daemon) SetPower(ctx context.Context, want PowerState) (PowerState, err
 	return got, rerr
 }
 
-// verifyPower polls Status().Power until it is want or verifyTimeout passes.
+// verifyPower polls Status().Power until it is want or tuning.verifyTimeout passes.
 func (d *Daemon) verifyPower(ctx context.Context, want PowerState) (PowerState, error) {
-	deadline := time.Now().Add(verifyTimeout)
-	t := time.NewTicker(verifyPoll)
+	deadline := time.Now().Add(d.tn.verifyTimeout)
+	t := time.NewTicker(d.tn.verifyPoll)
 	defer t.Stop()
 	for {
 		got := d.Status().Power
@@ -214,7 +206,7 @@ func (d *Daemon) dump(ctx context.Context, cmd string) (Dump, error) {
 		if rerr = d.refuse(conn, d.Status(), false); rerr != nil {
 			return
 		}
-		lines, err := conn.CommandOpts(ctx, cmd, dumpFirstLine, dumpIdleGap)
+		lines, err := conn.CommandOpts(ctx, cmd, d.tn.dumpFirstLine, d.tn.dumpIdleGap)
 		if err != nil {
 			rerr = fmt.Errorf("daemon: %s dump: %w", cmd, err)
 			return

@@ -58,6 +58,7 @@ func val(t *testing.T, reg *prometheus.Registry, name string, labels ...string) 
 }
 
 func TestMetricsAfterShot(t *testing.T) {
+	t.Parallel()
 	// Idle, a 12-line pumping run (Volume 3..36 ml), a coast, a sentinel.
 	ls := idleLines(4)
 	for i := range 12 {
@@ -94,6 +95,7 @@ func TestMetricsAfterShot(t *testing.T) {
 }
 
 func TestMetricsWandDraw(t *testing.T) {
+	t.Parallel()
 	ls := idleLines(4)
 	vol := 0.0
 	for range 20 {
@@ -117,6 +119,7 @@ func TestMetricsWandDraw(t *testing.T) {
 }
 
 func TestPowerStateOneHot(t *testing.T) {
+	t.Parallel()
 	ls := append(idleLines(4), repeat(10, line('-', "ECO", 93, 79, 0, -1, 0, 0))...)
 	ls = append(ls, line('-', "PID", 77.7, 93, 0, -1, 0, 0))
 	// Standby masks the temperature; check after the sentinel.
@@ -141,6 +144,7 @@ func TestPowerStateOneHot(t *testing.T) {
 }
 
 func TestMetricsTruncatedAddsNoShot(t *testing.T) {
+	t.Parallel()
 	m := newMetrics(nil)
 	m.brewClosed(brew.Summary{Kind: brew.TruncatedLost, Duration: 2e9, VolumeML: 10})
 	if testutil.ToFloat64(m.shots)+testutil.ToFloat64(m.flushes) != 0 ||
@@ -150,6 +154,7 @@ func TestMetricsTruncatedAddsNoShot(t *testing.T) {
 }
 
 func TestNilRegistryNoPanic(t *testing.T) {
+	t.Parallel()
 	cfg := simConfig(shotLines(9))
 	cfg.Once = true
 	s := startSim(t, cfg)
@@ -158,6 +163,7 @@ func TestNilRegistryNoPanic(t *testing.T) {
 }
 
 func TestMetricsFlush(t *testing.T) {
+	t.Parallel()
 	d, reg := metricsDaemon(t, shotLines(-1)) // no pressure setpoint: a flush
 	waitSentinel(t, d)
 	if val(t, reg, "medewi_flushes_total") != 1 || val(t, reg, "medewi_shots_total") != 0 {
@@ -166,6 +172,7 @@ func TestMetricsFlush(t *testing.T) {
 }
 
 func TestMetricsCountsFailedReconnectAttempts(t *testing.T) {
+	t.Parallel()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -187,6 +194,7 @@ func TestMetricsCountsFailedReconnectAttempts(t *testing.T) {
 // would not reach a client in report mode (the sim drops frame pieces
 // there, as the machine sends no frames then).
 func TestMetricsFragmentsLive(t *testing.T) {
+	t.Parallel()
 	cut := line('-', "PID", 93, 93, 0, -1, 0, 0)[:20]
 	ls := idleLines(4)
 	ls = append(ls, append(append([]byte(nil), cut...), line('-', "PID", 93, 93, 0, -1, 0, 0)...))
@@ -208,6 +216,7 @@ func (f *fakeFragmenter) Fragments() uint64 { return f.n }
 // The count sums ended sessions and the live one, and a session's end
 // moves its count over without a dip.
 func TestFragmentCountSumsSessions(t *testing.T) {
+	t.Parallel()
 	var fc fragmentCount
 	a := &fakeFragmenter{n: 2}
 	fc.attach(a)
@@ -231,6 +240,7 @@ func TestFragmentCountSumsSessions(t *testing.T) {
 }
 
 func TestMetricsReleasedUntil(t *testing.T) {
+	t.Parallel()
 	reg := prometheus.NewRegistry()
 	m := newMetrics(reg)
 	until := time.Date(2026, 11, 8, 11, 42, 0, 0, time.UTC)

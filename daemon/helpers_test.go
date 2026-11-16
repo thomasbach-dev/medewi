@@ -140,12 +140,16 @@ func daemonConfig(addr string, st *store.Store) Config {
 	}
 }
 
-// runDaemon starts Run. The returned stop cancels it and fails the test on a
-// hang or an error; it is idempotent and also runs in Cleanup, before the
-// sim's and the store's cleanups.
-func runDaemon(t *testing.T, cfg Config) (*Daemon, func()) {
+// runDaemon starts Run, after applying tune to the daemon's own tuning (so
+// tests that shrink timings still run in parallel). The returned stop
+// cancels it and fails the test on a hang or an error; it is idempotent and
+// also runs in Cleanup, before the sim's and the store's cleanups.
+func runDaemon(t *testing.T, cfg Config, tune ...func(*tuning)) (*Daemon, func()) {
 	t.Helper()
 	d := New(cfg)
+	for _, f := range tune {
+		f(&d.tn)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- d.Run(ctx) }()

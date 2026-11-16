@@ -42,10 +42,10 @@ func apiDoHeaders(t *testing.T, h http.Handler, method, path, body string, hdr m
 
 // apiSetup runs a daemon on the sim, waits until it is active and returns
 // its handler.
-func apiSetup(t *testing.T, cfg sim.Config) (*Daemon, http.Handler, *sim.Server) {
+func apiSetup(t *testing.T, cfg sim.Config, tune ...func(*tuning)) (*Daemon, http.Handler, *sim.Server) {
 	t.Helper()
 	s := startSim(t, cfg)
-	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)), tune...)
 	waitActive(t, d)
 	return d, NewHandler(d, nil), s
 }
@@ -60,6 +60,7 @@ func decode[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
 }
 
 func TestAPIStatus(t *testing.T) {
+	t.Parallel()
 	_, h, _ := apiSetup(t, simConfig(idleLines(20)))
 	rec := apiDo(t, h, "GET", "/api/status", "")
 	if rec.Code != 200 {
@@ -83,6 +84,7 @@ func TestAPIStatus(t *testing.T) {
 }
 
 func TestAPIStatusUnknownIsNull(t *testing.T) {
+	t.Parallel()
 	d := New(daemonConfig("127.0.0.1:1", openStore(t)))
 	m := decode[map[string]any](t, apiDo(t, NewHandler(d, nil), "GET", "/api/status", ""))
 	if m["temp"] != nil || m["setpoint"] != nil || m["connected"] != false {
@@ -91,6 +93,7 @@ func TestAPIStatusUnknownIsNull(t *testing.T) {
 }
 
 func TestAPIPower(t *testing.T) {
+	t.Parallel()
 	_, h, s := apiSetup(t, powerSim(idleLines(20)))
 	rec := apiDo(t, h, "POST", "/api/power", `{"state":"eco"}`)
 	if rec.Code != 200 {
@@ -107,6 +110,7 @@ func TestAPIPower(t *testing.T) {
 // TestAPIPowerCrossOrigin: a browser page on another origin must not be
 // able to switch the machine, even with a "simple" (non-preflighted) POST.
 func TestAPIPowerCrossOrigin(t *testing.T) {
+	t.Parallel()
 	_, h, s := apiSetup(t, powerSim(idleLines(20)))
 	const body = `{"state":"standby"}`
 	for name, hdr := range map[string]map[string]string{
@@ -144,6 +148,7 @@ func TestAPIPowerCrossOrigin(t *testing.T) {
 }
 
 func TestAPIPowerBadRequests(t *testing.T) {
+	t.Parallel()
 	_, h, s := apiSetup(t, powerSim(idleLines(20)))
 	for name, body := range map[string]string{
 		"not json":      `nope`,
@@ -162,6 +167,7 @@ func TestAPIPowerBadRequests(t *testing.T) {
 }
 
 func TestAPIPowerErrorStatus(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		cfg  func() sim.Config
@@ -195,13 +201,12 @@ func TestAPIPowerErrorStatus(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := startSim(t, tc.cfg())
-			d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
+			d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)), shortDumps)
 			tc.prep(t, s, d)
 			h := NewHandler(d, nil)
 			if rec := apiDo(t, h, "POST", "/api/power", `{"state":"eco"}`); rec.Code != tc.want {
 				t.Errorf("power code = %d, want %d (%s)", rec.Code, tc.want, rec.Body)
 			}
-			shrinkDumpTimings(t)
 			wantBackup := tc.want
 			if tc.name == "spec mismatch" {
 				wantBackup = 503 // dumps on a mismatched connection are refused as disconnected
@@ -216,8 +221,8 @@ func TestAPIPowerErrorStatus(t *testing.T) {
 }
 
 func TestAPIPowerVerifyFailed(t *testing.T) {
-	shrink(t, &verifyTimeout, 300*time.Millisecond)
-	_, h, _ := apiSetup(t, simConfig(idleLines(20))) // MCe changes nothing
+	t.Parallel()
+	_, h, _ := apiSetup(t, simConfig(idleLines(20)), func(k *tuning) { k.verifyTimeout = 300 * time.Millisecond }) // MCe changes nothing
 	rec := apiDo(t, h, "POST", "/api/power", `{"state":"eco"}`)
 	if rec.Code != 504 {
 		t.Fatalf("code = %d, want 504", rec.Code)
@@ -228,6 +233,7 @@ func TestAPIPowerVerifyFailed(t *testing.T) {
 }
 
 func TestAPIMethodRestrictions(t *testing.T) {
+	t.Parallel()
 	_, h, _ := apiSetup(t, simConfig(idleLines(20)))
 	for _, tc := range [][2]string{
 		{"GET", "/api/power"},
@@ -277,6 +283,7 @@ func seedBrews(t *testing.T, d *Daemon) {
 }
 
 func TestAPIBrews(t *testing.T) {
+	t.Parallel()
 	d, h, _ := apiSetup(t, simConfig(idleLines(20)))
 	seedBrews(t, d)
 
@@ -322,6 +329,7 @@ func TestAPIBrews(t *testing.T) {
 }
 
 func TestAPIBrewsEmptyIsArray(t *testing.T) {
+	t.Parallel()
 	_, h, _ := apiSetup(t, simConfig(idleLines(20)))
 	if body := strings.TrimSpace(apiDo(t, h, "GET", "/api/brews", "").Body.String()); body != "[]" {
 		t.Errorf("body = %q, want []", body)
@@ -329,6 +337,7 @@ func TestAPIBrewsEmptyIsArray(t *testing.T) {
 }
 
 func TestAPIPoints(t *testing.T) {
+	t.Parallel()
 	d, h, _ := apiSetup(t, simConfig(idleLines(20)))
 	seedBrews(t, d)
 	bs, _ := d.Store().Brews(context.Background(), 1)
@@ -365,8 +374,8 @@ func TestAPIPoints(t *testing.T) {
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 
 func TestAPIBackup(t *testing.T) {
-	shrinkDumpTimings(t)
-	_, h, s := apiSetup(t, dumpSim(idleLines(20), fakeMCm))
+	t.Parallel()
+	_, h, s := apiSetup(t, dumpSim(idleLines(20), fakeMCm), shortDumps)
 
 	rec := apiDo(t, h, "GET", "/api/backup/mcm", "")
 	if rec.Code != 200 {
@@ -392,8 +401,8 @@ func TestAPIBackup(t *testing.T) {
 }
 
 func TestAPIBackupIncomplete(t *testing.T) {
-	shrinkDumpTimings(t)
-	_, h, _ := apiSetup(t, dumpSim(idleLines(20), fakeMCm[:2]))
+	t.Parallel()
+	_, h, _ := apiSetup(t, dumpSim(idleLines(20), fakeMCm[:2]), shortDumps)
 	rec := apiDo(t, h, "GET", "/api/backup/mcm", "")
 	if rec.Code != 502 {
 		t.Errorf("code = %d, want 502", rec.Code)
@@ -404,9 +413,9 @@ func TestAPIBackupIncomplete(t *testing.T) {
 }
 
 func TestAPIBackupBrewOpen(t *testing.T) {
-	shrinkDumpTimings(t)
+	t.Parallel()
 	s := startSim(t, dumpSim(pumpLines(30), fakeMCm))
-	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)), shortDumps)
 	waitFor(t, "brew open", func() bool { return d.Status().BrewOpen })
 	if rec := apiDo(t, NewHandler(d, nil), "GET", "/api/backup/mcm", ""); rec.Code != 409 {
 		t.Errorf("code = %d, want 409", rec.Code)
@@ -414,6 +423,7 @@ func TestAPIBackupBrewOpen(t *testing.T) {
 }
 
 func TestAPIMiscRoutes(t *testing.T) {
+	t.Parallel()
 	d := New(daemonConfig("127.0.0.1:1", openStore(t)))
 	m := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "metrics-body") })
 	h := NewHandler(d, m)
@@ -443,6 +453,7 @@ func TestAPIMiscRoutes(t *testing.T) {
 }
 
 func TestPanelHasReclaim(t *testing.T) {
+	t.Parallel()
 	_, h, _ := apiSetup(t, powerSim(idleLines(20)))
 	body := apiDo(t, h, "GET", "/", "").Body.String()
 	for _, want := range []string{`id="reclaim"`, "/api/reclaim", "released_until", `"Machine released until "`} {
@@ -456,6 +467,7 @@ func TestPanelHasReclaim(t *testing.T) {
 }
 
 func TestAPIRelease(t *testing.T) {
+	t.Parallel()
 	_, h, _ := apiSetup(t, powerSim(idleLines(20)))
 	until := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
 	rec := apiDo(t, h, "POST", "/api/release", `{"until":"`+until.Format(time.RFC3339)+`"}`)
@@ -490,6 +502,7 @@ func TestAPIRelease(t *testing.T) {
 }
 
 func TestAPIReleaseBadInput(t *testing.T) {
+	t.Parallel()
 	_, h, _ := apiSetup(t, powerSim(idleLines(20)))
 	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
 	for name, body := range map[string]string{
@@ -517,6 +530,7 @@ func TestAPIReleaseBadInput(t *testing.T) {
 }
 
 func TestAPIReleaseStoreError(t *testing.T) {
+	t.Parallel()
 	s := startSim(t, powerSim(idleLines(20)))
 	st := openStore(t)
 	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), st))
@@ -539,9 +553,11 @@ func TestAPIReleaseStoreError(t *testing.T) {
 // A store write that runs into its deadline is a store failure (500), not
 // a client that went away.
 func TestAPIReleaseStoreTimeout(t *testing.T) {
-	d, h, _ := apiSetup(t, powerSim(idleLines(20)))
-	shrink(t, &releaseStoreWrite, func(context.Context, func(context.Context) error) error {
-		return fmt.Errorf("sqlite: %w", context.DeadlineExceeded)
+	t.Parallel()
+	d, h, _ := apiSetup(t, powerSim(idleLines(20)), func(k *tuning) {
+		k.releaseStoreWrite = func(context.Context, func(context.Context) error) error {
+			return fmt.Errorf("sqlite: %w", context.DeadlineExceeded)
+		}
 	})
 	until := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 	rec := apiDo(t, h, "POST", "/api/release", `{"until":"`+until+`"}`)
@@ -557,6 +573,7 @@ func TestAPIReleaseStoreTimeout(t *testing.T) {
 }
 
 func TestAPIReclaimNothingReleased(t *testing.T) {
+	t.Parallel()
 	d, h, _ := apiSetup(t, powerSim(idleLines(20)))
 	rec := apiDo(t, h, "POST", "/api/reclaim", `{}`)
 	if rec.Code != 200 || decode[map[string]any](t, rec)["ok"] != true {
@@ -568,10 +585,10 @@ func TestAPIReclaimNothingReleased(t *testing.T) {
 }
 
 func TestAPIReclaimStoreError(t *testing.T) {
-	shrinkBannerTimeout(t)
+	t.Parallel()
 	s := startSim(t, powerSim(idleLines(20)))
 	st := openStore(t)
-	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), st))
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), st), shortBanner)
 	waitActive(t, d)
 	h := NewHandler(d, nil)
 	until := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)

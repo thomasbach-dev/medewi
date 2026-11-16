@@ -46,22 +46,52 @@ const (
 	pollConn     = 250 * time.Millisecond // liveness poll while degraded
 )
 
-// MC? handshake: the machine swallows commands sent too early, so it is
-// retried. Variables so tests can shrink the spacing.
-var (
-	mcqTries   = 3
-	mcqSpacing = 2 * time.Second // start-to-start; also the first-line timeout
-)
+// tuning holds a Daemon's internal timings and test seams. Each Daemon has
+// its own copy, so tests shrink them per daemon and run in parallel.
+type tuning struct {
+	// MC? handshake: the machine swallows commands sent too early, so it
+	// is retried mcqTries times, mcqSpacing start-to-start (also the
+	// first-line timeout).
+	mcqTries   int
+	mcqSpacing time.Duration
+	// reportStallTimeout ends a session whose report stream has gone
+	// silent: the stream runs ~4/s in every power state, so silence means a
+	// dead link, a power-cycled machine or another client's "MC " (stream
+	// toggles are global).
+	reportStallTimeout time.Duration
+	// Command worker: verifyTimeout bounds the verify-after-write poll.
+	verifyTimeout, verifyPoll time.Duration
+	// Dumps: MCm/MCu replies pause mid-stream, hence the idle gap.
+	dumpFirstLine, dumpIdleGap time.Duration
+	// releaseBannerTimeout bounds the wait for the idle banner after the
+	// release's "MC " (banners come about once a second).
+	releaseBannerTimeout time.Duration
 
-// reportStallTimeout ends a session whose report stream has gone silent: the
-// stream runs ~4/s in every power state, so silence means a dead link, a
-// power-cycled machine or another client's "MC " (stream toggles are
-// global). A variable so tests can shrink it.
-var reportStallTimeout = 10 * time.Second
+	// sessionEnding runs as a session's end is derived; tests land a
+	// release there.
+	sessionEnding func()
+	// releaseStoreWrite runs a release store write; tests make it fail.
+	releaseStoreWrite func(ctx context.Context, write func(context.Context) error) error
+	// afterReleaseWrite runs between a release store write and the
+	// matching state update; tests widen that window.
+	afterReleaseWrite func()
+}
 
-// sessionEnding runs as a session's end is derived; tests land a release
-// there.
-var sessionEnding = func() {}
+func defaultTuning() tuning {
+	return tuning{
+		mcqTries:             3,
+		mcqSpacing:           2 * time.Second,
+		reportStallTimeout:   10 * time.Second,
+		verifyTimeout:        10 * time.Second,
+		verifyPoll:           250 * time.Millisecond,
+		dumpFirstLine:        5 * time.Second,
+		dumpIdleGap:          2 * time.Second,
+		releaseBannerTimeout: 3 * time.Second,
+		sessionEnding:        func() {},
+		releaseStoreWrite:    func(ctx context.Context, write func(context.Context) error) error { return write(ctx) },
+		afterReleaseWrite:    func() {},
+	}
+}
 
 // Config configures a Daemon. Zero durations and zero Brew/Watch configs
 // select the defaults.
@@ -91,6 +121,7 @@ type Config struct {
 // Daemon owns the machine connection. Create it with New and start it with Run.
 type Daemon struct {
 	cfg Config
+	tn  tuning // set before Run; read-only afterwards
 
 	mu   sync.RWMutex // guards st, conn, rs and sess
 	st   Status
@@ -141,6 +172,7 @@ func New(cfg Config) *Daemon {
 	}
 	return &Daemon{
 		cfg:        cfg,
+		tn:         defaultTuning(),
 		st:         Status{Power: PowerUnknown},
 		reqs:       make(chan request),
 		wake:       make(chan struct{}, 1),
@@ -275,7 +307,7 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	// clean shutdown ended the session. Derived at the end, so a shutdown
 	// racing a lost connection still counts as a shutdown.
 	defer func() {
-		sessionEnding()
+		d.tn.sessionEnding()
 		cut := brew.TruncatedLost
 		switch {
 		case released():
@@ -349,7 +381,7 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	} else {
 		close(samplerDone)
 	}
-	stall := time.NewTimer(reportStallTimeout)
+	stall := time.NewTimer(d.tn.reportStallTimeout)
 	defer stall.Stop()
 	// Both close with the connection; reports ending ends the session.
 	notices, frames := conn.Notices(), conn.DisplayFrames()
@@ -367,7 +399,7 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 			}
 			return true
 		case <-stall.C:
-			slog.Warn("report stream silent; reconnecting", "after", reportStallTimeout)
+			slog.Warn("report stream silent; reconnecting", "after", d.tn.reportStallTimeout)
 			return true
 		case line, ok := <-reports:
 			if !ok {
@@ -375,7 +407,7 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 				return true
 			}
 			d.handle(ctx, line) // ctx, not sctx: a release must not kill event hooks
-			stall.Reset(reportStallTimeout)
+			stall.Reset(d.tn.reportStallTimeout)
 		case n, ok := <-notices:
 			if !ok {
 				notices = nil
@@ -392,11 +424,11 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	}
 }
 
-// xmlName asks MC? up to mcqTries times, mcqSpacing apart, for the
+// xmlName asks MC? up to tuning.mcqTries times, mcqSpacing apart, for the
 // machine's "XML=" name. The machine swallows commands sent shortly after
 // connect, so one unanswered MC? is normal.
 func (d *Daemon) xmlName(ctx context.Context, conn *leva.Conn) (string, bool) {
-	name, err := leva.QueryXMLName(ctx, conn, mcqTries, mcqSpacing, mcqIdleGap)
+	name, err := leva.QueryXMLName(ctx, conn, d.tn.mcqTries, d.tn.mcqSpacing, mcqIdleGap)
 	switch {
 	case err != nil:
 		if ctx.Err() == nil {
@@ -404,7 +436,7 @@ func (d *Daemon) xmlName(ctx context.Context, conn *leva.Conn) (string, bool) {
 		}
 		return "", false
 	case name == "":
-		slog.Warn("no XML= reply to MC?; reconnecting", "tries", mcqTries)
+		slog.Warn("no XML= reply to MC?; reconnecting", "tries", d.tn.mcqTries)
 		return "", false
 	}
 	return name, true

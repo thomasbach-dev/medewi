@@ -33,15 +33,6 @@ func powerSim(lines [][]byte) sim.Config {
 	return cfg
 }
 
-// shrink sets *p to v for the test. Call it before runDaemon, so the
-// daemon has stopped before the old value is restored.
-func shrink[T any](t *testing.T, p *T, v T) {
-	t.Helper()
-	old := *p
-	*p = v
-	t.Cleanup(func() { *p = old })
-}
-
 func powerSent(cmds []string) []string {
 	var out []string
 	for _, c := range cmds {
@@ -68,6 +59,7 @@ func waitActive(t *testing.T, d *Daemon) {
 }
 
 func TestSetPowerEcoVerified(t *testing.T) {
+	t.Parallel()
 	s := startSim(t, powerSim(idleLines(20)))
 	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
 	waitActive(t, d)
@@ -87,9 +79,9 @@ func TestSetPowerEcoVerified(t *testing.T) {
 }
 
 func TestSetPowerVerifyTimeout(t *testing.T) {
-	shrink(t, &verifyTimeout, 300*time.Millisecond)
+	t.Parallel()
 	s := startSim(t, simConfig(idleLines(20))) // MCe changes nothing
-	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)), func(k *tuning) { k.verifyTimeout = 300 * time.Millisecond })
 	waitActive(t, d)
 
 	got, err := d.SetPower(reqCtx(t), PowerEco)
@@ -117,6 +109,7 @@ func waitSpecOK(t *testing.T, d *Daemon) {
 // error and sends no machine command. With dump set, the case requests both
 // dumps instead of a power change.
 func TestSetPowerRefusals(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		cfg     func() sim.Config
@@ -268,15 +261,16 @@ func dumpSim(lines [][]byte, mcm []string) sim.Config {
 	return cfg
 }
 
-func shrinkDumpTimings(t *testing.T) {
-	shrink(t, &dumpFirstLine, time.Second)
-	shrink(t, &dumpIdleGap, 200*time.Millisecond)
+// shortDumps shrinks the dump timings.
+func shortDumps(k *tuning) {
+	k.dumpFirstLine = time.Second
+	k.dumpIdleGap = 200 * time.Millisecond
 }
 
 func TestDumpMCm(t *testing.T) {
-	shrinkDumpTimings(t)
+	t.Parallel()
 	s := startSim(t, dumpSim(idleLines(20), fakeMCm))
-	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)), shortDumps)
 	waitActive(t, d) // reports are running: the dump interleaves with them
 
 	before := time.Now()
@@ -305,6 +299,7 @@ func TestDumpMCm(t *testing.T) {
 // connection, not a known power mode: cold mode (PID1 off) and an
 // unrecognised mode field both still allow a backup.
 func TestDumpWhateverTheMode(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		lines [][]byte
@@ -314,9 +309,8 @@ func TestDumpWhateverTheMode(t *testing.T) {
 		{"unknown", oddLines(20), PowerUnknown},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			shrinkDumpTimings(t)
 			s := startSim(t, dumpSim(tc.lines, fakeMCm))
-			d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
+			d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)), shortDumps)
 			waitFor(t, "reporting in "+string(tc.power), func() bool {
 				st := d.Status()
 				return st.Connected && st.Reporting && st.Power == tc.power
@@ -335,10 +329,10 @@ func TestDumpWhateverTheMode(t *testing.T) {
 // TestDumpMCmFirmwareEOF pins that leva! 3.2's end record, which is one
 // hex digit short (":00000001F"), ends a complete dump.
 func TestDumpMCmFirmwareEOF(t *testing.T) {
-	shrinkDumpTimings(t)
+	t.Parallel()
 	mcm := append(slices.Clone(fakeMCm[:2]), ":00000001F")
 	s := startSim(t, dumpSim(idleLines(20), mcm))
-	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)), shortDumps)
 	waitActive(t, d)
 
 	dump, err := d.DumpMCm(reqCtx(t))
@@ -351,6 +345,7 @@ func TestDumpMCmFirmwareEOF(t *testing.T) {
 }
 
 func TestCompleteMCm(t *testing.T) {
+	t.Parallel()
 	r0, r1 := fakeMCm[0], fakeMCm[1]
 	for _, tc := range []struct {
 		name  string
@@ -382,6 +377,7 @@ func TestCompleteMCm(t *testing.T) {
 }
 
 func TestCompleteMCu(t *testing.T) {
+	t.Parallel()
 	if complete("MCu", nil) || complete("MCu", []string{"", " "}) {
 		t.Error("an empty MCu reply counts as complete")
 	}
@@ -392,9 +388,9 @@ func TestCompleteMCu(t *testing.T) {
 
 // TestDumpMCmTruncated pins Review Focus 5.
 func TestDumpMCmTruncated(t *testing.T) {
-	shrinkDumpTimings(t)
+	t.Parallel()
 	s := startSim(t, dumpSim(idleLines(20), fakeMCm[:2]))
-	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)), shortDumps)
 	waitActive(t, d)
 
 	if _, err := d.DumpMCm(reqCtx(t)); !errors.Is(err, ErrIncompleteDump) {
@@ -403,9 +399,9 @@ func TestDumpMCmTruncated(t *testing.T) {
 }
 
 func TestDumpRefusedWhileBrewOpen(t *testing.T) {
-	shrinkDumpTimings(t)
+	t.Parallel()
 	s := startSim(t, dumpSim(pumpLines(20), fakeMCm))
-	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)), shortDumps)
 	waitFor(t, "brew open", func() bool { return d.Status().BrewOpen })
 
 	for name, dump := range map[string]func(context.Context) (Dump, error){
@@ -420,6 +416,7 @@ func TestDumpRefusedWhileBrewOpen(t *testing.T) {
 }
 
 func TestSetPowerInvalid(t *testing.T) {
+	t.Parallel()
 	s := startSim(t, powerSim(idleLines(20)))
 	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
 	waitActive(t, d)
@@ -431,6 +428,7 @@ func TestSetPowerInvalid(t *testing.T) {
 }
 
 func TestRequestAfterRunReturns(t *testing.T) {
+	t.Parallel()
 	s := startSim(t, simConfig(idleLines(20)))
 	d, stop := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
 	waitActive(t, d)

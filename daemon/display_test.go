@@ -33,6 +33,7 @@ func withFrames(lines [][]byte) [][]byte {
 }
 
 func TestMachineReadyFromNotice(t *testing.T) {
+	t.Parallel()
 	out := filepath.Join(t.TempDir(), "events")
 	cfg := simConfig(withNotice(idleLines(40), 5))
 	cfg.Once = true
@@ -48,6 +49,7 @@ func TestMachineReadyFromNotice(t *testing.T) {
 }
 
 func TestMachineReadyClearedByEco(t *testing.T) {
+	t.Parallel()
 	lines := withNotice(idleLines(10), 5)
 	lines = append(lines, repeat(30, line('-', "ECO", 85, 79, 0, -1, 0, 0))...)
 	cfg := simConfig(lines)
@@ -62,6 +64,7 @@ func TestMachineReadyClearedByEco(t *testing.T) {
 }
 
 func TestDisplaySampling(t *testing.T) {
+	t.Parallel()
 	cfg := simConfig(withFrames(idleLines(40)))
 	s := startSim(t, cfg)
 	dcfg := daemonConfig(s.Addr().String(), openStore(t))
@@ -86,6 +89,7 @@ func TestDisplaySampling(t *testing.T) {
 // it passes only then; the sim holds it as the current LCD, as the
 // machine holds its display, so a sample out of phase still shows it.
 func TestDisplaySampleOutOfPhaseWithRecording(t *testing.T) {
+	t.Parallel()
 	cfg := simConfig(append([][]byte{[]byte(readyFrame)}, idleLines(600)...))
 	cfg.Once = true
 	s := startSim(t, cfg)
@@ -102,6 +106,7 @@ func TestDisplaySampleOutOfPhaseWithRecording(t *testing.T) {
 // flight at shutdown; otherwise the machine keeps streaming after medewid
 // exits. Samples are made long and frequent to hit that window.
 func TestShutdownStopsAfterSample(t *testing.T) {
+	t.Parallel()
 	for range 5 {
 		cfg := simConfig(withFrames(idleLines(40)))
 		s := startSim(t, cfg)
@@ -120,6 +125,7 @@ func TestShutdownStopsAfterSample(t *testing.T) {
 
 // Sampled frames reach the raw traffic log through the daemon.
 func TestSampledFramesInRawLog(t *testing.T) {
+	t.Parallel()
 	cfg := simConfig(withFrames(idleLines(40)))
 	s := startSim(t, cfg)
 	dcfg, rl, dir := rawDaemonConfig(t, s.Addr().String())
@@ -136,6 +142,7 @@ func TestSampledFramesInRawLog(t *testing.T) {
 }
 
 func TestNoSamplingByDefault(t *testing.T) {
+	t.Parallel()
 	cfg := simConfig(withFrames(idleLines(20)))
 	s := startSim(t, cfg)
 	d, stop := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
@@ -146,6 +153,7 @@ func TestNoSamplingByDefault(t *testing.T) {
 }
 
 func TestMarkWritesNote(t *testing.T) {
+	t.Parallel()
 	s := startSim(t, simConfig(idleLines(20)))
 	cfg, rl, dir := rawDaemonConfig(t, s.Addr().String())
 	d, stop := runDaemon(t, cfg)
@@ -166,6 +174,7 @@ func TestMarkWritesNote(t *testing.T) {
 }
 
 func TestAPIMark(t *testing.T) {
+	t.Parallel()
 	s := startSim(t, simConfig(idleLines(20)))
 	cfg, _, _ := rawDaemonConfig(t, s.Addr().String())
 	d, _ := runDaemon(t, cfg)
@@ -194,6 +203,7 @@ func TestAPIMark(t *testing.T) {
 }
 
 func TestMarkRefusals(t *testing.T) {
+	t.Parallel()
 	s := startSim(t, simConfig(idleLines(20)))
 	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
 	waitActive(t, d)

@@ -46,6 +46,7 @@ func readRaw(t *testing.T, rl *rawlog.Log, dir string) []fixture.Event {
 }
 
 func TestRawLogRecordsSession(t *testing.T) {
+	t.Parallel()
 	s := startSim(t, simConfig(idleLines(20)))
 	cfg, rl, dir := rawDaemonConfig(t, s.Addr().String())
 	d, stop := runDaemon(t, cfg)
@@ -76,10 +77,10 @@ func TestRawLogRecordsSession(t *testing.T) {
 }
 
 func TestRawLogDumpsNeverLogged(t *testing.T) {
-	shrinkDumpTimings(t)
+	t.Parallel()
 	s := startSim(t, dumpSim(idleLines(20), fakeMCm))
 	cfg, rl, dir := rawDaemonConfig(t, s.Addr().String())
-	d, stop := runDaemon(t, cfg)
+	d, stop := runDaemon(t, cfg, shortDumps)
 	waitActive(t, d)
 
 	if _, err := d.DumpMCm(reqCtx(t)); err != nil {
@@ -111,6 +112,7 @@ func TestRawLogDumpsNeverLogged(t *testing.T) {
 }
 
 func TestRawLogNamesXML(t *testing.T) {
+	t.Parallel()
 	s := startSim(t, simConfig(idleLines(20)))
 	cfg, rl, dir := rawDaemonConfig(t, s.Addr().String())
 	d, stop := runDaemon(t, cfg)
