@@ -52,7 +52,19 @@ for MCu it accepts any non-empty reply.
    [machine-behaviour.md](../../machine-behaviour.md): MCu format,
    the observed damage, the EEPROM offsets found, and what autotune
    looks like in the traffic (below).
-6. **Usability run** as the final test (below).
+6. **`medewictl backup --note TEXT`** (operator's request): the note goes
+   into both file names, `2026-11-16T112555Z_3.2_post-autotune.mcu.txt`
+   and `….mcm.hex`, so one flat backup directory replaces a subdirectory
+   per backup. Both files of one run get **one** timestamp (taken once,
+   not per fetch), so a pair is identified by name. The note is
+   sanitized like the firmware part (letters, digits, `.`, `-`, `_`);
+   the firmware part maps unsafe characters to `-` instead of `_`, so
+   the name splits unambiguously: `TIMESTAMP_FIRMWARE[_NOTE].KIND`.
+7. **The backups' charset**: `GET /api/backup/mcu` (and `mcm`) say
+   `text/plain; charset=iso-8859-1`, the truth (`daemon/api.go` says
+   utf-8 today). The body stays byte-identical to the machine's reply: a
+   backup is raw.
+8. **Usability run** as the final test (below).
 
 ## Non-goals
 
@@ -126,10 +138,12 @@ levabak [--firmware V] SUBCOMMAND [OPTIONS] BACKUP ...
 - **BACKUP** is a `*.mcu.txt` or `*.mcm.hex` file, or a directory.
   `medewictl backup --out DIR` adds a pair per run, each file named at
   its own fetch (seconds apart), so a directory may hold many pairs. A
-  directory's files are paired as **one backup per pair**: an MCu file
-  and the MCm file closest after it in time (by the file-name timestamp,
-  same firmware, within 5 min); an unpaired file is a backup of one kind
-  (one warning). Directories whose subdirectories hold backups (the
+  directory's files are paired as **one backup per pair**: files with
+  the same name stem (`TIMESTAMP_FIRMWARE[_NOTE]`) first; for older
+  backups without a shared stem, an MCu file and the MCm file closest
+  after it in time (by the file-name timestamp, same firmware, within
+  5 min); an unpaired file is a backup of one kind (one warning). The
+  note, if any, is its own output column (`note`) next to `src`. Directories whose subdirectories hold backups (the
   operator's `private/backups/<label>/` layout) are read in name order,
   as levalog reads a parent of captures. Every row carries `src`, so
   `show` over many backups is the long-term view (use case 2). `diff`
@@ -152,10 +166,10 @@ levabak [--firmware V] SUBCOMMAND [OPTIONS] BACKUP ...
   diffs, with a warning, and marks the paths in the damaged region as
   `damaged` instead of reporting them as added or removed.
 - **Output columns** (jsonl keys equal csv headers):
-  - `check`: `src line kind problem` (kind `mcu`/`mcm`); text ends with
-    one verdict line per file.
-  - `show`: `src line path label value raw`; `show --eeprom`:
-    `src offset type raw value name confidence`.
+  - `check`: `src note line kind problem` (kind `mcu`/`mcm`); text ends
+    with one verdict line per file.
+  - `show`: `src note line path label value raw`; `show --eeprom`:
+    `src note offset type raw value name confidence`.
   - `diff`: `section key a b note`, section `setting` or `eeprom`; for
     eeprom, key is the offset and note the layout name (or empty).
   - `layout`: `firmware offset type scale name confidence evidence`.
@@ -226,7 +240,7 @@ Then fix the friction, re-run Haiku, compare commands and stumbles.
 - `check` exits 1 on a problem (scripts and the daemon test on it).
 - Paths use `/` and `#N` for repeated labels.
 - The daemon change (goal 4) is in this branch: it is small and it is the
-  point of "a backup must be usable".
+  point of "a backup must be usable". So are goals 6 and 7 (operator).
 
 ## Left to the builder
 
