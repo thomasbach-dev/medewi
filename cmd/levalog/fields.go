@@ -15,8 +15,8 @@ import (
 // fields lists the columns of the XML in effect at the end of the input:
 // the last entry's, else the one its file starts with. With --xml FILE and
 // no readable --dir input it lists that file.
-func fields(args []string, xmlPath string, stdout, stderr io.Writer) int {
-	var in input
+func fields(args []string, xmlPath string, stdin io.Reader, stdout, stderr io.Writer) int {
+	in := input{stdin: stdin}
 	fs := subFlags("fields", stderr)
 	in.register(fs)
 	if code, done := parse(fs, args, stderr); done {
@@ -40,6 +40,9 @@ func fields(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	var name string
 	var spec *leva.RecordSpec
 	var problems []string
+	if code := in.readStdin(stderr); code != 0 {
+		return code
+	}
 	srcs, notes, empty, err := sourcePaths(in.args, in.dir, in.since.T, in.until.T, false)
 	switch {
 	case (err != nil || len(srcs) == 0) && in.fromDir() && !fi.IsDir():
@@ -64,7 +67,7 @@ func fields(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		var src logview.SourceInfo
 		var entries int
 		s := logview.Stream{
-			Catalog: cat,
+			Catalog: cat, Stdin: in.stdinData,
 			OnSource: func(si logview.SourceInfo) error {
 				src = si
 				return nil

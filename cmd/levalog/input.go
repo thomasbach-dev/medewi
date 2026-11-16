@@ -31,6 +31,8 @@ type input struct {
 	f            logview.Format
 	args         []string
 	notes        []string // directories skipped while resolving the input
+	stdin        io.Reader
+	stdinData    []byte // stdin's capture, read by readStdin for an argument -
 }
 
 func (in *input) register(fs *pflag.FlagSet) {
@@ -62,12 +64,43 @@ func (in *input) window() bool { return !in.since.T.IsZero() || !in.until.T.IsZe
 // fromDir reports whether the input is the raw logs of --dir.
 func (in *input) fromDir() bool { return len(in.args) == 0 }
 
+// readStdin reads stdin's capture when an argument is - (StdinPath), which
+// may be given once. Code 0 means ok.
+func (in *input) readStdin(stderr io.Writer) int {
+	switch n := countStdin(in.args); {
+	case n == 0:
+		return 0
+	case n > 1:
+		return fail(stderr, 2, "- (a capture from stdin) may be given only once")
+	}
+	data, err := io.ReadAll(in.stdin)
+	if err != nil {
+		return fail(stderr, 1, "stdin: %v", err)
+	}
+	in.stdinData = data
+	return 0
+}
+
+// countStdin counts the arguments that name stdin.
+func countStdin(args []string) int {
+	n := 0
+	for _, a := range args {
+		if a == logview.StdinPath {
+			n++
+		}
+	}
+	return n
+}
+
 // paths resolves the input files, selecting raw logs for [since, until).
 // Code 0 means ok; otherwise the error is printed. With no file to read it
 // prints why and returns none with code 0. The notes on skipped
 // directories, and why a directory gave no file while others did, are
 // left in in.notes for after the output.
 func (in *input) paths(since, until time.Time, stderr io.Writer) ([]string, int) {
+	if code := in.readStdin(stderr); code != 0 {
+		return nil, code
+	}
 	srcs, notes, empty, err := sourcePaths(in.args, in.dir, since, until, in.window())
 	if err != nil {
 		return nil, fail(stderr, 1, "%v", err)
@@ -119,13 +152,13 @@ type scanned struct {
 // when detect is set, the runs that start in [since, until). When extend is
 // set too (input from dir), it decodes the next raw log of dir while a run
 // that keep selects is open at the end, up to maxExtend files.
-func scan(paths []string, dir string, detect, extend bool, cat *logview.Catalog, showDumps bool,
+func scan(paths []string, stdin []byte, dir string, detect, extend bool, cat *logview.Catalog, showDumps bool,
 	since, until time.Time, keep func(logview.Run) bool,
 ) (scanned, error) {
 	sc := scanned{paths: slices.Clone(paths), specs: map[*leva.RecordSpec]bool{}}
 	finder := logview.NewRunFinder(brew.DefaultConfig())
 	s := logview.Stream{
-		Catalog: cat, ShowDumps: showDumps,
+		Catalog: cat, ShowDumps: showDumps, Stdin: stdin,
 		OnSource: func(si logview.SourceInfo) error {
 			finder.Source(si)
 			return nil
@@ -213,13 +246,17 @@ type source struct {
 // With neighbours, the raw logs just before and after those a directory
 // selects are added too, so run detection sees a run that crosses into or
 // out of the window from a file outside it. empty says why a directory
-// gave no file.
+// gave no file. An argument - (logview.StdinPath) is the capture on stdin.
 func sourcePaths(args []string, dir string, since, until time.Time, neighbours bool) (srcs []source, notes, empty []string, err error) {
 	var paths []string
 	if len(args) == 0 {
 		args = []string{dir}
 	}
 	for _, a := range args {
+		if a == logview.StdinPath {
+			paths = append(paths, a)
+			continue
+		}
 		fi, err := os.Stat(a)
 		if err != nil {
 			return nil, nil, nil, splitTimeHint(a, err)

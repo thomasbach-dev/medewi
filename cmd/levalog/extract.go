@@ -39,8 +39,8 @@ type extractOpts struct {
 // extractCmd cuts a window out of the raw logs and writes it as a capture
 // directory (log.jsonl + manifest.json), or log.jsonl's lines to stdout
 // with --out -.
-func extractCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
-	var in input
+func extractCmd(args []string, xmlPath string, stdin io.Reader, stdout, stderr io.Writer) int {
+	in := input{stdin: stdin}
 	var o extractOpts
 	fs := subFlags("extract", stderr)
 	in.registerWindow(fs)
@@ -90,6 +90,9 @@ func extractCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	if !byRun {
 		in.since.T, in.until.T = since, until
 	}
+	if countStdin(in.args) > 0 {
+		return fail(stderr, 2, "extract reads raw logs only, not a capture from stdin (-): a raw log needs its file name for wall time")
+	}
 	srcs, notes, empty, err := sourcePaths(in.args, in.dir, since, until, in.window())
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
@@ -113,7 +116,7 @@ func extractCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 			return code
 		}
 		keep := func(r logview.Run) bool { return r.N == o.run }
-		sc, err := scan(paths, in.dir, true, in.fromDir(), cat, false, in.since.T, in.until.T, keep)
+		sc, err := scan(paths, nil, in.dir, true, in.fromDir(), cat, false, in.since.T, in.until.T, keep)
 		if err != nil {
 			return fail(stderr, 1, "%v", err)
 		}

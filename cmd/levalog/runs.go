@@ -26,8 +26,8 @@ func parseRunKinds(s, flag string, stderr io.Writer) ([]logview.RunKind, int) {
 }
 
 // runsCmd lists the runs of the input.
-func runsCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
-	var in input
+func runsCmd(args []string, xmlPath string, stdin io.Reader, stdout, stderr io.Writer) int {
+	in := input{stdin: stdin}
 	var kind, stats, agg string
 	fs := subFlags("runs", stderr)
 	in.register(fs)
@@ -64,7 +64,7 @@ func runsCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		return code
 	}
 	keep := func(r logview.Run) bool { return len(kinds) == 0 || slices.Contains(kinds, r.Kind) }
-	sc, err := scan(paths, in.dir, true, in.fromDir(), cat, false, in.since.T, in.until.T, keep)
+	sc, err := scan(paths, in.stdinData, in.dir, true, in.fromDir(), cat, false, in.since.T, in.until.T, keep)
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
 	}
@@ -78,7 +78,7 @@ func runsCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		var keyAggs [][]logview.Agg
 		keyAggs, textNotes = aggsPerKey(statKeys, aggs, sc.specs, cat)
 		opt.Stats = logview.NewRunStats(runs, statKeys, keyAggs)
-		s := logview.Stream{Catalog: cat, OnEntry: func(e *logview.Entry) error {
+		s := logview.Stream{Catalog: cat, Stdin: in.stdinData, OnEntry: func(e *logview.Entry) error {
 			opt.Stats.Entry(e)
 			return nil
 		}}

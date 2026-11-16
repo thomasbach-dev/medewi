@@ -73,7 +73,7 @@ func rawDir(t *testing.T) string {
 func runCmd(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var out, errb bytes.Buffer
-	code = run(args, &out, &errb)
+	code = run(args, strings.NewReader(""), &out, &errb)
 	return code, out.String(), errb.String()
 }
 
@@ -804,7 +804,7 @@ func peakHeap(t *testing.T, args ...string) uint64 {
 		}
 	}()
 	var errb bytes.Buffer
-	code := run(args, io.Discard, &errb)
+	code := run(args, strings.NewReader(""), io.Discard, &errb)
 	close(done)
 	p := <-sampled
 	if code != 0 {

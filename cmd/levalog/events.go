@@ -62,8 +62,8 @@ type eventsOpts struct {
 }
 
 // events prints the selected events of the input.
-func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
-	var in input
+func events(args []string, xmlPath string, stdin io.Reader, stdout, stderr io.Writer) int {
+	in := input{stdin: stdin}
 	var o eventsOpts
 	fs := subFlags("events", stderr)
 	in.register(fs)
@@ -184,7 +184,7 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	detect := cat != nil && (byRun || in.f != logview.FormatText)
 	var sc scanned
 	if detect || len(keys) > 0 || every {
-		if sc, err = scan(paths, in.dir, detect, byRun && in.fromDir(), cat, o.showDumps, in.since.T, in.until.T, keep); err != nil {
+		if sc, err = scan(paths, in.stdinData, in.dir, detect, byRun && in.fromDir(), cat, o.showDumps, in.since.T, in.until.T, keep); err != nil {
 			return fail(stderr, 1, "%v", err)
 		}
 		paths = sc.paths
@@ -208,7 +208,7 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		if code != 0 {
 			return code
 		}
-		return eventsEvery(paths, cat, sc, sel, o, cols, byRun, in.f, append(in.notes, textNotes...), noRun, stdout, stderr)
+		return eventsEvery(paths, in.stdinData, cat, sc, sel, o, cols, byRun, in.f, append(in.notes, textNotes...), noRun, stdout, stderr)
 	}
 
 	out := bufio.NewWriter(stdout)
@@ -220,7 +220,7 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	rows := 0
 	if !byRun || len(sel.Runs) > 0 || len(sel.RunKinds) > 0 { // --run naming no run prints nothing
 		s := logview.Stream{
-			Catalog: cat, ShowDumps: o.showDumps,
+			Catalog: cat, ShowDumps: o.showDumps, Stdin: in.stdinData,
 			OnSource: func(si logview.SourceInfo) error {
 				w.Source(si)
 				return nil
@@ -409,7 +409,7 @@ func bucketCols(keys []string, aggs []logview.Agg, aggGiven bool, sc scanned, ca
 }
 
 // eventsEvery streams the input into buckets and writes them.
-func eventsEvery(paths []string, cat *logview.Catalog, sc scanned, sel logview.Selection, o eventsOpts,
+func eventsEvery(paths []string, stdin []byte, cat *logview.Catalog, sc scanned, sel logview.Selection, o eventsOpts,
 	cols []logview.BucketCol, byRun bool, f logview.Format, notes, noRun []string, stdout, stderr io.Writer,
 ) int {
 	out := bufio.NewWriter(stdout)
@@ -430,7 +430,7 @@ func eventsEvery(paths []string, cat *logview.Catalog, sc scanned, sel logview.S
 	var err error
 	if !byRun || len(sel.Runs) > 0 || len(sel.RunKinds) > 0 { // --run naming no run prints nothing
 		s := logview.Stream{
-			Catalog: cat,
+			Catalog: cat, Stdin: stdin,
 			OnSource: func(si logview.SourceInfo) error {
 				return write(b.Source(si))
 			},

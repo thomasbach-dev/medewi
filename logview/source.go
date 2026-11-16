@@ -96,6 +96,21 @@ func Open(path string) (Source, error) {
 	return src, nil
 }
 
+// StdinPath is the path of the capture read from stdin, as given on the
+// command line and printed as its source.
+const StdinPath = "-"
+
+// ReadCapture decodes data, a capture log.jsonl (plain or gzip) that is no
+// file, such as stdin, as the source named path: no manifest, no wall time.
+// It is as tolerant as Open.
+func ReadCapture(path string, data []byte) (Source, error) {
+	evs, lines, err := parseEvents(path, data)
+	if err != nil {
+		return Source{}, err
+	}
+	return Source{Path: path, Events: evs, Lines: lines}, nil
+}
+
 // readEvents reads a plain or gzip JSON-lines log and returns the events
 // with the 1-based line number of each. A cut last line or a missing gzip
 // trailer is tolerated; a bad line in the middle is not.
@@ -104,6 +119,11 @@ func readEvents(path string) ([]fixture.Event, []int, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("logview: %w", err)
 	}
+	return parseEvents(path, raw)
+}
+
+// parseEvents is readEvents on the bytes raw of path.
+func parseEvents(path string, raw []byte) ([]fixture.Event, []int, error) {
 	data := raw
 	if len(raw) >= 2 && raw[0] == 0x1f && raw[1] == 0x8b {
 		gz, err := gzip.NewReader(bytes.NewReader(raw))

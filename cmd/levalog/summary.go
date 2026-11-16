@@ -14,6 +14,9 @@ import (
 func summarySessions(paths []string, since, until time.Time) ([]logview.SessionPart, error) {
 	srcs := make([]logview.Source, 0, len(paths))
 	for _, p := range paths {
+		if p == logview.StdinPath {
+			return nil, nil // a capture: no wall time
+		}
 		s, err := logview.Open(p)
 		if err != nil {
 			return nil, err
@@ -39,8 +42,8 @@ func summarySessions(paths []string, since, until time.Time) ([]logview.SessionP
 }
 
 // summaryCmd prints what each source of the input holds.
-func summaryCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
-	var in input
+func summaryCmd(args []string, xmlPath string, stdin io.Reader, stdout, stderr io.Writer) int {
+	in := input{stdin: stdin}
 	fs := subFlags("summary", stderr)
 	in.register(fs)
 	if code, done := parse(fs, args, stderr); done {
@@ -64,7 +67,7 @@ func summaryCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	if cat != nil {
 		var err error
 		keepAll := func(logview.Run) bool { return true }
-		if sc, err = scan(paths, in.dir, true, in.fromDir(), cat, false, in.since.T, in.until.T, keepAll); err != nil {
+		if sc, err = scan(paths, in.stdinData, in.dir, true, in.fromDir(), cat, false, in.since.T, in.until.T, keepAll); err != nil {
 			return fail(stderr, 1, "%v", err)
 		}
 	}
@@ -72,6 +75,7 @@ func summaryCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	ss.Since, ss.Until = in.since.T, in.until.T
 	s := logview.Stream{
 		Catalog:  cat,
+		Stdin:    in.stdinData,
 		OnSource: func(si logview.SourceInfo) error { ss.Source(si); return nil },
 		OnEntry:  func(e *logview.Entry) error { ss.Entry(e); return nil },
 	}

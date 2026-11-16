@@ -67,6 +67,9 @@ type Stream struct {
 	// Entries are not reused.
 	OnEntry func(*Entry) error
 
+	// Stdin is the capture log.jsonl read for the path StdinPath.
+	Stdin []byte
+
 	// Problems collects the decoders' problems and LastXML's warnings.
 	Problems []string
 
@@ -75,11 +78,17 @@ type Stream struct {
 }
 
 // Add opens and decodes paths, in the order given, after those added
-// before. It stops at the first error: a file that fails to open or an
-// error of OnSource or OnEntry.
+// before; StdinPath decodes Stdin. It stops at the first error: a file
+// that fails to open or an error of OnSource or OnEntry.
 func (s *Stream) Add(paths ...string) error {
 	for _, p := range paths {
-		src, err := Open(p)
+		var src Source
+		var err error
+		if p == StdinPath {
+			src, err = ReadCapture(p, s.Stdin)
+		} else {
+			src, err = Open(p)
+		}
 		if err != nil {
 			return err
 		}

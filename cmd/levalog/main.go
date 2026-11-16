@@ -18,7 +18,7 @@ import (
 const defaultRawDir = "/var/lib/medewid/raw"
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
 func usage(w io.Writer) {
@@ -34,7 +34,9 @@ Input, for all subcommands: FILE|DIR ... are raw logs (*.jsonl.gz) or captures
 (log.jsonl, plain or gzip). A DIR is a capture directory (containing
 log.jsonl), a raw-log directory, or else the parent of capture directories:
 its subdirectories holding log.jsonl, in name order (others are skipped
-with a note). Without FILE or DIR, the raw logs in
+with a note). A FILE - reads a capture log.jsonl from stdin, once (events,
+runs, summary, fields; not extract): no manifest, no wall time, and its
+source prints as -. Without FILE or DIR, the raw logs in
 --dir that overlap the window. -s/--since T (inclusive) and -u/--until T
 (exclusive) take a systemd.time(7) timestamp in local time: "2026-11-10
 10:40", "10:40", "-5min", "yesterday", with an optional " UTC"; they need
@@ -79,7 +81,9 @@ part into DIR/01, DIR/02, ... (a part without events is skipped). It reads back 
 first file in the directory for the firmware banner. --out DIR must not
 exist or be empty; the manifest gets machine_addr machine.example:23, the
 XML's sha256 when --xml names it, and the provenance in its notes. --out -
-prints the lines log.jsonl would hold, and no manifest.
+prints the lines log.jsonl would hold, and no manifest: JSON objects whose
+data is base64 (the fixture format); decode with jq -r '.data | @base64d',
+or read them back from stdin: extract ... --out - | levalog events --event frame -
 
 events --every SPAN [--agg LIST] prints one row per bucket of SPAN instead:
 t (bucket start), wall, src (jsonl and csv: the source path), run and run_t
@@ -140,7 +144,7 @@ Examples:
   levalog events --every 60s --agg min,max --fields temperature_pid1,heat_pid_average  # warm-up
   levalog events --run 2 --format csv --fields pressure | awk -F, 'NR>1 && $6>=8.5{print $5; exit}'  # time to 8.5 bar
   levalog extract -s "2026-11-14 08:58:30" -u "2026-11-14 09:07" --out backflush --scenario backflush  # a fixture
-  levalog extract -s today --run 3 --margin 10s --out - | jq -c .                                  # a quick look`)
+  levalog extract -s today --run 3 --margin 10s --out - | levalog events --event frame -           # its LCD frames`)
 }
 
 // envOr returns the first non-empty environment variable of keys, else def.
@@ -153,7 +157,7 @@ func envOr(def string, keys ...string) string {
 	return def
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	xmlPath := envOr("", "MEDEWID_XML_PATH", "MEDEWI_XML_PATH")
 	fs := pflag.NewFlagSet("levalog", pflag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -171,7 +175,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		usage(stderr)
 		return 2
 	}
-	cmds := map[string]func([]string, string, io.Writer, io.Writer) int{
+	cmds := map[string]func([]string, string, io.Reader, io.Writer, io.Writer) int{
 		"fields":  fields,
 		"runs":    runsCmd,
 		"events":  events,
@@ -184,7 +188,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		usage(stderr)
 		return 2
 	}
-	return cmd(rest[1:], xmlPath, stdout, stderr)
+	return cmd(rest[1:], xmlPath, stdin, stdout, stderr)
 }
 
 // fail prints "levalog: MESSAGE" to stderr and returns code.
