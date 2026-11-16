@@ -176,7 +176,9 @@ lifecycle capture (separate review pass); Beanconqueror/Visualizer.
   volume is the counter's growth during the draw.
   `brew_points.flow` stores the factor-scaled metered flow in ml/s.
 - **Dump completeness**: `/api/backup/mcm` validates the Intel-HEX EOF
-  record (`:00000001FF`) before returning 200. `MCu` has no known
+  record (`:00000001FF`) before returning 200. (Amended 2026-11-15: leva!
+  3.2 sends `:00000001F`; both forms end a dump, and the data records
+  must be checksum-valid and contiguous from address 0.) `MCu` has no known
   terminator: the endpoint uses the 2 s gap heuristic, returns the line
   count in a response header, and `medewictl backup` prints it so backup
   scripts can sanity-check; whether `MCu` has a reliable terminator is a

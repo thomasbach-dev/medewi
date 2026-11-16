@@ -133,3 +133,5 @@ Details and evidence: [docs/machine-behaviour.md](docs/machine-behaviour.md).
   the pump pulses of the warm-up program: it counts on through the
   program) and keeps counting during wand draws; the Flow rate field is a decaying estimate
   that lingers for seconds after the pump stops.
+- `MCm` ends with `:00000001F`, one digit short of the Intel HEX EOF
+  `:00000001FF`; 256 contiguous 16-byte data records precede it.
