@@ -53,6 +53,7 @@ func parseRuns(s string) (runSet, error) {
 // eventsOpts are the flags of events beyond the input.
 type eventsOpts struct {
 	run, runKind, event, fields string
+	match                       string
 	agg                         string
 	margin, every               time.Duration
 	skipStandby, hideMasked     bool
@@ -70,6 +71,8 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	fs.StringVar(&o.runKind, "run-kind", "", "only the windows of runs of these kinds: shot, flush, draw")
 	fs.Var(systime.NewSpan(&o.margin), "margin", "widen each run window on both sides (systemd.time span, default 0; needs --run or --run-kind)")
 	fs.StringVar(&o.event, "event", "", "only these event kinds, comma-separated: "+kindList())
+	fs.StringVar(&o.match, "match", "", "only events whose text contains this, ignoring case: note, notice, banner and reply text, "+
+		"a report's raw line, a frame's rows joined with | (not with --every)")
 	fs.BoolVar(&o.skipStandby, "skip-standby", false, "drop reports whose pump marker is ?")
 	fs.StringVar(&o.fields, "fields", "", "only these data columns, by key (see levalog fields), in this order; csv/jsonl always start with t wall src run run_t")
 	fs.BoolVar(&o.hideMasked, "hide-masked", false, "text: omit masked report fields")
@@ -86,6 +89,9 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		return code
 	}
 
+	if fs.Changed("match") && o.match == "" {
+		return fail(stderr, 2, "--match: want non-empty text")
+	}
 	every := fs.Changed("every")
 	aggGiven := fs.Changed("agg")
 	aggs, code := checkEvery(&o, every, aggGiven, stderr)
@@ -128,6 +134,7 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
+	sel.Match = o.match
 	sel.Since, sel.Until, sel.Margin = in.since.T, in.until.T, o.margin
 	sel.SkipStandby, sel.Changes = o.skipStandby || every, o.changes
 	if every {
@@ -338,6 +345,9 @@ func checkEvery(o *eventsOpts, every, aggGiven bool, stderr io.Writer) ([]logvie
 	}
 	if o.every <= 0 {
 		return nil, fail(stderr, 2, "--every: want a span above 0, not %q", systime.FormatSpan(o.every))
+	}
+	if o.match != "" {
+		return nil, fail(stderr, 2, "--match does not apply to --every (buckets aggregate reports)")
 	}
 	for _, k := range splitList(o.event) {
 		if logview.Kind(k) != logview.KindReport {

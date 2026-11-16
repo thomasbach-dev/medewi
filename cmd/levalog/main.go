@@ -58,6 +58,11 @@ n,min,max,mean for runs); tmin/tmax are the run_t of the minimum/maximum,
 srcmin/srcmax its src, each of the first occurrence on ties, and n counts
 the unmasked values. A text field (pump, mode, ...) named with a numeric
 aggregate gets only key_last and a note, here and in events --every.
+events --match TEXT keeps only events whose text contains TEXT, ignoring case
+(note and notice text, banner and reply lines, a report's raw line, a frame's
+rows joined with |); it does not combine with --every. medewictl mark TEXT
+writes a note "mark: TEXT"; find marks with
+levalog events --event note --match TEXT
 events --margin SPAN (default 0) widens each run window on both sides and
 needs --run or --run-kind.
 
