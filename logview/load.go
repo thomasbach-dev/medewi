@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/thomasbach-dev/medewi/rawlog"
@@ -70,11 +71,44 @@ type Stream struct {
 	// Stdin is the capture log.jsonl read for the path StdinPath.
 	Stdin []byte
 
-	// Problems collects the decoders' problems and LastXML's warnings.
+	// Problems collects the decoders' problems and LastXML's warnings. A
+	// decoder problem repeated in later files (an XML name the catalog
+	// cannot resolve, in every file of its session) stays one entry, for
+	// its first file, counting the others.
 	Problems []string
 
 	sources, entries int
 	xml, runDir      string
+	repeats          map[string]repeat // decoder problem text, path stripped
+}
+
+// repeat is a decoder problem seen before: its entry in Problems and how
+// many more files had it.
+type repeat struct{ i, more int }
+
+// addProblems appends the decoder problems of the file at path ("PATH:
+// PROBLEM"), folding each into its first occurrence.
+func (s *Stream) addProblems(path string, problems []string) {
+	if s.repeats == nil {
+		s.repeats = map[string]repeat{}
+	}
+	for _, p := range problems {
+		key := strings.TrimPrefix(p, path+": ")
+		r, seen := s.repeats[key]
+		if !seen {
+			s.repeats[key] = repeat{i: len(s.Problems)}
+			s.Problems = append(s.Problems, p)
+			continue
+		}
+		r.more++
+		s.repeats[key] = r
+		first, _, _ := strings.Cut(s.Problems[r.i], " (also in ")
+		noun := "files"
+		if r.more == 1 {
+			noun = "file"
+		}
+		s.Problems[r.i] = fmt.Sprintf("%s (also in %d more %s)", first, r.more, noun)
+	}
 }
 
 // Add opens and decodes paths, in the order given, after those added
@@ -119,7 +153,7 @@ func (s *Stream) Add(paths ...string) error {
 			return nil
 		})
 		s.xml = d.XML
-		s.Problems = append(s.Problems, d.Problems...)
+		s.addProblems(src.Path, d.Problems)
 		if err != nil {
 			return err
 		}

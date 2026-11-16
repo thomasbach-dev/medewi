@@ -80,10 +80,27 @@ func TestStdinRunsSummary(t *testing.T) {
 	stdinCSV(t, xml, statsCapture(t), "runs", "--format", "csv", "--stats", "pressure")
 	stdinCSV(t, xml, summaryCapture(t), "summary", "--format", "jsonl")
 	stdinCSV(t, xml, statsCapture(t), "events", "--format", "jsonl", "--run", "1")
+	stdinCSV(t, xml, statsCapture(t), "fields", "--format", "csv")
 }
 
-// A "-" mixes with other captures: it is one more capture, in argument
-// order.
+// TestStdinBeforeRawLogs: - sorts with the captures, before the raw logs,
+// whatever the argument order.
+func TestStdinBeforeRawLogs(t *testing.T) {
+	noEnv(t)
+	inCET(t)
+	raw := filepath.Join(extractDir(t), f3.Format("20060102T150405.000Z")+".jsonl.gz")
+	code, out, errs := runCmdIn(t, frameLog(t), "events", "--event", "note", raw, "-")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	i, j := strings.Index(out, "# -\n"), strings.Index(out, "# "+raw+"\n")
+	if i < 0 || j < i {
+		t.Errorf("want -'s header, then the raw log's:\n%s", out)
+	}
+}
+
+// A "-" mixes with other captures: it is one more capture. Captures (and
+// -) sort before raw logs, in argument order among themselves.
 func TestStdinWithOtherCaptures(t *testing.T) {
 	noEnv(t)
 	capture := statsCapture(t)

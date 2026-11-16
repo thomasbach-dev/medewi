@@ -152,8 +152,9 @@ func TestExtractXMLNoteOnlyInWindowIsNotPrepended(t *testing.T) {
 	if got.XMLName != "X" {
 		t.Errorf("XMLName = %q, want X", got.XMLName)
 	}
-	at := extractT0.Add(msec(1500)).Format(time.RFC3339Nano)
-	if !hasNote(got.Notes, "XML named only at "+at) {
+	// Local time with the zone offset, like every time levalog prints.
+	at := extractT0.Add(msec(1500)).In(time.Local).Format("2006-01-02 15:04:05.000 -07:00")
+	if !hasNote(got.Notes, "XML named only at "+at+",") {
 		t.Errorf("Notes = %q, want one naming %s", got.Notes, at)
 	}
 }
@@ -393,9 +394,9 @@ func TestExtractCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Reports != 2 || got.Frames != 2 || got.NoteEvents != 3 {
-		t.Errorf("Reports, Frames, NoteEvents = %d, %d, %d; want 2, 2, 3 (the xml note counts)",
-			got.Reports, got.Frames, got.NoteEvents)
+	if got.Reports != 2 || got.Frames != 2 || got.NoteEvents != 3 || got.Other != 2 {
+		t.Errorf("Reports, Frames, NoteEvents, Other = %d, %d, %d, %d; want 2, 2, 3 (the xml note counts), 2 (MC@, [READY])",
+			got.Reports, got.Frames, got.NoteEvents, got.Other)
 	}
 }
 

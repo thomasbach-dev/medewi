@@ -107,7 +107,7 @@ func extractCmd(args []string, xmlPath string, stdin io.Reader, stdout, stderr i
 	warn(stderr, notes)
 	if len(paths) == 0 {
 		warn(stderr, empty)
-		return fail(stderr, 1, "no raw logs to extract from")
+		return fail(stderr, 1, "no raw logs to extract from; check --dir or FILE|DIR, or list what is there with levalog summary")
 	}
 
 	if byRun {
@@ -148,7 +148,7 @@ func extractCmd(args []string, xmlPath string, stdin io.Reader, stdout, stderr i
 	noteClamp := func() {
 		if len(parts) > 0 && !since.IsZero() && parts[0].Since.After(since) {
 			warn(stderr, []string{"the window starts before the first raw log; part 1 starts at " +
-				parts[0].Since.In(time.Local).Format(wallLayout)})
+				parts[0].Since.In(time.Local).Format(provenanceLayout)})
 		}
 	}
 	if o.split {
@@ -159,10 +159,15 @@ func extractCmd(args []string, xmlPath string, stdin io.Reader, stdout, stderr i
 	var sbe *logview.SessionBoundaryError
 	if errors.As(err, &sbe) {
 		noteClamp()
-		return refuseBoundaries(stderr, parts)
+		infos := make([]partInfo, len(parts))
+		for i, w := range parts {
+			_, perr := logview.Extract(opened, w.Since, w.Until)
+			infos[i] = partInfo{Window: w, empty: errors.Is(perr, logview.ErrNoEvents)}
+		}
+		return refuseBoundaries(stderr, infos, sbe.At)
 	}
 	if errors.Is(err, logview.ErrNoEvents) {
-		return fail(stderr, 1, "no events in %s", fmtWindow(since, until))
+		return noEvents(stderr, since, until)
 	}
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
@@ -200,32 +205,65 @@ func fmtWindow(since, until time.Time) string {
 	return fmt.Sprintf("[%s, %s)", since.In(time.Local).Format(wallLayout), end)
 }
 
+// noEvents is the refusal of a window without events, with what to run
+// next.
+func noEvents(stderr io.Writer, since, until time.Time) int {
+	return fail(stderr, 1, "no events in %s; widen -s/-u, or see what the raw logs hold with levalog summary -s T -u T",
+		fmtWindow(since, until))
+}
+
+// partInfo is a session part of the window and whether it has no events.
+type partInfo struct {
+	logview.Window
+	empty bool
+}
+
 // refuseBoundaries names every session boundary inside the window and
-// prints the -s/-u pair of each part, as the window's refusal.
-func refuseBoundaries(stderr io.Writer, parts []logview.Window) int {
-	at := make([]string, 0, len(parts)-1)
-	for _, w := range parts[1:] {
-		at = append(at, w.Since.In(time.Local).Format(wallLayout))
+// prints the -s/-u pair of each part, as the window's refusal; a part
+// without events is tagged so. With fewer than two parts the window still
+// holds two sessions' events, as their files overlap in wall time; the
+// refusal then names the boundary at, where the later session starts.
+func refuseBoundaries(stderr io.Writer, parts []partInfo, at time.Time) int {
+	if len(parts) < 2 {
+		return refuseOverlap(stderr, "", at)
+	}
+	times := make([]string, 0, len(parts)-1)
+	for _, p := range parts[1:] {
+		times = append(times, p.Since.In(time.Local).Format(provenanceLayout))
 	}
 	noun := "boundaries"
-	if len(at) == 1 {
+	if len(times) == 1 {
 		noun = "boundary"
 	}
 	_, _ = fmt.Fprintf(stderr, "levalog: the window crosses %d raw-log session %s (%s); extract each part:\n",
-		len(at), noun, strings.Join(at, ", "))
-	for _, w := range parts {
-		_, _ = fmt.Fprintf(stderr, "  -s '%s'", w.Since.In(time.Local).Format(wallLayout))
-		if !w.Until.Equal(openEndAt) {
-			_, _ = fmt.Fprintf(stderr, " -u '%s'", w.Until.In(time.Local).Format(wallLayout))
+		len(times), noun, strings.Join(times, ", "))
+	for _, p := range parts {
+		// systime takes no zone offset: the pasteable times stay without.
+		_, _ = fmt.Fprintf(stderr, "  -s '%s'", p.Since.In(time.Local).Format(wallLayout))
+		if !p.Until.Equal(openEndAt) {
+			_, _ = fmt.Fprintf(stderr, " -u '%s'", p.Until.In(time.Local).Format(wallLayout))
+		}
+		if p.empty {
+			_, _ = fmt.Fprint(stderr, "  # no events")
 		}
 		_, _ = fmt.Fprintln(stderr)
 	}
 	return fail(stderr, 1, "or write every part at once with --split-sessions --out DIR")
 }
 
+// refuseOverlap refuses a window holding events of two sessions whose
+// files overlap in wall time, the later one starting at at.
+func refuseOverlap(stderr io.Writer, prefix string, at time.Time) int {
+	return fail(stderr, 1, "%sthe window holds events of two raw-log sessions whose files overlap in wall time; "+
+		"the later session starts at %s. Extract one session at a time: pass its raw logs as FILE arguments "+
+		"instead of --dir (levalog summary -s T -u T lists each session's first file)",
+		prefix, at.In(time.Local).Format(provenanceLayout))
+}
+
 // extractParts writes one capture per session part of the window into
 // out/01, out/02, ... in time order; a part without events is skipped
-// with a note and takes no number.
+// with a note and takes no number. Every part is cut before the first is
+// written, so a refused part leaves --out untouched.
 func extractParts(opened []logview.Source, parts []logview.Window, since, until time.Time, xmlPath string,
 	o extractOpts, stdout, stderr io.Writer,
 ) int {
@@ -233,26 +271,32 @@ func extractParts(opened []logview.Source, parts []logview.Window, since, until 
 		return fail(stderr, 1, "the window holds %d session parts, more than --split-sessions numbers (%d); narrow it with -s/-u",
 			len(parts), maxParts)
 	}
-	n := 0
+	var cut []logview.Extracted
+	var nums []int // the part number of each cut
 	for i, w := range parts {
 		ex, err := logview.Extract(opened, w.Since, w.Until)
-		if errors.Is(err, logview.ErrNoEvents) {
+		var sbe *logview.SessionBoundaryError
+		switch {
+		case errors.Is(err, logview.ErrNoEvents):
 			warn(stderr, []string{fmt.Sprintf("part %d %s has no events; skipped", i+1, fmtWindow(w.Since, w.Until))})
 			continue
-		}
-		if err != nil {
+		case errors.As(err, &sbe):
+			return refuseOverlap(stderr, fmt.Sprintf("part %d %s: ", i+1, fmtWindow(w.Since, w.Until)), sbe.At)
+		case err != nil:
 			return fail(stderr, 1, "part %d %s: %v", i+1, fmtWindow(w.Since, w.Until), err)
 		}
+		cut, nums = append(cut, ex), append(nums, i+1)
+	}
+	if len(cut) == 0 {
+		return noEvents(stderr, since, until)
+	}
+	for n, ex := range cut {
 		for _, note := range ex.Notes {
-			warn(stderr, []string{fmt.Sprintf("part %d: %s", i+1, note)})
+			warn(stderr, []string{fmt.Sprintf("part %d: %s", nums[n], note)})
 		}
-		n++
-		if code := writeExtract(filepath.Join(o.out, fmt.Sprintf("%02d", n)), ex, xmlPath, o, stdout, stderr); code != 0 {
+		if code := writeExtract(filepath.Join(o.out, fmt.Sprintf("%02d", n+1)), ex, xmlPath, o, stdout, stderr); code != 0 {
 			return code
 		}
-	}
-	if n == 0 {
-		return fail(stderr, 1, "no events in %s", fmtWindow(since, until))
 	}
 	return 0
 }
@@ -282,8 +326,8 @@ func writeExtract(dir string, ex logview.Extracted, xmlPath string, o extractOpt
 	if err := fixture.WriteCapture(dir, "log.jsonl", "manifest.json", ex.Events, m); err != nil {
 		return fail(stderr, 1, "%v", err)
 	}
-	_, _ = fmt.Fprintf(stdout, "%s: %d events (%d reports, %d frames, %d notes)\n%s\n",
-		filepath.Join(dir, "log.jsonl"), len(ex.Events), ex.Reports, ex.Frames, ex.NoteEvents,
+	_, _ = fmt.Fprintf(stdout, "%s: %d events (%d reports, %d frames, %d notes, %d other)\n%s\n",
+		filepath.Join(dir, "log.jsonl"), len(ex.Events), ex.Reports, ex.Frames, ex.NoteEvents, ex.Other,
 		filepath.Join(dir, "manifest.json"))
 	return 0
 }
@@ -297,14 +341,14 @@ func checkOut(out string, stderr io.Writer) int {
 	case err != nil:
 		return fail(stderr, 1, "--out: %v", err)
 	case !fi.IsDir():
-		return fail(stderr, 1, "--out %s exists and is not a directory", out)
+		return fail(stderr, 1, "--out %s exists and is not a directory; give a new or empty directory", out)
 	}
 	entries, err := os.ReadDir(out)
 	if err != nil {
 		return fail(stderr, 1, "--out: %v", err)
 	}
 	if len(entries) > 0 {
-		return fail(stderr, 1, "--out %s is not empty", out)
+		return fail(stderr, 1, "--out %s is not empty; give a new or empty directory", out)
 	}
 	return 0
 }

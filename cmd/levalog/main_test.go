@@ -710,14 +710,24 @@ func TestEventsXMLDirTwoNoName(t *testing.T) {
 
 func TestHelpExplainsColumns(t *testing.T) {
 	noEnv(t)
-	for _, args := range [][]string{{"--help"}, {"events", "--help"}, {"runs", "--help"}, {"fields", "--help"}} {
-		code, _, errs := runCmd(t, args...)
+	all := []string{"src", "run_t", "medewi adds", "fields", "runs", "events", "UTC", "directory of NAME.xml", "T WALL DIR EVENT", "# xml: NAME", "PEAK_BAR", "do not change the exit code", "the -s/-u window instead", "--every 1d starts at 00:00 UTC", "negative t"}
+	// levalog --help has it all; each subcommand's help its own part.
+	for _, c := range []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"--help"}, all},
+		{[]string{"events", "--help"}, []string{"src", "run_t", "medewi adds", "UTC", "T WALL DIR EVENT", "# xml: NAME", "the -s/-u window instead", "--every 1d starts at 00:00 UTC", "negative t"}},
+		{[]string{"runs", "--help"}, []string{"PEAK_BAR", "run_t", "src", "events --run N"}},
+		{[]string{"fields", "--help"}, []string{"fields", "key, name, unit"}},
+	} {
+		code, _, errs := runCmd(t, c.args...)
 		if code != 0 {
-			t.Errorf("%q: exit %d", args, code)
+			t.Errorf("%q: exit %d", c.args, code)
 		}
-		for _, w := range []string{"src", "run_t", "medewi adds", "fields", "runs", "events", "UTC", "directory of NAME.xml", "T WALL DIR EVENT", "# xml: NAME", "PEAK_BAR", "do not change the exit code", "the -s/-u window instead", "--every 1d starts at 00:00 UTC", "negative t"} {
+		for _, w := range c.want {
 			if !strings.Contains(errs, w) {
-				t.Errorf("%q: help does not mention %q", args, w)
+				t.Errorf("%q: help does not mention %q", c.args, w)
 			}
 		}
 	}

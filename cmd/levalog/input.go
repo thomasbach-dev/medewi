@@ -237,8 +237,8 @@ type source struct {
 }
 
 // sourcePaths resolves the FILE|DIR arguments, or dir when there are
-// none, and sorts the files by start time (captures, which have none,
-// first and in argument order). A directory is, in this order: a capture
+// none, and sorts the files by start time: captures and -, which have
+// none, before the raw logs, in argument order among themselves. A directory is, in this order: a capture
 // (holding log.jsonl; its subdirectories are ignored), a raw-log directory
 // (holding raw logs, of which those overlapping the window are read), or
 // the parent of captures: its direct subdirectories holding log.jsonl, in

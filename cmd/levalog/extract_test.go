@@ -114,7 +114,7 @@ func TestExtractWritesCapture(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
-	want := out + "/log.jsonl: 6 events (2 reports, 1 frames, 2 notes)\n" + out + "/manifest.json\n"
+	want := out + "/log.jsonl: 6 events (2 reports, 1 frames, 2 notes, 1 other)\n" + out + "/manifest.json\n"
 	if stdout != want {
 		t.Errorf("stdout = %q, want %q", stdout, want)
 	}
@@ -279,7 +279,7 @@ func TestExtractSessionBoundary(t *testing.T) {
 		ev(100, fixture.RX, "{new}\r\n"))
 	out := filepath.Join(t.TempDir(), "o")
 	code, _, stderr := runCmd(t, extractArgs(dir, "--out", out)...)
-	want := "levalog: the window crosses 1 raw-log session boundary (2026-11-14 08:58:40.000); extract each part:\n" +
+	want := "levalog: the window crosses 1 raw-log session boundary (2026-11-14 08:58:40.000 +01:00); extract each part:\n" +
 		"  -s '2026-11-14 08:58:30.000' -u '2026-11-14 08:58:40.000'\n" +
 		"  -s '2026-11-14 08:58:40.000' -u '2026-11-14 08:59:00.000'\n"
 	if code != 1 || !strings.Contains(stderr, want) || !strings.Contains(stderr, "--split-sessions") {
@@ -309,7 +309,7 @@ func TestExtractSessionBoundaries(t *testing.T) {
 	inCET(t)
 	out := filepath.Join(t.TempDir(), "o")
 	code, _, stderr := runCmd(t, extractArgs(threeSessionDir(t), "--out", out)...)
-	want := "levalog: the window crosses 2 raw-log session boundaries (2026-11-14 08:58:40.000, 2026-11-14 08:58:50.000); extract each part:\n" +
+	want := "levalog: the window crosses 2 raw-log session boundaries (2026-11-14 08:58:40.000 +01:00, 2026-11-14 08:58:50.000 +01:00); extract each part:\n" +
 		"  -s '2026-11-14 08:58:30.000' -u '2026-11-14 08:58:40.000'\n" +
 		"  -s '2026-11-14 08:58:40.000' -u '2026-11-14 08:58:50.000'\n" +
 		"  -s '2026-11-14 08:58:50.000' -u '2026-11-14 08:59:00.000'\n"
@@ -336,9 +336,9 @@ func TestExtractSplitSessions(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 	p := func(n, f string) string { return filepath.Join(out, n, f) }
-	want := p("01", "log.jsonl") + ": 6 events (2 reports, 1 frames, 2 notes)\n" + p("01", "manifest.json") + "\n" +
-		p("02", "log.jsonl") + ": 2 events (1 reports, 0 frames, 0 notes)\n" + p("02", "manifest.json") + "\n" +
-		p("03", "log.jsonl") + ": 2 events (1 reports, 0 frames, 0 notes)\n" + p("03", "manifest.json") + "\n"
+	want := p("01", "log.jsonl") + ": 6 events (2 reports, 1 frames, 2 notes, 1 other)\n" + p("01", "manifest.json") + "\n" +
+		p("02", "log.jsonl") + ": 2 events (1 reports, 0 frames, 0 notes, 1 other)\n" + p("02", "manifest.json") + "\n" +
+		p("03", "log.jsonl") + ": 2 events (1 reports, 0 frames, 0 notes, 1 other)\n" + p("03", "manifest.json") + "\n"
 	if stdout != want {
 		t.Errorf("stdout = %q, want %q", stdout, want)
 	}
@@ -359,7 +359,7 @@ func TestExtractSplitSessions(t *testing.T) {
 	// A window inside one session gives 01 only.
 	out = filepath.Join(t.TempDir(), "o")
 	code, stdout, stderr = runCmd(t, extractArgs(extractDir(t), "--split-sessions", "--out", out)...)
-	if code != 0 || stdout != p("01", "log.jsonl")+": 6 events (2 reports, 1 frames, 2 notes)\n"+p("01", "manifest.json")+"\n" {
+	if code != 0 || stdout != p("01", "log.jsonl")+": 6 events (2 reports, 1 frames, 2 notes, 1 other)\n"+p("01", "manifest.json")+"\n" {
 		t.Errorf("one session: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	if entries, _ := os.ReadDir(out); len(entries) != 1 {
@@ -432,7 +432,7 @@ func TestExtractSplitSessionsClamped(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
-	if !strings.Contains(stderr, "the window starts before the first raw log; part 1 starts at 2026-11-14 06:05:52.646") {
+	if !strings.Contains(stderr, "the window starts before the first raw log; part 1 starts at 2026-11-14 06:05:52.646 +01:00") {
 		t.Errorf("stderr = %q, want the clamp named", stderr)
 	}
 	// Without parts to name, a plain extract keeps quiet about it.

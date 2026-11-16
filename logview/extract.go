@@ -45,9 +45,9 @@ type Extracted struct {
 	Firmware string // last "$id:" banner line of the session before or in the window, CRLF trimmed; "" if unknown
 	// Reports and Frames count the kept rx lines starting with '{' and
 	// '<'; NoteEvents counts the note events in Events, the XML note
-	// included.
-	Reports, Frames, NoteEvents int
-	Notes                       []string // e.g. "window starts mid-line: dropped 120 bytes", "firmware unknown: …"
+	// included; Other counts the rest: tx events and the other rx lines.
+	Reports, Frames, NoteEvents, Other int
+	Notes                              []string // e.g. "window starts mid-line: dropped 120 bytes", "firmware unknown: …"
 }
 
 // SessionBoundaryError reports that the window crosses into a new session
@@ -180,7 +180,7 @@ func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 		out.Events = append(out.Events, fixture.Event{T: 0, Dir: fixture.Note, Data: []byte(rawlog.XMLNotePrefix + xmlBefore)})
 	case xmlIn != "":
 		out.XMLName = xmlIn
-		out.Notes = append(out.Notes, fmt.Sprintf("XML named only at %s, inside the window", xmlInAt.Format(time.RFC3339Nano)))
+		out.Notes = append(out.Notes, fmt.Sprintf("XML named only at %s, inside the window", xmlInAt.In(time.Local).Format(sessionZoneLayout)))
 	}
 	var rxData []byte
 	for _, k := range kept {
@@ -195,8 +195,11 @@ func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 		}
 	}
 	for _, ev := range out.Events {
-		if ev.Dir == fixture.Note {
+		switch ev.Dir {
+		case fixture.Note:
 			out.NoteEvents++
+		case fixture.TX:
+			out.Other++
 		}
 	}
 	for _, line := range bytes.Split(rxData, crlf) {
@@ -205,6 +208,8 @@ func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 			out.Reports++
 		case bytes.HasPrefix(line, []byte("<")):
 			out.Frames++
+		case len(line) > 0:
+			out.Other++
 		}
 	}
 	return out, nil

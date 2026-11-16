@@ -303,8 +303,8 @@ func orUnknown(s string) string {
 	return s
 }
 
-// json is p as an object; start is null while the first file is not in
-// the input.
+// json is p as an object; start and first_file are null while the first
+// file is not in the input.
 func (p SessionPart) json() string {
 	var o jsonObj
 	if p.StartKnown {
@@ -313,7 +313,11 @@ func (p SessionPart) json() string {
 		o.raw("start", "null")
 	}
 	o.raw("first_file_known", strconv.FormatBool(p.StartKnown))
-	o.strOrNull("first_file", p.Files[0])
+	if p.StartKnown {
+		o.str("first_file", p.Files[0])
+	} else {
+		o.raw("first_file", "null")
+	}
 	o.strOrNull("firmware", p.Firmware)
 	o.strOrNull("xml", p.XML)
 	o.str("since", utcWall(p.Since))

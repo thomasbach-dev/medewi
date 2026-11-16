@@ -42,7 +42,7 @@ func TestSummarySessions(t *testing.T) {
 	if err := json.Unmarshal([]byte(line), &o); err != nil || len(o.Sessions) != 3 {
 		t.Fatalf("jsonl sessions: %v\n%s", err, out)
 	}
-	if s := o.Sessions[0]; s["start"] != nil || s["first_file_known"] != false ||
+	if s := o.Sessions[0]; s["start"] != nil || s["first_file_known"] != false || s["first_file"] != nil ||
 		s["firmware"] != nil || s["xml"] != xmlName || s["since"] != "2026-11-14T07:58:35.000Z" || s["until"] != "2026-11-14T07:58:40.000Z" {
 		t.Errorf("session 1 = %v", s)
 	}

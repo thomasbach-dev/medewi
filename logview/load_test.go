@@ -191,3 +191,31 @@ func TestStreamAddContinues(t *testing.T) {
 		t.Errorf("first entry of the added file = %+v", e)
 	}
 }
+
+// TestStreamProblemOncePerName: an --xml file named differently from the
+// session's XML is one problem for all files of the session, not one per
+// file; it names the first file and how many more there are.
+func TestStreamProblemOncePerName(t *testing.T) {
+	dir := t.TempDir()
+	xml := filepath.Join(xmlDir(t, "b"), "b.xml")
+	c, err := LoadCatalog(xml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p1 := writeRaw(t, dir, t0, ev(0, fixture.RX, "XML=a\r\n"), reportEv())
+	p2 := writeRaw(t, dir, t0.Add(time.Hour), ev(0, fixture.Note, "xml: a"), reportEv())
+	p3 := writeRaw(t, dir, t0.Add(2*time.Hour), ev(0, fixture.Note, "xml: a"), reportEv())
+	// A second name is a problem of its own.
+	p4 := writeRaw(t, dir, t0.Add(3*time.Hour), ev(0, fixture.RX, "XML=c\r\n"), reportEv())
+	l, err := loadAll([]string{p1, p2, p3, p4}, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		p1 + ": log names a, --xml is " + xml + " (also in 2 more files)",
+		p4 + ": log names c, --xml is " + xml,
+	}
+	if strings.Join(l.Problems, "\n") != strings.Join(want, "\n") {
+		t.Errorf("problems =\n%s\nwant\n%s", strings.Join(l.Problems, "\n"), strings.Join(want, "\n"))
+	}
+}

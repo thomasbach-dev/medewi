@@ -141,7 +141,7 @@ func events(args []string, xmlPath string, stdin io.Reader, stdout, stderr io.Wr
 		sel.Events = []logview.Kind{logview.KindReport}
 	}
 	byRun := len(runSel) > 0 || len(sel.RunKinds) > 0
-	if o.margin != 0 && !byRun && !in.window() {
+	if fs.Changed("margin") && !byRun && !in.window() {
 		return fail(stderr, 2, "--margin needs a window (-s/-u), --run or --run-kind")
 	}
 	if o.hideMasked && in.f != logview.FormatText {
