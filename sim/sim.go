@@ -69,9 +69,10 @@ type Config struct {
 	// MCr emits the report-stream events verbatim (fixtures carry their own
 	// CRLF), one queue item per event; frame events are skipped but keep
 	// their time slot. The sim holds the current LCD like the machine: the
-	// latest whole recorded frame (a lone intact "<…>" record) the timeline
-	// has passed, updated in every mode; before the first, the stream's
-	// first whole frame. MC@ mirrors it, at once and then every 100 ms /
+	// latest whole recorded frame (an intact "<…>" record, reassembled
+	// across events and split from glued records) the timeline has passed,
+	// updated in every mode; before the first, the stream's first whole
+	// frame. MC@ mirrors it, at once and then every 100 ms /
 	// Speed (at least 1 ms), and skips the report events; recorded frames
 	// are never emitted themselves, and cut or glued frame pieces never
 	// become the LCD. The last of MCr and MC@ sent wins, like on the
@@ -95,7 +96,8 @@ type Config struct {
 	Switch map[string][]fixture.Event
 	// Once replays the stream a single time instead of looping. After the
 	// last event the replayer exits; reporting stays on (MCR still resends)
-	// and the display mirror keeps showing the last frame.
+	// and the display mirror keeps showing the last frame. A later MCr or
+	// MC@ starts the replay again from t=0, with the first frame on the LCD.
 	Once bool
 }
 
@@ -122,8 +124,11 @@ type Server struct {
 	lastItem   []byte          // last report item emitted, for MCR
 	stream     []fixture.Event // current replay source; Switch replaces it
 	lcd        []byte          // current LCD: a whole frame plus CRLF, or nil
-	// framePeriod, if positive, overrides the display period (tests).
-	framePeriod time.Duration
+	// clk paces the replayer and the display mirror (tests substitute it
+	// before Start); clockUsers counts their running goroutines, so a test
+	// can tell when all of them wait on clk.
+	clk        clock
+	clockUsers atomic.Int32
 
 	received []string // every command line from any client, in order
 
@@ -152,7 +157,7 @@ func New(cfg Config) *Server {
 	}
 	return &Server{
 		cfg: cfg, clients: make(map[*client]struct{}), quit: make(chan struct{}),
-		stream: cfg.Stream, lcd: firstFrame(cfg.Stream),
+		stream: cfg.Stream, lcd: firstFrame(cfg.Stream), clk: realClock{},
 	}
 }
 
@@ -427,11 +432,8 @@ const (
 )
 
 // displayPeriod is the display mirror's period: 100 ms / Speed, at least
-// 1 ms (or the test override).
+// 1 ms.
 func (s *Server) displayPeriod() time.Duration {
-	if s.framePeriod > 0 {
-		return s.framePeriod
-	}
 	return max(time.Duration(float64(lcdFramePeriod)/s.cfg.Speed), minFramePeriod)
 }
 
@@ -463,13 +465,21 @@ func (s *Server) startReplayerLocked() {
 	var events []fixture.Event
 	var frames []bool
 	var lcds [][]byte
+	var sc lcdScanner
 	frame := false
 	for _, ev := range s.stream {
 		if ev.Dir == fixture.RX {
-			frame = isFrameEvent(ev.Data, frame)
+			found := sc.feed(ev.Data)
+			var lcd []byte
+			if len(found) > 0 {
+				lcd = found[len(found)-1]
+			}
+			// An event that completes an LCD frame is display traffic: it
+			// never also goes out as a report item.
+			frame = isFrameEvent(ev.Data, frame) || lcd != nil
 			events = append(events, ev)
 			frames = append(frames, frame)
-			lcds = append(lcds, wholeFrame(ev.Data))
+			lcds = append(lcds, lcd)
 		}
 	}
 	s.lcd = firstFrame(s.stream)
@@ -479,29 +489,57 @@ func (s *Server) startReplayerLocked() {
 	stop := make(chan struct{})
 	s.stopReplay = stop
 	s.wg.Add(1)
+	s.clockUsers.Add(1)
 	go s.replay(events, frames, lcds, stop)
 }
 
-// wholeFrame returns data as an LCD item (the frame plus CRLF) if it is
-// one intact display frame and nothing else, or nil: a cut frame, or one
-// glued to another record, is not what the LCD showed.
-func wholeFrame(data []byte) []byte {
-	line := bytes.TrimRight(data, "\r\n")
-	if _, err := leva.ParseFrame(line); err != nil {
-		return nil
-	}
-	return append(append(make([]byte, 0, len(line)+2), line...), '\r', '\n')
+// lcdScanner finds the whole display frames in RX traffic that may begin
+// or end anywhere (a levacap event is a TCP read, a raw-log event a line):
+// it carries the unterminated rest of one event over to the next, splits
+// each CRLF-terminated line into records (leva.SplitLine, as leva.Conn
+// does) and keeps the intact frames. A cut-off frame never counts; a whole
+// one glued on after it does.
+type lcdScanner struct {
+	pending []byte
 }
 
-// firstFrame returns the first whole frame among events' RX events as an
-// LCD item, or nil if there is none.
+// feed scans one event and returns the whole frames it completes, each as
+// an LCD item (the frame plus CRLF), in order.
+func (sc *lcdScanner) feed(data []byte) [][]byte {
+	buf := append(append([]byte(nil), sc.pending...), data...)
+	var found [][]byte
+	for {
+		i := bytes.Index(buf, []byte("\r\n"))
+		if i < 0 {
+			break
+		}
+		for _, p := range leva.SplitLine(buf[:i]) {
+			if p.Fragment {
+				continue
+			}
+			if _, err := leva.ParseFrame(p.Data); err == nil {
+				found = append(found, append(append(make([]byte, 0, len(p.Data)+2), p.Data...), '\r', '\n'))
+			}
+		}
+		buf = buf[i+2:]
+	}
+	if len(buf) > maxLineBytes { // no line end in sight: no frame either
+		buf = nil
+	}
+	sc.pending = append([]byte(nil), buf...)
+	return found
+}
+
+// firstFrame returns the first whole frame in events' RX traffic as an LCD
+// item, or nil if there is none.
 func firstFrame(events []fixture.Event) []byte {
+	var sc lcdScanner
 	for _, ev := range events {
 		if ev.Dir != fixture.RX {
 			continue
 		}
-		if f := wholeFrame(ev.Data); f != nil {
-			return f
+		if found := sc.feed(ev.Data); len(found) > 0 {
+			return found[0]
 		}
 	}
 	return nil
@@ -516,7 +554,8 @@ func (s *Server) startMirrorLocked() {
 	stop := make(chan struct{})
 	s.stopMirror = stop
 	s.wg.Add(1)
-	go s.mirror(s.displayPeriod(), stop)
+	s.clockUsers.Add(1)
+	go s.mirror(s.clk.Now(), s.displayPeriod(), stop)
 }
 
 // stopMirrorLocked signals the display mirror, if any, to exit. s.mu held.
@@ -527,29 +566,28 @@ func (s *Server) stopMirrorLocked() {
 	}
 }
 
-// mirror sends the current LCD to all clients once per period until stop
-// closes. A ticker keeps the cadence (a late tick is dropped, never
-// caught up with a burst). With no LCD (a stream without whole frames) it
-// sends nothing.
-func (s *Server) mirror(period time.Duration, stop chan struct{}) {
+// mirror sends the current LCD to all clients at start + k periods
+// (k = 1, 2, …) until stop closes. Like a ticker it keeps the cadence: a
+// late tick sends once and the ticks it overran are dropped, never caught
+// up with a burst. With no LCD (a stream without whole frames) it sends
+// nothing.
+func (s *Server) mirror(start time.Time, period time.Duration, stop chan struct{}) {
 	defer s.wg.Done()
-	t := time.NewTicker(period)
-	defer t.Stop()
-	for {
-		select {
-		case <-stop:
+	defer s.clockUsers.Add(-1)
+	for k := 1; ; {
+		if !s.sleep(start.Add(time.Duration(k)*period).Sub(s.clk.Now()), stop) {
 			return
-		case <-t.C:
-			s.mu.Lock()
-			if s.stopMirror != stop {
-				s.mu.Unlock()
-				return
-			}
-			if s.lcd != nil {
-				s.fanOutLocked(s.lcd)
-			}
-			s.mu.Unlock()
 		}
+		s.mu.Lock()
+		if s.stopMirror != stop {
+			s.mu.Unlock()
+			return
+		}
+		if s.lcd != nil {
+			s.fanOutLocked(s.lcd)
+		}
+		s.mu.Unlock()
+		k = int(s.clk.Now().Sub(start)/period) + 1
 	}
 }
 
@@ -637,13 +675,11 @@ func (s *Server) emit(data []byte, frame bool, lcd []byte, stop chan struct{}) b
 // is closed (or, with Once, until the last event); see emit.
 func (s *Server) replay(events []fixture.Event, frames []bool, lcds [][]byte, stop chan struct{}) {
 	defer s.wg.Done()
-	timer := time.NewTimer(0)
-	defer timer.Stop()
-	<-timer.C
+	defer s.clockUsers.Add(-1)
 	prev := events[0].T
 	for {
 		for i, ev := range events {
-			if !s.sleep(timer, time.Duration(float64(ev.T-prev)*float64(time.Millisecond)/s.cfg.Speed), stop) {
+			if !s.sleep(time.Duration(float64(ev.T-prev)*float64(time.Millisecond)/s.cfg.Speed), stop) {
 				return
 			}
 			prev = ev.T
@@ -655,7 +691,7 @@ func (s *Server) replay(events []fixture.Event, frames []bool, lcds [][]byte, st
 			s.finishReplay(stop)
 			return
 		}
-		if !s.sleep(timer, minLoopPause, stop) {
+		if !s.sleep(minLoopPause, stop) {
 			return
 		}
 		prev = events[0].T
@@ -672,8 +708,9 @@ func (s *Server) finishReplay(stop chan struct{}) {
 	}
 }
 
-// sleep waits d (if positive) or until stop closes; false means stopped.
-func (s *Server) sleep(timer *time.Timer, d time.Duration, stop chan struct{}) bool {
+// sleep waits d (if positive) on the server's clock or until stop closes;
+// false means stopped.
+func (s *Server) sleep(d time.Duration, stop chan struct{}) bool {
 	if d <= 0 {
 		select {
 		case <-stop:
@@ -682,14 +719,31 @@ func (s *Server) sleep(timer *time.Timer, d time.Duration, stop chan struct{}) b
 			return true
 		}
 	}
-	timer.Reset(d)
+	c, cancel := s.clk.NewTimer(d)
 	select {
 	case <-stop:
-		if !timer.Stop() {
-			<-timer.C
-		}
+		cancel()
 		return false
-	case <-timer.C:
+	case <-c:
 		return true
 	}
+}
+
+// clock is the time source of the replayer and the display mirror. The
+// real one is the wall clock; tests substitute one they advance by hand,
+// so pacing can be asserted exactly.
+type clock interface {
+	Now() time.Time
+	// NewTimer returns a channel that receives once d has passed, and a
+	// cancel func that releases the timer.
+	NewTimer(d time.Duration) (<-chan time.Time, func())
+}
+
+type realClock struct{}
+
+func (realClock) Now() time.Time { return time.Now() }
+
+func (realClock) NewTimer(d time.Duration) (<-chan time.Time, func()) {
+	t := time.NewTimer(d)
+	return t.C, func() { t.Stop() }
 }
