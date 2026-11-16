@@ -18,18 +18,6 @@ var (
 	ErrReleaseStore   = errors.New("daemon: release state could not be saved")
 )
 
-// releaseBannerTimeout bounds the wait for the idle banner after the
-// release's "MC " (banners come about once a second). A variable so tests
-// can shrink it.
-var releaseBannerTimeout = 3 * time.Second
-
-// afterReleaseWrite runs between a release store write and the matching
-// state update; tests widen that window with it.
-var afterReleaseWrite = func() {}
-
-// releaseStoreWrite runs a release store write; tests make it fail.
-var releaseStoreWrite = func(ctx context.Context, write func(context.Context) error) error { return write(ctx) }
-
 // errReleased is the cancel cause of a session ended by Release.
 var errReleased = errors.New("daemon: session ended by a release")
 
@@ -58,7 +46,7 @@ func releasedErr(until time.Time) error {
 // (ErrInvalidRelease); a release while released replaces the end. The end
 // is persisted first: if that fails, nothing changes and the error wraps
 // ErrReleaseStore. A running session then stops the report stream, checks
-// for the idle banner (bounded by releaseBannerTimeout) and closes, and only
+// for the idle banner (bounded by tuning.releaseBannerTimeout) and closes, and only
 // then does Release return. If ctx ends first it returns ctx's error; the
 // release stays in effect.
 func (d *Daemon) Release(ctx context.Context, until time.Time) (ReleaseResult, error) {
@@ -131,11 +119,11 @@ func (d *Daemon) storeRelease(ctx context.Context, write func(context.Context) e
 	}
 	sctx, cancel := storeCtx(ctx)
 	defer cancel()
-	if err := releaseStoreWrite(sctx, write); err != nil {
+	if err := d.tn.releaseStoreWrite(sctx, write); err != nil {
 		slog.Error("storing the machine release", "err", err)
 		return fmt.Errorf("%w: %w", ErrReleaseStore, err)
 	}
-	afterReleaseWrite()
+	d.tn.afterReleaseWrite()
 	return nil
 }
 
@@ -207,13 +195,13 @@ func (d *Daemon) sleepWake(ctx context.Context, dur time.Duration) bool {
 	return true
 }
 
-// stopForRelease sends "MC " and waits up to releaseBannerTimeout for a new
+// stopForRelease sends "MC " and waits up to tuning.releaseBannerTimeout for a new
 // idle banner, the sign that the machine is back to idle and free for the
 // next client. It reports whether the banner came.
 func (d *Daemon) stopForRelease(ctx context.Context, conn *leva.Conn) bool {
 	n := conn.Banners()
 	d.stopReports(ctx, conn)
-	deadline := time.NewTimer(releaseBannerTimeout)
+	deadline := time.NewTimer(d.tn.releaseBannerTimeout)
 	defer deadline.Stop()
 	tick := time.NewTicker(25 * time.Millisecond)
 	defer tick.Stop()

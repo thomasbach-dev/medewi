@@ -16,6 +16,7 @@ import (
 )
 
 func TestPowerFromPayload(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		p    string
 		want PowerState
@@ -34,6 +35,7 @@ func TestPowerFromPayload(t *testing.T) {
 }
 
 func TestStatusFollowsStream(t *testing.T) {
+	t.Parallel()
 	s := startSim(t, simConfig(idleLines(20)))
 	d, stop := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
 	waitFor(t, "connected, spec ok, active, temp 93", func() bool {
@@ -85,6 +87,7 @@ func waitSentinel(t *testing.T, d *Daemon) {
 }
 
 func TestRecordsShotEndToEnd(t *testing.T) {
+	t.Parallel()
 	cfg := simConfig(shotLines(9))
 	cfg.Once = true
 	s := startSim(t, cfg)
@@ -118,14 +121,11 @@ func TestRecordsShotEndToEnd(t *testing.T) {
 }
 
 func TestMCqUnansweredRetries(t *testing.T) {
-	old := mcqSpacing
-	mcqSpacing = 50 * time.Millisecond
-	t.Cleanup(func() { mcqSpacing = old })
-
+	t.Parallel()
 	cfg := simConfig(idleLines(20))
 	cfg.Responses = nil
 	s := startSim(t, cfg)
-	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)), func(k *tuning) { k.mcqSpacing = 50 * time.Millisecond })
 	waitFor(t, "more than 3 MC?", func() bool { return count(s.Received(), "MC?") > 3 })
 	if d.Status().SpecOK {
 		t.Error("SpecOK without an XML= reply")
@@ -137,6 +137,7 @@ func TestMCqUnansweredRetries(t *testing.T) {
 }
 
 func TestMissingFieldWarns(t *testing.T) {
+	// Not parallel: it swaps the default slog logger (see TestDialFailureIsInfo).
 	logs := &lockedBuffer{}
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
@@ -161,6 +162,7 @@ func TestMissingFieldWarns(t *testing.T) {
 }
 
 func TestSpecMismatchDegrades(t *testing.T) {
+	t.Parallel()
 	cfg := simConfig(idleLines(20))
 	cfg.Responses = map[string][]string{"MC?": {"XML=other"}}
 	s := startSim(t, cfg)
@@ -182,6 +184,7 @@ func TestSpecMismatchDegrades(t *testing.T) {
 }
 
 func TestReadyDropsInStandby(t *testing.T) {
+	t.Parallel()
 	cfg := simConfig(idleLines(20))
 	cfg.Switch = map[string][]fixture.Event{
 		"TEST-STANDBY": stream(repeat(20, line('?', "???", 0, 0, 0, 0, 0, 0))...),
@@ -206,6 +209,7 @@ func TestReadyDropsInStandby(t *testing.T) {
 }
 
 func TestDisconnectMidShotTruncatedLost(t *testing.T) {
+	t.Parallel()
 	var pump [][]byte
 	for i := range 20 {
 		pump = append(pump, line('*', "PID", 93, 93, 9, 9, 120, float64(i+1)))
@@ -239,6 +243,7 @@ func TestDisconnectMidShotTruncatedLost(t *testing.T) {
 }
 
 func TestShutdownMidShotTruncatedShutdown(t *testing.T) {
+	t.Parallel()
 	var pump [][]byte
 	for i := range 20 {
 		pump = append(pump, line('*', "PID", 93, 93, 9, 9, 120, float64(i+1)))
@@ -256,6 +261,7 @@ func TestShutdownMidShotTruncatedShutdown(t *testing.T) {
 }
 
 func TestEventExecRuns(t *testing.T) {
+	t.Parallel()
 	out := filepath.Join(t.TempDir(), "events")
 	s := startSim(t, simConfig(idleLines(20)))
 	cfg := daemonConfig(s.Addr().String(), openStore(t))
@@ -268,6 +274,7 @@ func TestEventExecRuns(t *testing.T) {
 }
 
 func TestDanglingClosedAtStartup(t *testing.T) {
+	t.Parallel()
 	st := openStore(t)
 	id, err := st.BeginBrew(context.Background(), time.Now())
 	if err != nil {
@@ -289,11 +296,7 @@ func TestDanglingClosedAtStartup(t *testing.T) {
 // stream while TCP stays healthy. The daemon must notice the silence,
 // store the open brew as truncated and reconnect.
 func TestStalledStreamReconnects(t *testing.T) {
-	old := reportStallTimeout
-	reportStallTimeout = 300 * time.Millisecond
-	// Registered before runDaemon, so it runs after the daemon has stopped.
-	t.Cleanup(func() { reportStallTimeout = old })
-
+	t.Parallel()
 	var pump [][]byte
 	for i := range 20 {
 		pump = append(pump, line('*', "PID", 93, 93, 9, 9, 120, float64(i+1)))
@@ -302,7 +305,7 @@ func TestStalledStreamReconnects(t *testing.T) {
 	st := openStore(t)
 	cfg := daemonConfig(s.Addr().String(), st)
 	cfg.BackoffMin, cfg.BackoffMax = 500*time.Millisecond, 500*time.Millisecond
-	d, stop := runDaemon(t, cfg)
+	d, stop := runDaemon(t, cfg, func(k *tuning) { k.reportStallTimeout = 300 * time.Millisecond })
 	waitFor(t, "brew open", func() bool { return d.Status().BrewOpen })
 
 	// A second client stops the stream for everyone; TCP stays up.
@@ -330,6 +333,8 @@ func TestStalledStreamReconnects(t *testing.T) {
 // A machine that is switched off refuses or drops connections: that is a
 // normal state, logged at info level, not a warning.
 func TestDialFailureIsInfo(t *testing.T) {
+	// Not parallel: it swaps the default slog logger. Serial tests finish
+	// before any parallel one starts, so nothing else logs meanwhile.
 	logs := &lockedBuffer{}
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
@@ -351,6 +356,7 @@ func TestDialFailureIsInfo(t *testing.T) {
 }
 
 func TestDefaultMaxBackoff(t *testing.T) {
+	t.Parallel()
 	if got := New(Config{}).cfg.BackoffMax; got != 3*time.Minute {
 		t.Errorf("default BackoffMax = %v, want 3m", got)
 	}

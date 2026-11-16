@@ -39,7 +39,8 @@ func acceptCounter(t *testing.T) (addr string, n func() int) {
 	return l.Addr().String(), func() int { return int(hits.Load()) }
 }
 
-func shrinkBannerTimeout(t *testing.T) { shrink(t, &releaseBannerTimeout, 500*time.Millisecond) }
+// shortBanner shrinks the wait for the idle banner after a release.
+func shortBanner(k *tuning) { k.releaseBannerTimeout = 500 * time.Millisecond }
 
 func lastCmd(cmds []string) string {
 	if len(cmds) == 0 {
@@ -57,9 +58,9 @@ func waitReconnected(t *testing.T, d *Daemon) {
 }
 
 func TestReleaseClosesSession(t *testing.T) {
-	shrinkBannerTimeout(t)
+	t.Parallel()
 	s := startSim(t, simConfig(idleLines(20)))
-	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)), shortBanner)
 	waitActive(t, d)
 
 	until := time.Now().Add(time.Hour)
@@ -92,10 +93,10 @@ func TestReleaseClosesSession(t *testing.T) {
 }
 
 func TestReleaseMidShotTruncatedReleased(t *testing.T) {
-	shrinkBannerTimeout(t)
+	t.Parallel()
 	s := startSim(t, simConfig(pumpLines(20)))
 	st := openStore(t)
-	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), st))
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), st), shortBanner)
 	waitFor(t, "brew open", func() bool { return d.Status().BrewOpen })
 
 	if _, err := d.Release(reqCtx(t), time.Now().Add(time.Hour)); err != nil {
@@ -108,9 +109,9 @@ func TestReleaseMidShotTruncatedReleased(t *testing.T) {
 }
 
 func TestReleaseExpiresAndReconnects(t *testing.T) {
-	shrinkBannerTimeout(t)
+	t.Parallel()
 	s := startSim(t, simConfig(idleLines(20)))
-	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)), shortBanner)
 	waitActive(t, d)
 
 	if _, err := d.Release(reqCtx(t), time.Now().Add(300*time.Millisecond)); err != nil {
@@ -126,12 +127,12 @@ func TestReleaseExpiresAndReconnects(t *testing.T) {
 }
 
 func TestReclaim(t *testing.T) {
-	shrinkBannerTimeout(t)
+	t.Parallel()
 	s := startSim(t, simConfig(idleLines(20)))
 	cfg := daemonConfig(s.Addr().String(), openStore(t))
 	// Only the wake-up can explain a reconnect faster than this.
 	cfg.BackoffMin, cfg.BackoffMax = time.Minute, time.Minute
-	d, _ := runDaemon(t, cfg)
+	d, _ := runDaemon(t, cfg, shortBanner)
 	waitActive(t, d)
 
 	if err := d.Reclaim(reqCtx(t)); err != nil {
@@ -156,10 +157,10 @@ func TestReclaim(t *testing.T) {
 }
 
 func TestReleaseReplacesUntil(t *testing.T) {
-	shrinkBannerTimeout(t)
+	t.Parallel()
 	s := startSim(t, simConfig(idleLines(20)))
 	st := openStore(t)
-	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), st))
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), st), shortBanner)
 	waitActive(t, d)
 
 	if _, err := d.Release(reqCtx(t), time.Now().Add(time.Hour)); err != nil {
@@ -186,10 +187,10 @@ func TestReleaseReplacesUntil(t *testing.T) {
 }
 
 func TestReleaseRefusals(t *testing.T) {
-	shrinkBannerTimeout(t)
+	t.Parallel()
 	s := startSim(t, simConfig(idleLines(20)))
 	cfg, _, _ := rawDaemonConfig(t, s.Addr().String())
-	d, _ := runDaemon(t, cfg)
+	d, _ := runDaemon(t, cfg, shortBanner)
 	waitActive(t, d)
 
 	if _, err := d.Release(reqCtx(t), time.Now().Add(-time.Second)); !errors.Is(err, ErrInvalidRelease) {
@@ -214,11 +215,11 @@ func TestReleaseRefusals(t *testing.T) {
 }
 
 func TestReleaseStoreFailure(t *testing.T) {
-	shrinkBannerTimeout(t)
+	t.Parallel()
 	t.Run("release", func(t *testing.T) {
 		s := startSim(t, simConfig(idleLines(20)))
 		st := openStore(t)
-		d, _ := runDaemon(t, daemonConfig(s.Addr().String(), st))
+		d, _ := runDaemon(t, daemonConfig(s.Addr().String(), st), shortBanner)
 		waitActive(t, d)
 		_ = st.Close()
 
@@ -232,7 +233,7 @@ func TestReleaseStoreFailure(t *testing.T) {
 	t.Run("reclaim", func(t *testing.T) {
 		s := startSim(t, simConfig(idleLines(20)))
 		st := openStore(t)
-		d, _ := runDaemon(t, daemonConfig(s.Addr().String(), st))
+		d, _ := runDaemon(t, daemonConfig(s.Addr().String(), st), shortBanner)
 		waitActive(t, d)
 		if _, err := d.Release(reqCtx(t), time.Now().Add(time.Hour)); err != nil {
 			t.Fatalf("Release: %v", err)
@@ -250,6 +251,7 @@ func TestReleaseStoreFailure(t *testing.T) {
 }
 
 func TestReleasePersistsAcrossRestart(t *testing.T) {
+	t.Parallel()
 	t.Run("future", func(t *testing.T) {
 		addr, n := acceptCounter(t)
 		st := openStore(t)
@@ -281,6 +283,7 @@ func TestReleasePersistsAcrossRestart(t *testing.T) {
 
 // An unreadable release state must not lead to a dial: Run fails closed.
 func TestReleaseUnreadableFailsClosed(t *testing.T) {
+	t.Parallel()
 	addr, n := acceptCounter(t)
 	st := openStore(t)
 	_ = st.Close()
@@ -296,6 +299,7 @@ func TestReleaseUnreadableFailsClosed(t *testing.T) {
 }
 
 func TestReleaseDuringConnect(t *testing.T) {
+	t.Parallel()
 	cfg := simConfig(idleLines(20))
 	cfg.BannerInterval = 0 // one banner on connect: WaitReady waits out Settle
 	s := startSim(t, cfg)
@@ -330,13 +334,13 @@ func TestReleaseDuringConnect(t *testing.T) {
 // A display sample in flight at release must not leave MC@ or MCr after the
 // final "MC ". Samples are made frequent to hit that window.
 func TestReleaseWithDisplaySampling(t *testing.T) {
-	shrinkBannerTimeout(t)
+	t.Parallel()
 	for range 5 {
 		cfg := simConfig(withFrames(idleLines(40)))
 		s := startSim(t, cfg)
 		dcfg := daemonConfig(s.Addr().String(), openStore(t))
 		dcfg.DisplayEvery, dcfg.DisplayFor = 50*time.Millisecond, 30*time.Millisecond
-		d, stop := runDaemon(t, dcfg)
+		d, stop := runDaemon(t, dcfg, shortBanner)
 		waitActive(t, d)
 		waitFor(t, "a sample", func() bool { return count(s.Received(), "MC@") >= 1 })
 
@@ -355,11 +359,11 @@ func TestReleaseWithDisplaySampling(t *testing.T) {
 // Without the idle banner after "MC " the release still goes through and
 // says so.
 func TestReleaseBannerMissing(t *testing.T) {
-	shrink(t, &releaseBannerTimeout, 200*time.Millisecond)
+	t.Parallel()
 	cfg := simConfig(idleLines(20))
 	cfg.BannerInterval = 0
 	s := startSim(t, cfg)
-	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)), func(k *tuning) { k.releaseBannerTimeout = 200 * time.Millisecond })
 	waitActive(t, d)
 
 	res, err := d.Release(reqCtx(t), time.Now().Add(time.Hour))
@@ -378,6 +382,7 @@ func TestReleaseBannerMissing(t *testing.T) {
 }
 
 func TestReleaseWhileDisconnected(t *testing.T) {
+	t.Parallel()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -401,6 +406,7 @@ func TestReleaseWhileDisconnected(t *testing.T) {
 // Concurrent releases and reclaims must leave the store and the status in
 // agreement: a restart has to come back exactly as released as the daemon was.
 func TestReleaseReclaimConcurrentAgree(t *testing.T) {
+	t.Parallel()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -408,9 +414,8 @@ func TestReleaseReclaimConcurrentAgree(t *testing.T) {
 	addr := l.Addr().String()
 	_ = l.Close()
 	// Widen the window between each store write and its state update.
-	shrink(t, &afterReleaseWrite, func() { time.Sleep(time.Millisecond) })
 	st := openStore(t)
-	d, _ := runDaemon(t, daemonConfig(addr, st))
+	d, _ := runDaemon(t, daemonConfig(addr, st), func(k *tuning) { k.afterReleaseWrite = func() { time.Sleep(time.Millisecond) } })
 
 	for round := range 20 {
 		var wg sync.WaitGroup
@@ -489,8 +494,7 @@ func countingProxy(t *testing.T, target string) (addr string, down func() int) {
 // ended (here: a stalled stream) sends no "MC " and checks no banner, so it
 // must not report one, although banners came before the reports.
 func TestReleaseAfterStallReportsNoBanner(t *testing.T) {
-	shrinkBannerTimeout(t)
-	shrink(t, &reportStallTimeout, 300*time.Millisecond)
+	t.Parallel()
 	type result struct {
 		res ReleaseResult
 		err error
@@ -498,7 +502,7 @@ func TestReleaseAfterStallReportsNoBanner(t *testing.T) {
 	got := make(chan result, 1)
 	daemon := make(chan *Daemon, 1)
 	var once sync.Once
-	shrink(t, &sessionEnding, func() {
+	sessionEnding := func() {
 		once.Do(func() {
 			d := <-daemon
 			go func() {
@@ -509,9 +513,9 @@ func TestReleaseAfterStallReportsNoBanner(t *testing.T) {
 				time.Sleep(time.Millisecond)
 			}
 		})
-	})
+	}
 	s := startSim(t, simConfig(idleLines(20)))
-	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)))
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)), shortBanner, func(k *tuning) { k.reportStallTimeout = 300 * time.Millisecond }, func(k *tuning) { k.sessionEnding = sessionEnding })
 	daemon <- d
 	waitActive(t, d)
 
