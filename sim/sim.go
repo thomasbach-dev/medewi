@@ -58,28 +58,29 @@ type Config struct {
 	// for them are never sent.
 	Responses map[string][]string
 	// Stream is the recorded traffic for replay, on one timeline (T deltas /
-	// Speed). TX events are skipped. An RX event is an LCD frame or
-	// report-stream traffic (reports, notices, banners); the last record
-	// that starts in it decides (leva.LastRecordStart): a stream switch
-	// glues records, also inside a TCP read, and the last one is what the
-	// machine was sending then. An event with no record start (a
-	// continuation piece) takes the class of the RX event before it; a
-	// first event without one is report-stream traffic.
+	// Speed). TX events are skipped. RX traffic is report-stream traffic
+	// (reports, notices, banners) and LCD frames; a stream switch glues
+	// records, also inside a TCP read. An RX event without frame bytes is
+	// one report item, written verbatim (fixtures carry their own CRLF), so
+	// frameless fixtures replay byte-for-byte. An event with frame bytes (a
+	// frame record in it, or the rest of a frame cut by the event before)
+	// is routed by record, CRLF lines split as leva.SplitLine does and
+	// reassembled across events: its report-stream records become report
+	// items, whole frames update the LCD, frame fragments are dropped; an
+	// intact frame is never part of a report item.
 	//
-	// MCr emits the report-stream events verbatim (fixtures carry their own
-	// CRLF), one queue item per event; frame events are skipped but keep
-	// their time slot. The sim holds the current LCD like the machine: the
-	// latest whole recorded frame (an intact "<…>" record, reassembled
-	// across events and split from glued records) the timeline has passed,
-	// updated in every mode; before the first, the stream's first whole
-	// frame. MC@ mirrors it, at once and then every 100 ms /
-	// Speed (at least 1 ms), and skips the report events; recorded frames
-	// are never emitted themselves, and cut or glued frame pieces never
-	// become the LCD. The last of MCr and MC@ sent wins, like on the
-	// machine; switching between them keeps the timeline. MC<space> stops
-	// both. MCR resends the current LCD in display mode and the last report
-	// item otherwise. With no RX events (or no whole frames, or no reports),
-	// MCr/MC@ set the flag but emit nothing, and MCR sends nothing.
+	// MCr queues the report items to all clients; frames are skipped but
+	// keep their time slot. The sim holds the current LCD like the machine:
+	// the latest whole recorded frame the timeline has passed, updated in
+	// every mode; before the first, the stream's first whole frame. MC@
+	// mirrors it, at once and then every 100 ms / Speed (at least 1 ms),
+	// and skips the report items; recorded frames are never emitted
+	// themselves, and cut frame pieces never become the LCD. The last of
+	// MCr and MC@ sent wins, like on the machine; switching between them
+	// keeps the timeline. MC<space> stops both. MCR resends the current LCD
+	// in display mode and the last report item otherwise. With no RX events
+	// (or no whole frames, or no reports), MCr/MC@ set the flag but emit
+	// nothing, and MCR sends nothing.
 	Stream []fixture.Event
 	// BannerInterval, if positive, makes the sim repeat Banner to all clients
 	// at this interval while no stream is on, like the real machine's idle
@@ -463,23 +464,12 @@ func (s *Server) startReplay(display bool) {
 // LCD. s.mu held; no replayer may be running.
 func (s *Server) startReplayerLocked() {
 	var events []fixture.Event
-	var frames []bool
-	var lcds [][]byte
-	var sc lcdScanner
-	frame := false
+	var routes []route
+	var rt router
 	for _, ev := range s.stream {
 		if ev.Dir == fixture.RX {
-			found := sc.feed(ev.Data)
-			var lcd []byte
-			if len(found) > 0 {
-				lcd = found[len(found)-1]
-			}
-			// An event that completes an LCD frame is display traffic: it
-			// never also goes out as a report item.
-			frame = isFrameEvent(ev.Data, frame) || lcd != nil
 			events = append(events, ev)
-			frames = append(frames, frame)
-			lcds = append(lcds, lcd)
+			routes = append(routes, rt.feed(ev.Data))
 		}
 	}
 	s.lcd = firstFrame(s.stream)
@@ -490,56 +480,156 @@ func (s *Server) startReplayerLocked() {
 	s.stopReplay = stop
 	s.wg.Add(1)
 	s.clockUsers.Add(1)
-	go s.replay(events, frames, lcds, stop)
+	go s.replay(events, routes, stop)
 }
 
-// lcdScanner finds the whole display frames in RX traffic that may begin
-// or end anywhere (a levacap event is a TCP read, a raw-log event a line):
-// it carries the unterminated rest of one event over to the next, splits
-// each CRLF-terminated line into records (leva.SplitLine, as leva.Conn
-// does) and keeps the intact frames. A cut-off frame never counts; a whole
-// one glued on after it does.
-type lcdScanner struct {
-	pending []byte
+// route is what one RX event yields: the report-stream items queued in
+// report mode, in order, and the whole frames it completes (the last one
+// becomes the current LCD), each frame with CRLF.
+type route struct {
+	reports [][]byte
+	frames  [][]byte
 }
 
-// feed scans one event and returns the whole frames it completes, each as
-// an LCD item (the frame plus CRLF), in order.
-func (sc *lcdScanner) feed(data []byte) [][]byte {
-	buf := append(append([]byte(nil), sc.pending...), data...)
-	var found [][]byte
+// lcd returns the frame the event leaves on the LCD, or nil.
+func (r route) lcd() []byte {
+	if len(r.frames) == 0 {
+		return nil
+	}
+	return r.frames[len(r.frames)-1]
+}
+
+// router splits RX traffic, which may begin or end anywhere (a levacap
+// event is a TCP read, a raw-log event a line), into what the report
+// stream and the LCD get. It tracks the current unterminated line across
+// events, and how much of it is handled (queued or dropped).
+//
+// An event without frame bytes (no frame record in it, nothing of a frame
+// pending) is one verbatim report item, so frameless fixtures replay
+// byte-for-byte. An event with frame bytes is routed by record: each
+// CRLF line is split with leva.SplitLine (as leva.Conn does, also across
+// events); report-stream records (reports, their fragments and
+// continuations, notices, banners) are queued with the CRLF that ends
+// their line, whole frames go to the LCD, frame fragments are dropped.
+// A record cut off at the end of such an event is queued at once if it
+// is report traffic (its rest arrives as the next event's item) and kept
+// back if it is a frame. An intact frame is never part of a report item.
+type router struct {
+	line    []byte // the current line so far, without CRLF
+	handled int    // bytes of line already queued or dropped
+}
+
+func isFrameRecord(p []byte) bool { return len(p) > 0 && p[0] == '<' }
+
+// feed routes one event.
+func (rt *router) feed(data []byte) route {
+	start := len(rt.line)
+	buf := append(append([]byte(nil), rt.line...), data...)
+	if rt.handled == len(rt.line) && !framesFrom(buf, start) {
+		rt.keepTail(buf, true)
+		return route{reports: [][]byte{data}}
+	}
+	var out route
+	from := rt.handled
 	for {
 		i := bytes.Index(buf, []byte("\r\n"))
 		if i < 0 {
 			break
 		}
-		for _, p := range leva.SplitLine(buf[:i]) {
-			if p.Fragment {
-				continue
-			}
-			if _, err := leva.ParseFrame(p.Data); err == nil {
-				found = append(found, append(append(make([]byte, 0, len(p.Data)+2), p.Data...), '\r', '\n'))
-			}
-		}
+		rt.routeLine(&out, buf[:i], from, true)
+		buf, from = buf[i+2:], 0
+	}
+	rt.handled = rt.routeLine(&out, buf, from, false)
+	rt.line = append([]byte(nil), buf...)
+	if len(rt.line) > maxLineBytes { // no line end in sight: drop it
+		rt.line, rt.handled = nil, 0
+	}
+	return out
+}
+
+// keepTail keeps buf's unterminated rest as the current line, handled
+// entirely (all queued) or not.
+func (rt *router) keepTail(buf []byte, handled bool) {
+	if i := bytes.LastIndex(buf, []byte("\r\n")); i >= 0 {
 		buf = buf[i+2:]
 	}
-	if len(buf) > maxLineBytes { // no line end in sight: no frame either
-		buf = nil
+	rt.line = append([]byte(nil), buf...)
+	rt.handled = 0
+	if handled {
+		rt.handled = len(rt.line)
 	}
-	sc.pending = append([]byte(nil), buf...)
-	return found
+	if len(rt.line) > maxLineBytes {
+		rt.line, rt.handled = nil, 0
+	}
+}
+
+// framesFrom reports whether a frame record in buf's lines ends after
+// offset start (in the new event's bytes).
+func framesFrom(buf []byte, start int) bool {
+	off := 0
+	for len(buf) > 0 {
+		line, n := buf, len(buf)
+		if i := bytes.Index(buf, []byte("\r\n")); i >= 0 {
+			line, n = buf[:i], i+2
+		}
+		end := off
+		for _, p := range leva.SplitLine(line) {
+			end += len(p.Data)
+			if isFrameRecord(p.Data) && end > start {
+				return true
+			}
+		}
+		buf, off = buf[n:], off+n
+	}
+	return false
+}
+
+// routeLine routes the records of line from offset from on (what is before
+// it is handled already) and returns how much of line is handled after.
+// terminated says the line ended in CRLF; otherwise its last record may
+// continue in the next event.
+func (rt *router) routeLine(out *route, line []byte, from int, terminated bool) int {
+	pieces := leva.SplitLine(line)
+	off := 0
+	for i, p := range pieces {
+		end := off + len(p.Data)
+		last := i == len(pieces)-1
+		// A report queued before without its line end still gets the CRLF.
+		crlfDue := last && terminated && end == from && !isFrameRecord(p.Data)
+		switch {
+		case end <= from && !crlfDue:
+			// handled before
+		case isFrameRecord(p.Data):
+			if last && !terminated {
+				return off // a frame that may still complete
+			}
+			if _, err := leva.ParseFrame(p.Data); err == nil && !p.Fragment {
+				out.frames = append(out.frames, append(append(make([]byte, 0, len(p.Data)+2), p.Data...), '\r', '\n'))
+			}
+		default:
+			item := append([]byte(nil), line[max(off, from):end]...)
+			if last && terminated {
+				item = append(item, '\r', '\n')
+			}
+			if len(item) > 0 {
+				out.reports = append(out.reports, item)
+			}
+		}
+		off = end
+	}
+	return off
 }
 
 // firstFrame returns the first whole frame in events' RX traffic as an LCD
 // item, or nil if there is none.
 func firstFrame(events []fixture.Event) []byte {
-	var sc lcdScanner
+	var rt router
 	for _, ev := range events {
 		if ev.Dir != fixture.RX {
 			continue
 		}
-		if found := sc.feed(ev.Data); len(found) > 0 {
-			return found[0]
+		if r := rt.feed(ev.Data); len(r.frames) > 0 {
+			return r.frames[0]
 		}
 	}
 	return nil
@@ -591,18 +681,6 @@ func (s *Server) mirror(start time.Time, period time.Duration, stop chan struct{
 	}
 }
 
-// isFrameEvent reports whether an RX event belongs to the display stream:
-// the last record starting in it is a frame. Reports, notices and banners
-// are report-stream traffic; an event with no record start is a
-// continuation piece and keeps prev, the class of the event before it.
-func isFrameEvent(data []byte, prev bool) bool {
-	i := leva.LastRecordStart(data)
-	if i < 0 {
-		return prev
-	}
-	return data[i] == '<'
-}
-
 // switchStream handles a Switch command: replace the stream, put its first
 // whole frame on the LCD and, while reporting, restart replay on it.
 func (s *Server) switchStream(events []fixture.Event) {
@@ -649,31 +727,32 @@ func (s *Server) resendLast() {
 	}
 }
 
-// emit handles one replayed event unless stop was signalled: a whole
-// frame (lcd non-nil) replaces the current LCD, in every mode; report
-// traffic is queued to all clients in report mode. Frame events are never
-// queued (the display mirror sends the LCD), and report events are
-// skipped in display mode; either still used up its time slot.
-func (s *Server) emit(data []byte, frame bool, lcd []byte, stop chan struct{}) bool {
+// emit handles one replayed event unless stop was signalled: the frames
+// it completes replace the current LCD, in every mode; its report-stream
+// items are queued to all clients in report mode and skipped in display
+// mode. Either way the event used up its time slot.
+func (s *Server) emit(r route, stop chan struct{}) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopReplay != stop { // stopped (or superseded) since we last looked
 		return false
 	}
-	if lcd != nil {
+	if lcd := r.lcd(); lcd != nil {
 		s.lcd = lcd
 	}
-	if frame || s.display {
+	if s.display {
 		return true
 	}
-	s.lastItem = data
-	s.fanOutLocked(data)
+	for _, item := range r.reports {
+		s.lastItem = item
+		s.fanOutLocked(item)
+	}
 	return true
 }
 
 // replay walks events paced by their T deltas / Speed, looping until stop
 // is closed (or, with Once, until the last event); see emit.
-func (s *Server) replay(events []fixture.Event, frames []bool, lcds [][]byte, stop chan struct{}) {
+func (s *Server) replay(events []fixture.Event, routes []route, stop chan struct{}) {
 	defer s.wg.Done()
 	defer s.clockUsers.Add(-1)
 	prev := events[0].T
@@ -683,7 +762,7 @@ func (s *Server) replay(events []fixture.Event, frames []bool, lcds [][]byte, st
 				return
 			}
 			prev = ev.T
-			if !s.emit(ev.Data, frames[i], lcds[i], stop) {
+			if !s.emit(routes[i], stop) {
 				return
 			}
 		}

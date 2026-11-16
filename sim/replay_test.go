@@ -342,11 +342,12 @@ func firstAfter(t *testing.T, stream []fixture.Event, cmd string) string {
 	return readLine(t, r, c)
 }
 
-// A stream switch glues records: the record that completes an event
-// decides its class, since that is the stream the machine was sending.
-// Report mode shows the classification; in display mode recorded frames
-// only update the LCD (TestFragmentsNeverBecomeLCD).
-func TestGluedEventClassifiedByLastRecord(t *testing.T) {
+// A stream switch glues records, also inside a TCP read. An event without
+// frame bytes goes out verbatim; one with frame bytes is routed by record
+// (CRLF lines split as leva.SplitLine does, across events): report-stream
+// records are queued in report mode, whole frames only update the LCD
+// (TestFragmentsNeverBecomeLCD), frame fragments are dropped.
+func TestGluedEventRoutedByRecord(t *testing.T) {
 	cutFrameThenReport := "<102SOAK 1.0b  " + "{ - report}\r\n"
 	cutReportThenFrame := "{ - PID  93.0" + realFrame + "\r\n"
 	report := "{ - r}\r\n"
@@ -357,20 +358,22 @@ func TestGluedEventClassifiedByLastRecord(t *testing.T) {
 		cmd    string
 		want   string
 	}{
-		{"frame cut, report glued: MCr", []fixture.Event{rx(0, cutFrameThenReport), rx(10, frame), rx(20, report)}, "MCr", cutFrameThenReport},
-		{"report cut, frame glued: MCr", []fixture.Event{rx(0, cutReportThenFrame), rx(10, frame), rx(20, report)}, "MCr", report},
-		// A continuation piece (no record start) follows the event before it.
+		{"frame cut, report glued: MCr", []fixture.Event{rx(0, cutFrameThenReport), rx(10, frame), rx(20, report)}, "MCr", "{ - report}\r\n"},
+		// The cut report goes out as it came; the client splits it off the next one.
+		{"report cut, frame glued: MCr", []fixture.Event{rx(0, cutReportThenFrame), rx(10, frame), rx(20, report)}, "MCr", "{ - PID  93.0" + report},
 		{"frame continued: MCr", []fixture.Event{rx(0, "<102SOAK "), rx(5, "rest>\r\n"), rx(10, report)}, "MCr", report},
 		{"report continued: MCr", []fixture.Event{rx(0, "{ - r1"), rx(5, "2}\r\n"), rx(10, frame)}, "MCr", "{ - r12}\r\n"},
-		// A continuation piece with a glued record takes that record's class
-		// (chunked captures: the switch can fall inside a read).
-		{"report ends, frame glued in a piece: MCr", []fixture.Event{rx(0, "{ - r1"), rx(5, "2}\r\n<102SOAK"), rx(10, " rest>\r\n"), rx(15, report)}, "MCr", "{ - r1" + report},
-		{"frame ends, report glued in a piece: MCr", []fixture.Event{rx(0, "<102SOAK 1.0b"), rx(5, "  { - PID"), rx(10, " 93}\r\n"), rx(15, frame)}, "MCr", "  { - PID 93}\r\n"},
+		// Chunked captures: the switch can fall inside a read.
+		{"report ends, frame glued in a piece: MCr", []fixture.Event{rx(0, "{ - r1"), rx(5, "2}\r\n<102SOAK"), rx(10, " rest>\r\n"), rx(15, report)}, "MCr", "{ - r12}\r\n"},
+		{"frame ends, report glued in a piece: MCr", []fixture.Event{rx(0, "<102SOAK 1.0b"), rx(5, "  { - PID"), rx(10, " 93}\r\n"), rx(15, frame)}, "MCr", "{ - PID 93}\r\n"},
 		// Notices stay report-stream traffic.
 		{"notice: MCr", []fixture.Event{rx(0, frame), rx(10, "[READY]\r\n")}, "MCr", "[READY]\r\n"},
-		// An event that completes an LCD frame is display traffic, also
-		// with a report glued on after it: never both LCD and report item.
-		{"whole frame, report glued: MCr", []fixture.Event{rx(0, frame+"{ - r1}\r\n"), rx(10, report)}, "MCr", report},
+		// One read with a whole frame and a report: the frame goes to the
+		// LCD, the report is kept.
+		{"whole frame, report in the same read: MCr", []fixture.Event{rx(0, frame+"{ - r1}\r\n"), rx(10, report)}, "MCr", "{ - r1}\r\n"},
+		{"report, whole frame in the same read: MCr", []fixture.Event{rx(0, "{ - r0}\r\n"+frame), rx(10, report)}, "MCr", "{ - r0}\r\n"},
+		// A report cut at the end of such a read continues in the next one.
+		{"whole frame, cut report continued: MCr", []fixture.Event{rx(0, frame+"{ - PID 9"), rx(10, "3}\r\n"), rx(20, report)}, "MCr", "{ - PID 93}\r\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := firstAfter(t, tc.stream, tc.cmd); got != tc.want {

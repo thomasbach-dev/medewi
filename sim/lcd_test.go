@@ -2,8 +2,11 @@ package sim
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -243,4 +246,53 @@ func lcdAt(frames []recordedFrame, ms int64) (want []string) {
 		want = append(want, frames[i-1].line)
 	}
 	return want
+}
+
+// A read holding a report and then a whole frame keeps both: the report
+// goes out in report mode, the frame onto the LCD.
+func TestReportAndFrameInOneRead(t *testing.T) {
+	f0, f1 := lcdFrame("F0"), lcdFrame("F1")
+	stream := []fixture.Event{rx(0, f0+"\r\n"), rx(10, "{ - r0}\r\n"+f1+"\r\n"), rx(10000, "{ - end}\r\n")}
+	h := startFake(t, Config{Speed: 1, IdleTimeout: time10s, Stream: stream})
+	c, r := dialFake(t, h)
+	send(t, c, "MCr\r\n")
+	h.waitFor(t, "the replay", replayOn)
+	h.advance(t, 10*time.Millisecond)
+	expect(t, r, c, "{ - r0}\r\n")
+	if got := lcdOf(h.Server); got != f1+"\r\n" {
+		t.Fatalf("LCD %q, want %q", got, f1+"\r\n")
+	}
+}
+
+// Frameless fixtures replay byte-for-byte as before the LCD: every RX
+// event is one verbatim report item, and nothing reaches the LCD.
+func TestFramelessFixturesReplayVerbatim(t *testing.T) {
+	for _, name := range []string{"idle-stream", "shot-genlever", "steam-eco", "synthetic", "warmup-stream"} {
+		t.Run(name, func(t *testing.T) {
+			f, err := os.Open(filepath.Join("..", "testdata", "fixtures", name, "log.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = f.Close() }()
+			events, err := fixture.ReadLog(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var rt router
+			n := 0
+			for i, ev := range events {
+				if ev.Dir != fixture.RX {
+					continue
+				}
+				n++
+				got := rt.feed(ev.Data)
+				if len(got.reports) != 1 || !bytes.Equal(got.reports[0], ev.Data) || len(got.frames) != 0 {
+					t.Fatalf("event %d %q routed to %q, frames %q; want it verbatim", i, ev.Data, got.reports, got.frames)
+				}
+			}
+			if n == 0 {
+				t.Fatal("no RX events")
+			}
+		})
+	}
 }
