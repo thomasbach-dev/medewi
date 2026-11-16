@@ -117,8 +117,9 @@ Detection is issue #13; the data model for programs is issue #12.
 
 Observed 2026-11-14 from the raw log, warm machine (boiler 94 °C), blind
 basket in the portafilter, operator marks at start, at the key press and
-at the end. About 4:40 min from selecting the program to the return to
-the menu. Mode stays `PID`, setpoint 94, `Pressure SP` `?????`
+at the end. Fixture: `testdata/fixtures/backflush` (cut with `levalog
+extract`; the LCD frames show the phases and the progress bar). About
+4:40 min from selecting the program to the return to the menu. Mode stays `PID`, setpoint 94, `Pressure SP` `?????`
 throughout; only the LCD (third menu row, in place of `Backflush`) and
 the pump marker show the program.
 
