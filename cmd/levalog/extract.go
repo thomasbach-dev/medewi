@@ -45,7 +45,7 @@ func extractCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	fs := subFlags("extract", stderr)
 	in.registerWindow(fs)
 	fs.IntVar(&o.run, "run", 0, "the window of this run, by number as runs numbers it (needs the XML); -s/-u then pick the input")
-	fs.Var(systime.NewSpan(&o.margin), "margin", "widen the run window on both sides (systemd.time span, default 0; needs --run)")
+	fs.Var(systime.NewSpan(&o.margin), "margin", "widen the -s/-u or run window on both sides (systemd.time span, default 0; needs -s/-u or --run)")
 	fs.StringVar(&o.out, "out", "", "capture directory to write (must not exist or be empty), or - for log.jsonl's lines on stdout (required)")
 	fs.StringVar(&o.scenario, "scenario", "extract", "the manifest's scenario")
 	fs.StringVar(&o.notes, "notes", "", "free text for the manifest, before the provenance line")
@@ -61,12 +61,12 @@ func extractCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		return fail(stderr, 2, "extract needs --out DIR or --out -")
 	case byRun && o.run < 1:
 		return fail(stderr, 2, "--run: bad run %d (want N >= 1)", o.run)
+	case fs.Changed("margin") && !byRun && !in.window():
+		return fail(stderr, 2, "--margin needs a window (-s/-u) or --run")
 	case !byRun && !in.window():
 		return fail(stderr, 2, "extract needs a window: -s/--since and -u/--until, or --run N")
 	case !since.IsZero() && !until.IsZero() && !until.After(since):
 		return fail(stderr, 2, "--until must be after --since")
-	case fs.Changed("margin") && !byRun:
-		return fail(stderr, 2, "--margin needs --run")
 	case byRun && xmlPath == "":
 		return needXML(stderr, "--run")
 	case o.split && o.out == "-":
@@ -80,13 +80,15 @@ func extractCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 
 	// A run is cut whole, with its margins, from files before and after
 	// the window, as events --run prints it.
-	if byRun {
-		if !since.IsZero() {
-			since = since.Add(-o.margin)
-		}
-		if !until.IsZero() {
-			until = until.Add(o.margin)
-		}
+	// An explicit -s/-u window is widened the same way.
+	if !since.IsZero() {
+		since = since.Add(-o.margin)
+	}
+	if !until.IsZero() {
+		until = until.Add(o.margin)
+	}
+	if !byRun {
+		in.since.T, in.until.T = since, until
 	}
 	srcs, notes, empty, err := sourcePaths(in.args, in.dir, since, until, in.window())
 	if err != nil {

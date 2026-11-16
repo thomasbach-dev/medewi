@@ -227,7 +227,7 @@ func TestExtractUsageErrors(t *testing.T) {
 		{"until <= since", []string{"extract", "--dir", dir, "-s", "2026-11-14 08:59", "-u", "2026-11-14 08:59", "--out", out}, "--until"},
 		{"capture input", []string{"extract", "--run", "1", "--out", out, capDir}, "capture"},
 		{"capture input, window", append(append([]string{"extract", "--out", out}, winArgs...), capDir), "capture"},
-		{"margin without run", extractArgs(dir, "--margin", "5s", "--out", out), "--margin"},
+		{"margin without window or run", []string{"extract", "--dir", dir, "--margin", "5s", "--out", out}, "--margin"},
 		{"run without xml", extractArgs(dir, "--run", "1", "--out", out), "XML"},
 		{"bad run", extractArgs(dir, "--run", "1,2", "--out", out), "--run"},
 		{"format", extractArgs(dir, "--format", "csv", "--out", out), "format"},
@@ -520,5 +520,38 @@ func TestExtractRun(t *testing.T) {
 	code, _, stderr = runCmd(t, "--xml", xml, "extract", "--dir", dir, "--run", "3", "--out", "-")
 	if code != 1 || !strings.Contains(stderr, "--run 3: no such run") {
 		t.Errorf("no such run: exit %d, stderr %q", code, stderr)
+	}
+}
+
+func TestExtractMarginWidensWindow(t *testing.T) {
+	noEnv(t)
+	inCET(t)
+	dir := extractDir(t)
+	day := "2026-11-14 "
+	cases := []struct {
+		name      string
+		got, want []string
+	}{
+		{
+			"both",
+			[]string{"-s", day + "08:58:36", "-u", day + "08:58:40", "--margin", "6s"},
+			[]string{"-s", day + "08:58:30", "-u", day + "08:58:46"},
+		},
+		{"since only", []string{"-s", day + "08:58:36", "--margin", "7s"}, []string{"-s", day + "08:58:29"}},
+		{"until only", []string{"-u", day + "08:58:34", "--margin", "2s"}, []string{"-u", day + "08:58:36"}},
+	}
+	for _, c := range cases {
+		run1 := func(w []string) string {
+			args := append([]string{"extract", "--dir", dir, "--out", "-"}, w...)
+			code, out, errs := runCmd(t, args...)
+			if code != 0 {
+				t.Fatalf("%s %v: exit %d, stderr %q", c.name, w, code, errs)
+			}
+			return out
+		}
+		got, want := run1(c.got), run1(c.want)
+		if got == "" || got != want {
+			t.Errorf("%s: --margin output differs from the widened window\n got %q\nwant %q", c.name, got, want)
+		}
 	}
 }

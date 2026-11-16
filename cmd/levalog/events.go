@@ -69,7 +69,7 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	in.register(fs)
 	fs.StringVar(&o.run, "run", "", "only the windows of these runs, by number: 12, 3,5 or 7-9")
 	fs.StringVar(&o.runKind, "run-kind", "", "only the windows of runs of these kinds: shot, flush, draw")
-	fs.Var(systime.NewSpan(&o.margin), "margin", "widen each run window on both sides (systemd.time span, default 0; needs --run or --run-kind)")
+	fs.Var(systime.NewSpan(&o.margin), "margin", "widen each run window, or the -s/-u window without --run, on both sides (systemd.time span, default 0; needs -s/-u, --run or --run-kind)")
 	fs.StringVar(&o.event, "event", "", "only these event kinds, comma-separated: "+kindList())
 	fs.StringVar(&o.match, "match", "", "only events whose text contains this, ignoring case: note, notice, banner and reply text, "+
 		"a report's raw line, a frame's rows joined with | (not with --every)")
@@ -135,14 +135,14 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		}
 	}
 	sel.Match = o.match
-	sel.Since, sel.Until, sel.Margin = in.since.T, in.until.T, o.margin
+	sel.Margin = o.margin
 	sel.SkipStandby, sel.Changes = o.skipStandby || every, o.changes
 	if every {
 		sel.Events = []logview.Kind{logview.KindReport}
 	}
 	byRun := len(runSel) > 0 || len(sel.RunKinds) > 0
-	if o.margin != 0 && !byRun {
-		return fail(stderr, 2, "--margin needs --run or --run-kind")
+	if o.margin != 0 && !byRun && !in.window() {
+		return fail(stderr, 2, "--margin needs a window (-s/-u), --run or --run-kind")
 	}
 	if o.hideMasked && in.f != logview.FormatText {
 		return fail(stderr, 2, "--hide-masked applies to --format text only")
@@ -151,14 +151,18 @@ func events(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	// A selected run is printed whole: with its margins, from files before
 	// and after the window.
 	since, until := in.since.T, in.until.T
-	if byRun {
-		if !since.IsZero() {
-			since = since.Add(-o.margin)
-		}
-		if !until.IsZero() {
-			until = until.Add(o.margin)
-		}
+	if !since.IsZero() {
+		since = since.Add(-o.margin)
 	}
+	if !until.IsZero() {
+		until = until.Add(o.margin)
+	}
+	if !byRun {
+		// An explicit window takes the margin itself; with --run the
+		// window only picks the input and the run windows take it.
+		in.since.T, in.until.T = since, until
+	}
+	sel.Since, sel.Until = in.since.T, in.until.T
 	paths, code := in.paths(since, until, stderr)
 	if code != 0 || len(paths) == 0 {
 		return code

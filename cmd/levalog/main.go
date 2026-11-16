@@ -63,10 +63,12 @@ events --match TEXT keeps only events whose text contains TEXT, ignoring case
 rows joined with |); it does not combine with --every. medewictl mark TEXT
 writes a note "mark: TEXT"; find marks with
 levalog events --event note --match TEXT
-events --margin SPAN (default 0) widens each run window on both sides and
-needs --run or --run-kind.
+events --margin SPAN (default 0) widens each run window on both sides; without
+--run/--run-kind it widens the -s/-u window instead (an open side stays open),
+and it needs one of them. With --run and -s/-u, -s/-u only pick the input and
+the margin goes to the run windows.
 
-extract (-s T -u T | --run N [--margin SPAN]) --out DIR|- [--scenario NAME]
+extract (-s T -u T | --run N) [--margin SPAN] --out DIR|- [--scenario NAME]
 [--notes TEXT] [--split-sessions] reads raw logs only and keeps every event in the window
 verbatim (the first and last rx bytes cut to whole lines, t rebased to 0,
 the session's xml note first); with --run N the window is that run's, as

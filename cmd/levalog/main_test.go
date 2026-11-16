@@ -258,7 +258,7 @@ func TestEventsUsageErrors(t *testing.T) {
 		{"bad run-kind", []string{"--xml", synth, "events", "--run-kind", "espresso"}, "--run-kind"},
 		{"bad kind", []string{"--xml", synth, "runs", "--kind", "espresso"}, "--kind"},
 		{"bad margin", []string{"--xml", synth, "events", "--margin", "-5s"}, "--margin"},
-		{"margin without runs", []string{"--xml", synth, "events", "--margin", "2s"}, "--margin needs --run or --run-kind"},
+		{"margin without window or runs", []string{"--xml", synth, "events", "--margin", "2s"}, "--margin needs"},
 		{"hide-masked with jsonl", []string{"--xml", synth, "events", "--format", "jsonl", "--hide-masked"}, "--hide-masked"},
 		{"csv with other events", []string{"--xml", synth, "events", "--format", "csv", "--event", "report,note"}, "--event"},
 	}
@@ -715,7 +715,7 @@ func TestHelpExplainsColumns(t *testing.T) {
 		if code != 0 {
 			t.Errorf("%q: exit %d", args, code)
 		}
-		for _, w := range []string{"src", "run_t", "medewi adds", "fields", "runs", "events", "UTC", "directory of NAME.xml", "T WALL DIR EVENT", "# xml: NAME", "PEAK_BAR", "do not change the exit code", "needs --run or --run-kind", "--every 1d starts at 00:00 UTC", "negative t"} {
+		for _, w := range []string{"src", "run_t", "medewi adds", "fields", "runs", "events", "UTC", "directory of NAME.xml", "T WALL DIR EVENT", "# xml: NAME", "PEAK_BAR", "do not change the exit code", "the -s/-u window instead", "--every 1d starts at 00:00 UTC", "negative t"} {
 			if !strings.Contains(errs, w) {
 				t.Errorf("%q: help does not mention %q", args, w)
 			}
@@ -1556,5 +1556,41 @@ func TestSplitTimeHint(t *testing.T) {
 	code, _, stderr := runCmd(t, "--xml", synth, "summary", "no-such-file")
 	if code != 1 || strings.Contains(stderr, "looks like") || !strings.Contains(stderr, "no-such-file") {
 		t.Errorf("plain missing file: code %d, stderr %q", code, stderr)
+	}
+}
+
+func TestEventsMarginWidensWindow(t *testing.T) {
+	noEnv(t)
+	dir := rawDir(t)
+	cases := []struct {
+		name      string
+		got, want []string
+	}{
+		{
+			"both",
+			[]string{"-s", "2026-11-10 10:00:15 UTC", "-u", "2026-11-10 10:30:05 UTC", "--margin", "10s"},
+			[]string{"-s", "2026-11-10 10:00:05 UTC", "-u", "2026-11-10 10:30:15 UTC"},
+		},
+		{"since only", []string{"-s", "2026-11-10 10:00:15 UTC", "--margin", "10s"}, []string{"-s", "2026-11-10 10:00:05 UTC"}},
+		{"until only", []string{"-u", "2026-11-10 10:30:05 UTC", "--margin", "10s"}, []string{"-u", "2026-11-10 10:30:15 UTC"}},
+		{
+			"every",
+			[]string{"-s", "2026-11-10 10:00:15 UTC", "-u", "2026-11-10 10:30:05 UTC", "--margin", "10s", "--every", "1m", "--fields", "pressure"},
+			[]string{"-s", "2026-11-10 10:00:05 UTC", "-u", "2026-11-10 10:30:15 UTC", "--every", "1m", "--fields", "pressure"},
+		},
+	}
+	for _, c := range cases {
+		run1 := func(w []string) string {
+			args := append([]string{"--xml", synth, "events", "--dir", dir}, w...)
+			code, out, errs := runCmd(t, args...)
+			if code != 0 {
+				t.Fatalf("%s %v: exit %d, stderr %q", c.name, w, code, errs)
+			}
+			return out
+		}
+		got, want := run1(c.got), run1(c.want)
+		if got == "" || got != want {
+			t.Errorf("%s: --margin output differs from the widened window\n got %q\nwant %q", c.name, got, want)
+		}
 	}
 }
