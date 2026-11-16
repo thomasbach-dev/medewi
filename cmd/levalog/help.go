@@ -191,7 +191,7 @@ when the first file is not in the input; times UTC); csv has no sessions.`,
 extract reads raw logs only and keeps every event in the window verbatim
 (the first and last rx bytes cut to whole lines, t rebased to 0, the
 session's xml note first); with --run N the window is that run's, as
-events --run N --margin SPAN prints it. The window must lie in one raw-log
+events --run N --margin SPAN prints it; --margin widens the -s/-u window, or the run window, on both sides. The window must lie in one raw-log
 session: at a reconnect or restart it exits 1 naming every boundary and
 the -s/-u of each part (tagged "# no events" or "# overlapping sessions"), or with
 --split-sessions writes one capture per part into DIR/01, DIR/02, ... (a
@@ -206,7 +206,7 @@ hold, and no manifest: JSON objects whose data is base64 (the fixture
 format); decode with jq -r '.data | @base64d', or read them back from
 stdin: extract ... --out - | levalog events --event frame -`,
 		examples: []string{
-			"  levalog extract -s 09:00 -u 09:05 --out backflush --scenario backflush  # a fixture",
+			"  levalog extract -s 09:00 -u 09:05 --margin 30s --out backflush --scenario backflush  # a fixture, 30 s wider",
 			"  levalog extract -s today --run 3 --margin 10s --out - | levalog events --event frame -  # its LCD frames",
 		},
 	},

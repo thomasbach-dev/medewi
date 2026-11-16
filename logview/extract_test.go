@@ -178,7 +178,7 @@ func TestExtractStartsAtLineBoundary(t *testing.T) {
 	if !got.First.Equal(extractT0.Add(msec(2000))) {
 		t.Errorf("First = %v", got.First)
 	}
-	if !hasNote(got.Notes, "window starts mid-line: dropped 15 bytes") {
+	if !hasNote(got.Notes, "window starts mid-line: dropped 15 bytes (the cut line is incomplete; normal at a window edge)") {
 		t.Errorf("Notes = %q", got.Notes)
 	}
 }
@@ -199,7 +199,7 @@ func TestExtractStartsAtLineBoundaryDropsWholePiece(t *testing.T) {
 	if !reflect.DeepEqual(got.Events, want) {
 		t.Errorf("Events = %s\nwant   %s", showEvents(got.Events), showEvents(want))
 	}
-	if !hasNote(got.Notes, "window starts mid-line: dropped 7 bytes") {
+	if !hasNote(got.Notes, "window starts mid-line: dropped 7 bytes (the cut line is incomplete; normal at a window edge)") {
 		t.Errorf("Notes = %q", got.Notes)
 	}
 }
@@ -230,7 +230,7 @@ func TestExtractDropsTrailingPartialLine(t *testing.T) {
 	if !got.Last.Equal(extractT0.Add(msec(2500))) {
 		t.Errorf("Last = %v", got.Last)
 	}
-	if !hasNote(got.Notes, "window ends mid-line: dropped 7 bytes") {
+	if !hasNote(got.Notes, "window ends mid-line: dropped 7 bytes (the cut line is incomplete; normal at a window edge)") {
 		t.Errorf("Notes = %q", got.Notes)
 	}
 }
@@ -276,7 +276,7 @@ func TestExtractStartsAtLineBoundaryAcrossRotation(t *testing.T) {
 	if !reflect.DeepEqual(got.Events, want) {
 		t.Errorf("Events = %s\nwant   %s", showEvents(got.Events), showEvents(want))
 	}
-	if !hasNote(got.Notes, "window starts mid-line: dropped 4 bytes") {
+	if !hasNote(got.Notes, "window starts mid-line: dropped 4 bytes (the cut line is incomplete; normal at a window edge)") {
 		t.Errorf("Notes = %q", got.Notes)
 	}
 }
@@ -370,7 +370,7 @@ func TestExtractFirmwareFromSessionStart(t *testing.T) {
 	if got.Firmware != "" {
 		t.Errorf("Firmware = %q, want empty", got.Firmware)
 	}
-	if !hasNote(got.Notes, "firmware unknown") || !hasNote(got.Notes, "20261114T070552.000Z.jsonl.gz") {
+	if !hasNote(got.Notes, "firmware unknown") || !hasNote(got.Notes, "20261114T070552.000Z.jsonl.gz") || !hasNote(got.Notes, "add the earlier raw logs") {
 		t.Errorf("Notes = %q", got.Notes)
 	}
 	if got.XMLName != "X" {
@@ -450,4 +450,17 @@ func showEvents(evs []fixture.Event) string {
 		fmt.Fprintf(&b, "{%d %s %q} ", ev.T, ev.Dir, ev.Data)
 	}
 	return b.String()
+}
+
+// TestExtractFirmwareUnknownNoBanner: the first file is in the input but
+// holds no banner: a stream was on, nothing to add.
+func TestExtractFirmwareUnknownNoBanner(t *testing.T) {
+	first := rawSrc(extractT0, noteEv(10, "xml: X"), rxEv(1000, "{a}\r\n"))
+	got, err := Extract([]Source{first}, extractT0, extractT0.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasNote(got.Notes, "firmware unknown") || !hasNote(got.Notes, "another client had a stream on") || hasNote(got.Notes, "add the earlier raw logs") {
+		t.Errorf("Notes = %q", got.Notes)
+	}
 }

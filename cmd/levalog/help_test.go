@@ -112,3 +112,14 @@ func TestHelpSummarySessions(t *testing.T) {
 		}
 	}
 }
+
+// TestHelpExtractMargin: extract help shows --margin with -s/-u too.
+func TestHelpExtractMargin(t *testing.T) {
+	noEnv(t)
+	_, _, errs := runCmd(t, "extract", "--help")
+	for _, w := range []string{"-s 09:00 -u 09:05 --margin 30s", "--margin widens the -s/-u window, or the run window, on both sides"} {
+		if !strings.Contains(errs, w) {
+			t.Errorf("extract --help lacks %q", w)
+		}
+	}
+}

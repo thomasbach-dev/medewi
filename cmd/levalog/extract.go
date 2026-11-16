@@ -238,6 +238,7 @@ func refuseBoundaries(stderr io.Writer, parts []partInfo, at time.Time) int {
 	}
 	_, _ = fmt.Fprintf(stderr, "levalog: the window crosses %d raw-log session %s (%s); extract each part:\n",
 		len(times), noun, strings.Join(times, ", "))
+	_, _ = fmt.Fprintln(stderr, "  (a raw-log session is one connection of the daemon to the machine; a reconnect or restart starts a new one, and a fixture must lie in one; --split-sessions --out DIR cuts every part)")
 	for _, p := range parts {
 		// systime takes no zone offset: the pasteable times stay without.
 		_, _ = fmt.Fprintf(stderr, "  -s '%s'", p.Since.In(time.Local).Format(wallLayout))

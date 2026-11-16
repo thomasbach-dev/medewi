@@ -154,11 +154,11 @@ func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 		}
 	}
 	if dropped > 0 {
-		out.Notes = append(out.Notes, fmt.Sprintf("window starts mid-line: dropped %d bytes", dropped))
+		out.Notes = append(out.Notes, fmt.Sprintf("window starts mid-line: dropped %d bytes (the cut line is incomplete; normal at a window edge)", dropped))
 	}
 	kept, dropped = trimTail(kept)
 	if dropped > 0 {
-		out.Notes = append(out.Notes, fmt.Sprintf("window ends mid-line: dropped %d bytes", dropped))
+		out.Notes = append(out.Notes, fmt.Sprintf("window ends mid-line: dropped %d bytes (the cut line is incomplete; normal at a window edge)", dropped))
 	}
 	if len(kept) == 0 {
 		return Extracted{}, fmt.Errorf("%w [%s, %s)", ErrNoEvents,
@@ -169,10 +169,10 @@ func Extract(srcs []Source, since, until time.Time) (Extracted, error) {
 	out.Firmware = firmware
 	if firmware == "" {
 		if sessionKnown {
-			out.Notes = append(out.Notes, "firmware unknown: no $id: banner in the session")
+			out.Notes = append(out.Notes, "firmware unknown: no $id: banner in the session; the daemon connected while another client had a stream on, so the machine sent none (nothing to add)")
 		} else {
 			out.Notes = append(out.Notes, fmt.Sprintf(
-				"firmware unknown: the session's first file, before %s, is not in the input", sessionFirst))
+				"firmware unknown: the session's first file, before %s, is not in the input; add the earlier raw logs (e.g. the previous UTC day's files) to the input", sessionFirst))
 		}
 	}
 	switch {

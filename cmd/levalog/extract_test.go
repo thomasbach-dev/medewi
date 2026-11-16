@@ -280,10 +280,14 @@ func TestExtractSessionBoundary(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "o")
 	code, _, stderr := runCmd(t, extractArgs(dir, "--out", out)...)
 	want := "levalog: the window crosses 1 raw-log session boundary (2026-11-14 08:58:40.000 +01:00); extract each part:\n" +
+		"  (a raw-log session is one connection of the daemon to the machine; a reconnect or restart starts a new one, and a fixture must lie in one; --split-sessions --out DIR cuts every part)\n" +
 		"  -s '2026-11-14 08:58:30.000' -u '2026-11-14 08:58:40.000'\n" +
 		"  -s '2026-11-14 08:58:40.000' -u '2026-11-14 08:59:00.000'\n"
 	if code != 1 || !strings.Contains(stderr, want) || !strings.Contains(stderr, "--split-sessions") {
 		t.Errorf("exit %d, stderr %q; want 1 with %q and --split-sessions", code, stderr, want)
+	}
+	if lines := strings.Split(stderr, "\n"); len(lines) < 2 || !strings.Contains(lines[1], "one connection of the daemon to the machine") || !strings.Contains(lines[1], "--split-sessions --out DIR") {
+		t.Errorf("stderr %q; want line 2 to explain a session and name --split-sessions --out DIR", stderr)
 	}
 	if _, err := os.Stat(out); err == nil {
 		t.Error("output directory created")
@@ -310,6 +314,7 @@ func TestExtractSessionBoundaries(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "o")
 	code, _, stderr := runCmd(t, extractArgs(threeSessionDir(t), "--out", out)...)
 	want := "levalog: the window crosses 2 raw-log session boundaries (2026-11-14 08:58:40.000 +01:00, 2026-11-14 08:58:50.000 +01:00); extract each part:\n" +
+		"  (a raw-log session is one connection of the daemon to the machine; a reconnect or restart starts a new one, and a fixture must lie in one; --split-sessions --out DIR cuts every part)\n" +
 		"  -s '2026-11-14 08:58:30.000' -u '2026-11-14 08:58:40.000'\n" +
 		"  -s '2026-11-14 08:58:40.000' -u '2026-11-14 08:58:50.000'\n" +
 		"  -s '2026-11-14 08:58:50.000' -u '2026-11-14 08:59:00.000'\n"
