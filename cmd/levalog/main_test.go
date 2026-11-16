@@ -1260,7 +1260,7 @@ func TestSummaryCmd(t *testing.T) {
 	for _, w := range []string{
 		"src: " + filepath.Join(capture, "log.jsonl") + "\n",
 		"kind: capture\n",
-		"firmware: $id: leva! (3.2)\n",
+		"firmware (in this file): $id: leva! (3.2)\n",
 		"events: report=36 banner=1\n",
 		"modes: PID=8.75\n",
 		"runs: shot=1 flush=0 draw=0 (1)\n",

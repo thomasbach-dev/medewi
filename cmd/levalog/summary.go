@@ -8,6 +8,36 @@ import (
 	"github.com/thomasbach-dev/medewi/logview"
 )
 
+// summarySessions lists the raw-log sessions among paths with the part of
+// [since, until) each covers. Captures have no wall time, hence no
+// sessions: any capture among paths yields none.
+func summarySessions(paths []string, since, until time.Time) ([]logview.SessionPart, error) {
+	srcs := make([]logview.Source, 0, len(paths))
+	for _, p := range paths {
+		s, err := logview.Open(p)
+		if err != nil {
+			return nil, err
+		}
+		if !s.HasWall {
+			return nil, nil
+		}
+		srcs = append(srcs, s)
+	}
+	if until.IsZero() {
+		until = openEndAt
+	}
+	sessions := logview.Sessions(srcs)
+	var out []logview.SessionPart
+	for _, w := range logview.SplitWindow(sessions, since, until) {
+		p := logview.SessionPart{Session: sessions[w.Session], Since: w.Since, Until: w.Until}
+		if until.Equal(openEndAt) && w.Until.Equal(openEndAt) {
+			p.Until = time.Time{}
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
 // summaryCmd prints what each source of the input holds.
 func summaryCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	var in input
@@ -49,8 +79,12 @@ func summaryCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		return fail(stderr, 1, "%v", err)
 	}
 	sums := ss.Summaries(sc.runs)
+	sessions, err := summarySessions(sc.paths, in.since.T, in.until.T)
+	if err != nil {
+		return fail(stderr, 1, "%v", err)
+	}
 	w := bufio.NewWriter(stdout)
-	err := logview.WriteSummaries(w, in.f, sums, time.Local)
+	err = logview.WriteSummariesSessions(w, in.f, sums, sessions, time.Local)
 	if ferr := w.Flush(); err == nil {
 		err = ferr
 	}

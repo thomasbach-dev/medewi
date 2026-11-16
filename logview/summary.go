@@ -264,13 +264,87 @@ var summaryHeader = []string{
 // per summary after a header (csv). start is local time in loc (text) or
 // UTC; durations are seconds.
 func WriteSummaries(w io.Writer, f Format, ss []Summary, loc *time.Location) error {
+	return WriteSummariesSessions(w, f, ss, nil, loc)
+}
+
+// SessionPart is a raw-log session and the part of the summarised window
+// that lies in it.
+type SessionPart struct {
+	Session
+	Since, Until time.Time // Until is the zero time for an open end
+}
+
+// sessionZoneLayout formats a session's start with its zone.
+const sessionZoneLayout = wallLayout + " -07:00"
+
+// text is the one-line form of p, local time in loc.
+func (p SessionPart) text(loc *time.Location) string {
+	var b strings.Builder
+	if p.StartKnown {
+		b.WriteString(p.Start.In(loc).Format(sessionZoneLayout))
+		b.WriteString("; first file " + p.Files[0])
+	} else {
+		b.WriteString("starts before " + p.Start.In(loc).Format(sessionZoneLayout) + " (first file not in input)")
+	}
+	b.WriteString("; firmware " + orUnknown(p.Firmware) + "; xml " + orUnknown(p.XML) + "; covers [")
+	b.WriteString(p.Since.In(loc).Format(wallLayout) + ", ")
+	if p.Until.IsZero() {
+		b.WriteString("open end)")
+	} else {
+		b.WriteString(p.Until.In(loc).Format(wallLayout) + ")")
+	}
+	return b.String()
+}
+
+func orUnknown(s string) string {
+	if s == "" {
+		return "unknown"
+	}
+	return s
+}
+
+// json is p as an object; start is null while the first file is not in
+// the input.
+func (p SessionPart) json() string {
+	var o jsonObj
+	if p.StartKnown {
+		o.str("start", utcWall(p.Start))
+	} else {
+		o.raw("start", "null")
+	}
+	o.raw("first_file_known", strconv.FormatBool(p.StartKnown))
+	o.strOrNull("first_file", p.Files[0])
+	o.strOrNull("firmware", p.Firmware)
+	o.strOrNull("xml", p.XML)
+	o.str("since", utcWall(p.Since))
+	if p.Until.IsZero() {
+		o.raw("until", "null")
+	} else {
+		o.str("until", utcWall(p.Until))
+	}
+	return strings.TrimRight(string(o.line()), "\n")
+}
+
+// WriteSummariesSessions is WriteSummaries plus the sessions the input
+// holds: text prints them as a "sessions:" block before the summaries,
+// jsonl adds them as a "sessions" array to every record; csv has no place
+// for them. No sessions (nil) prints nothing extra.
+func WriteSummariesSessions(w io.Writer, f Format, ss []Summary, sessions []SessionPart, loc *time.Location) error {
 	if loc == nil {
 		loc = time.Local
 	}
 	switch f {
 	case FormatJSONL:
+		var extra string
+		if len(sessions) > 0 {
+			items := make([]string, len(sessions))
+			for i, p := range sessions {
+				items[i] = p.json()
+			}
+			extra = jsonList(items)
+		}
 		for _, s := range ss {
-			if _, err := w.Write(summaryJSON(s)); err != nil {
+			if _, err := w.Write(summaryJSON(s, extra)); err != nil {
 				return err
 			}
 		}
@@ -288,6 +362,19 @@ func WriteSummaries(w io.Writer, f Format, ss []Summary, loc *time.Location) err
 		cw.Flush()
 		return cw.Error()
 	}
+	if len(sessions) > 0 {
+		var b strings.Builder
+		b.WriteString("sessions:\n")
+		for _, p := range sessions {
+			b.WriteString("  " + p.text(loc) + "\n")
+		}
+		if len(ss) > 0 {
+			b.WriteByte('\n')
+		}
+		if _, err := io.WriteString(w, b.String()); err != nil {
+			return err
+		}
+	}
 	for i, s := range ss {
 		start := ""
 		if s.HasStart {
@@ -299,7 +386,7 @@ func WriteSummaries(w io.Writer, f Format, ss []Summary, loc *time.Location) err
 			b.WriteByte('\n')
 		}
 		for k, v := range summaryCells(s, start) {
-			b.WriteString(strings.TrimRight(summaryHeader[k]+": "+v, " "))
+			b.WriteString(strings.TrimRight(textLabel(summaryHeader[k])+": "+v, " "))
 			b.WriteByte('\n')
 		}
 		if _, err := io.WriteString(w, b.String()); err != nil {
@@ -307,6 +394,15 @@ func WriteSummaries(w io.Writer, f Format, ss []Summary, loc *time.Location) err
 		}
 	}
 	return nil
+}
+
+// textLabel is the label of key in the text form: firmware and xml say
+// they describe the file (or window), not the session.
+func textLabel(key string) string {
+	if key == "firmware" || key == "xml" {
+		return key + " (in this file)"
+	}
+	return key
 }
 
 // summaryCells are the values of s as text, in summaryHeader order.
@@ -420,7 +516,7 @@ func jsonPairs(ps []pair, extra ...string) string {
 // jsonList prints items, already JSON values, as an array.
 func jsonList(items []string) string { return "[" + strings.Join(items, ",") + "]" }
 
-func summaryJSON(s Summary) []byte {
+func summaryJSON(s Summary, sessions string) []byte {
 	var o jsonObj
 	o.str("src", s.Src)
 	o.str("kind", s.Kind)
@@ -456,5 +552,8 @@ func summaryJSON(s Summary) []byte {
 	o.raw("masked", jsonList(masked))
 	o.raw("gap_max", seconds(s.GapMax))
 	o.raw("gaps", strconv.Itoa(s.Gaps))
+	if sessions != "" {
+		o.raw("sessions", sessions)
+	}
 	return o.line()
 }
