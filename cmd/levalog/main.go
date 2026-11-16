@@ -62,11 +62,13 @@ events --margin SPAN (default 0) widens each run window on both sides and
 needs --run or --run-kind.
 
 extract (-s T -u T | --run N [--margin SPAN]) --out DIR|- [--scenario NAME]
-[--notes TEXT] reads raw logs only and keeps every event in the window
+[--notes TEXT] [--split-sessions] reads raw logs only and keeps every event in the window
 verbatim (the first and last rx bytes cut to whole lines, t rebased to 0,
 the session's xml note first); with --run N the window is that run's, as
 events --run N --margin SPAN prints it. The window must lie in one raw-log
-session (exit 1 at a reconnect or restart). It reads back to the session's
+session: at a reconnect or restart it exits 1 naming every boundary and
+the -s/-u of each part, or with --split-sessions writes one capture per
+part into DIR/01, DIR/02, ... (a part without events is skipped). It reads back to the session's
 first file in the directory for the firmware banner. --out DIR must not
 exist or be empty; the manifest gets machine_addr machine.example:23, the
 XML's sha256 when --xml names it, and the provenance in its notes. --out -

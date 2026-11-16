@@ -33,6 +33,7 @@ type extractOpts struct {
 	run                  int
 	margin               time.Duration
 	out, scenario, notes string
+	split                bool
 }
 
 // extractCmd cuts a window out of the raw logs and writes it as a capture
@@ -48,6 +49,7 @@ func extractCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 	fs.StringVar(&o.out, "out", "", "capture directory to write (must not exist or be empty), or - for log.jsonl's lines on stdout (required)")
 	fs.StringVar(&o.scenario, "scenario", "extract", "the manifest's scenario")
 	fs.StringVar(&o.notes, "notes", "", "free text for the manifest, before the provenance line")
+	fs.BoolVar(&o.split, "split-sessions", false, "write one capture per raw-log session part of the window into DIR/01, DIR/02, ... (needs --out DIR)")
 	if code, done := parse(fs, args, stderr); done {
 		return code
 	}
@@ -67,6 +69,8 @@ func extractCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		return fail(stderr, 2, "--margin needs --run")
 	case byRun && xmlPath == "":
 		return needXML(stderr, "--run")
+	case o.split && o.out == "-":
+		return fail(stderr, 2, "--split-sessions needs --out DIR, not --out -")
 	}
 	if o.out != "-" {
 		if code := checkOut(o.out, stderr); code != 0 {
@@ -124,9 +128,8 @@ func extractCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		since, until = r.First.Wall.Add(-o.margin), r.Last.Wall.Add(o.margin+time.Millisecond)
 		paths = sc.paths
 	}
-	openEnd := until.IsZero()
-	if openEnd {
-		until = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+	if until.IsZero() {
+		until = openEndAt
 	}
 
 	opened, extNotes, err := openSession(paths, extendDirs(in))
@@ -134,18 +137,27 @@ func extractCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		return fail(stderr, 1, "%v", err)
 	}
 	warn(stderr, extNotes)
+	// The parts of the window per session, for --split-sessions and the
+	// boundary refusal; the first starts no earlier than the first raw log.
+	parts := logview.SplitWindow(logview.Sessions(opened), since, until)
+	noteClamp := func() {
+		if len(parts) > 0 && !since.IsZero() && parts[0].Since.After(since) {
+			warn(stderr, []string{"the window starts before the first raw log; part 1 starts at " +
+				parts[0].Since.In(time.Local).Format(wallLayout)})
+		}
+	}
+	if o.split {
+		noteClamp()
+		return extractParts(opened, parts, since, until, xmlPath, o, stdout, stderr)
+	}
 	ex, err := logview.Extract(opened, since, until)
 	var sbe *logview.SessionBoundaryError
 	if errors.As(err, &sbe) {
-		return fail(stderr, 1, "the window crosses a raw-log session boundary at %s (a daemon reconnect or restart); extract one session at a time",
-			sbe.At.In(time.Local).Format(wallLayout))
+		noteClamp()
+		return refuseBoundaries(stderr, parts)
 	}
 	if errors.Is(err, logview.ErrNoEvents) {
-		end := "open end"
-		if !openEnd {
-			end = until.In(time.Local).Format(wallLayout)
-		}
-		return fail(stderr, 1, "no events in [%s, %s)", since.In(time.Local).Format(wallLayout), end)
+		return fail(stderr, 1, "no events in %s", fmtWindow(since, until))
 	}
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
@@ -164,7 +176,84 @@ func extractCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
+	return writeExtract(o.out, ex, xmlPath, o, stdout, stderr)
+}
 
+// maxParts is the most parts --split-sessions numbers (two digits).
+const maxParts = 99
+
+// openEndAt stands in for an open --until.
+var openEndAt = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// fmtWindow formats [since, until) in local time; openEndAt reads as
+// "open end".
+func fmtWindow(since, until time.Time) string {
+	end := "open end"
+	if !until.Equal(openEndAt) {
+		end = until.In(time.Local).Format(wallLayout)
+	}
+	return fmt.Sprintf("[%s, %s)", since.In(time.Local).Format(wallLayout), end)
+}
+
+// refuseBoundaries names every session boundary inside the window and
+// prints the -s/-u pair of each part, as the window's refusal.
+func refuseBoundaries(stderr io.Writer, parts []logview.Window) int {
+	at := make([]string, 0, len(parts)-1)
+	for _, w := range parts[1:] {
+		at = append(at, w.Since.In(time.Local).Format(wallLayout))
+	}
+	noun := "boundaries"
+	if len(at) == 1 {
+		noun = "boundary"
+	}
+	_, _ = fmt.Fprintf(stderr, "levalog: the window crosses %d raw-log session %s (%s); extract each part:\n",
+		len(at), noun, strings.Join(at, ", "))
+	for _, w := range parts {
+		_, _ = fmt.Fprintf(stderr, "  -s '%s'", w.Since.In(time.Local).Format(wallLayout))
+		if !w.Until.Equal(openEndAt) {
+			_, _ = fmt.Fprintf(stderr, " -u '%s'", w.Until.In(time.Local).Format(wallLayout))
+		}
+		_, _ = fmt.Fprintln(stderr)
+	}
+	return fail(stderr, 1, "or write every part at once with --split-sessions --out DIR")
+}
+
+// extractParts writes one capture per session part of the window into
+// out/01, out/02, ... in time order; a part without events is skipped
+// with a note and takes no number.
+func extractParts(opened []logview.Source, parts []logview.Window, since, until time.Time, xmlPath string,
+	o extractOpts, stdout, stderr io.Writer,
+) int {
+	if len(parts) > maxParts {
+		return fail(stderr, 1, "the window holds %d session parts, more than --split-sessions numbers (%d); narrow it with -s/-u",
+			len(parts), maxParts)
+	}
+	n := 0
+	for i, w := range parts {
+		ex, err := logview.Extract(opened, w.Since, w.Until)
+		if errors.Is(err, logview.ErrNoEvents) {
+			warn(stderr, []string{fmt.Sprintf("part %d %s has no events; skipped", i+1, fmtWindow(w.Since, w.Until))})
+			continue
+		}
+		if err != nil {
+			return fail(stderr, 1, "part %d %s: %v", i+1, fmtWindow(w.Since, w.Until), err)
+		}
+		for _, note := range ex.Notes {
+			warn(stderr, []string{fmt.Sprintf("part %d: %s", i+1, note)})
+		}
+		n++
+		if code := writeExtract(filepath.Join(o.out, fmt.Sprintf("%02d", n)), ex, xmlPath, o, stdout, stderr); code != 0 {
+			return code
+		}
+	}
+	if n == 0 {
+		return fail(stderr, 1, "no events in %s", fmtWindow(since, until))
+	}
+	return 0
+}
+
+// writeExtract writes ex as a capture into dir and lists it on stdout.
+func writeExtract(dir string, ex logview.Extracted, xmlPath string, o extractOpts, stdout, stderr io.Writer) int {
 	sum, sumNotes, err := xmlSHA(xmlPath, ex.XMLName)
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
@@ -185,12 +274,12 @@ func extractCmd(args []string, xmlPath string, stdout, stderr io.Writer) int {
 		Notes:           mNotes,
 		Recorded:        ex.Last,
 	}
-	if err := fixture.WriteCapture(o.out, "log.jsonl", "manifest.json", ex.Events, m); err != nil {
+	if err := fixture.WriteCapture(dir, "log.jsonl", "manifest.json", ex.Events, m); err != nil {
 		return fail(stderr, 1, "%v", err)
 	}
 	_, _ = fmt.Fprintf(stdout, "%s: %d events (%d reports, %d frames, %d notes)\n%s\n",
-		filepath.Join(o.out, "log.jsonl"), len(ex.Events), ex.Reports, ex.Frames, ex.NoteEvents,
-		filepath.Join(o.out, "manifest.json"))
+		filepath.Join(dir, "log.jsonl"), len(ex.Events), ex.Reports, ex.Frames, ex.NoteEvents,
+		filepath.Join(dir, "manifest.json"))
 	return 0
 }
 

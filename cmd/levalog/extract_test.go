@@ -279,11 +279,166 @@ func TestExtractSessionBoundary(t *testing.T) {
 		ev(100, fixture.RX, "{new}\r\n"))
 	out := filepath.Join(t.TempDir(), "o")
 	code, _, stderr := runCmd(t, extractArgs(dir, "--out", out)...)
-	if code != 1 || !strings.Contains(stderr, "session boundary at 2026-11-14 08:58:40.000") {
-		t.Errorf("exit %d, stderr %q; want 1 naming the boundary", code, stderr)
+	want := "levalog: the window crosses 1 raw-log session boundary (2026-11-14 08:58:40.000); extract each part:\n" +
+		"  -s '2026-11-14 08:58:30.000' -u '2026-11-14 08:58:40.000'\n" +
+		"  -s '2026-11-14 08:58:40.000' -u '2026-11-14 08:59:00.000'\n"
+	if code != 1 || !strings.Contains(stderr, want) || !strings.Contains(stderr, "--split-sessions") {
+		t.Errorf("exit %d, stderr %q; want 1 with %q and --split-sessions", code, stderr, want)
 	}
 	if _, err := os.Stat(out); err == nil {
 		t.Error("output directory created")
+	}
+}
+
+// threeSessionDir is extractDir with reconnects at 08:58:40 and 08:58:50
+// local, each a new session with its own firmware banner.
+func threeSessionDir(t *testing.T) string {
+	t.Helper()
+	dir := extractDir(t)
+	writeRaw(t, dir, winFrom.Add(10*time.Second),
+		ev(0, fixture.RX, "$id: leva! (3.3)\r\n"),
+		ev(100, fixture.RX, "{new}\r\n"))
+	writeRaw(t, dir, winFrom.Add(20*time.Second),
+		ev(0, fixture.RX, "$id: leva! (3.4)\r\n"),
+		ev(100, fixture.RX, "{newer}\r\n"))
+	return dir
+}
+
+func TestExtractSessionBoundaries(t *testing.T) {
+	noEnv(t)
+	inCET(t)
+	out := filepath.Join(t.TempDir(), "o")
+	code, _, stderr := runCmd(t, extractArgs(threeSessionDir(t), "--out", out)...)
+	want := "levalog: the window crosses 2 raw-log session boundaries (2026-11-14 08:58:40.000, 2026-11-14 08:58:50.000); extract each part:\n" +
+		"  -s '2026-11-14 08:58:30.000' -u '2026-11-14 08:58:40.000'\n" +
+		"  -s '2026-11-14 08:58:40.000' -u '2026-11-14 08:58:50.000'\n" +
+		"  -s '2026-11-14 08:58:50.000' -u '2026-11-14 08:59:00.000'\n"
+	if code != 1 || !strings.Contains(stderr, want) {
+		t.Errorf("exit %d, stderr %q; want 1 with %q", code, stderr, want)
+	}
+	if _, err := os.Stat(out); err == nil {
+		t.Error("output directory created")
+	}
+
+	// An open end leaves the last part's -u out.
+	code, _, stderr = runCmd(t, "extract", "--dir", threeSessionDir(t), "-s", "2026-11-14 08:58:30", "--out", out)
+	if code != 1 || !strings.Contains(stderr, "  -s '2026-11-14 08:58:50.000'\n") {
+		t.Errorf("open end: exit %d, stderr %q", code, stderr)
+	}
+}
+
+func TestExtractSplitSessions(t *testing.T) {
+	noEnv(t)
+	inCET(t)
+	out := filepath.Join(t.TempDir(), "o")
+	code, stdout, stderr := runCmd(t, extractArgs(threeSessionDir(t), "--split-sessions", "--out", out, "--scenario", "split")...)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	p := func(n, f string) string { return filepath.Join(out, n, f) }
+	want := p("01", "log.jsonl") + ": 6 events (2 reports, 1 frames, 2 notes)\n" + p("01", "manifest.json") + "\n" +
+		p("02", "log.jsonl") + ": 2 events (1 reports, 0 frames, 0 notes)\n" + p("02", "manifest.json") + "\n" +
+		p("03", "log.jsonl") + ": 2 events (1 reports, 0 frames, 0 notes)\n" + p("03", "manifest.json") + "\n"
+	if stdout != want {
+		t.Errorf("stdout = %q, want %q", stdout, want)
+	}
+	for _, c := range []struct{ n, fw, from string }{
+		{"01", "$id: leva! (3.2)", "20261114T070552.646Z.jsonl.gz 2026-11-14 08:58:30.100 +01:00"},
+		{"02", "$id: leva! (3.3)", "20261114T075840.000Z.jsonl.gz 2026-11-14 08:58:40.000 +01:00"},
+		{"03", "$id: leva! (3.4)", "20261114T075850.000Z.jsonl.gz 2026-11-14 08:58:50.000 +01:00"},
+	} {
+		m, err := fixture.LoadManifest(p(c.n, "manifest.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.FirmwareVersion != c.fw || m.Scenario != "split" || !strings.Contains(m.Notes, "extracted from "+c.from) {
+			t.Errorf("%s: manifest = %+v", c.n, m)
+		}
+	}
+
+	// A window inside one session gives 01 only.
+	out = filepath.Join(t.TempDir(), "o")
+	code, stdout, stderr = runCmd(t, extractArgs(extractDir(t), "--split-sessions", "--out", out)...)
+	if code != 0 || stdout != p("01", "log.jsonl")+": 6 events (2 reports, 1 frames, 2 notes)\n"+p("01", "manifest.json")+"\n" {
+		t.Errorf("one session: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	if entries, _ := os.ReadDir(out); len(entries) != 1 {
+		t.Errorf("one session: %d entries in --out, want 01 only", len(entries))
+	}
+}
+
+// TestExtractSplitSessionsSkipsEmpty: a part without events is skipped
+// with a note; the numbering of the written parts stays contiguous.
+func TestExtractSplitSessionsSkipsEmpty(t *testing.T) {
+	noEnv(t)
+	inCET(t)
+	dir := threeSessionDir(t)
+	// An empty raw log at 08:58:45 local, between the two reconnects, is
+	// a session of its own: part 3 is empty, part 4 is session 3's.
+	writeRaw(t, dir, winFrom.Add(15*time.Second))
+	out := filepath.Join(t.TempDir(), "o")
+	code, stdout, stderr := runCmd(t, extractArgs(dir, "--split-sessions", "--out", out)...)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	if !strings.Contains(stderr, "part 3 [2026-11-14 08:58:45.000, 2026-11-14 08:58:50.000) has no events; skipped") {
+		t.Errorf("stderr = %q, want the skipped part named", stderr)
+	}
+	if strings.Count(stdout, "manifest.json") != 3 || strings.Contains(stdout, filepath.Join(out, "04")) {
+		t.Errorf("stdout = %q, want 01 to 03", stdout)
+	}
+	m, err := fixture.LoadManifest(filepath.Join(out, "03", "manifest.json"))
+	if err != nil || m.FirmwareVersion != "$id: leva! (3.4)" {
+		t.Errorf("03: manifest %+v, err %v; want session 3's", m, err)
+	}
+}
+
+func TestExtractSplitSessionsUsage(t *testing.T) {
+	noEnv(t)
+	inCET(t)
+	code, _, stderr := runCmd(t, extractArgs(threeSessionDir(t), "--split-sessions", "--out", "-")...)
+	if code != 2 || !strings.Contains(stderr, "--split-sessions") {
+		t.Errorf("exit %d, stderr %q; want 2 naming --split-sessions", code, stderr)
+	}
+}
+
+// TestExtractSplitSessionsTooMany: more than 99 parts is refused, and
+// nothing is written.
+func TestExtractSplitSessionsTooMany(t *testing.T) {
+	noEnv(t)
+	inCET(t)
+	dir := t.TempDir()
+	for i := range 100 {
+		writeRaw(t, dir, winFrom.Add(time.Duration(i)*100*time.Millisecond), ev(0, fixture.RX, "$id: leva! (3.2)\r\n"))
+	}
+	out := filepath.Join(t.TempDir(), "o")
+	code, _, stderr := runCmd(t, extractArgs(dir, "--split-sessions", "--out", out)...)
+	if code != 1 || !strings.Contains(stderr, "100 session parts") || !strings.Contains(stderr, "narrow it") {
+		t.Errorf("exit %d, stderr %q; want 1 refusing 100 parts", code, stderr)
+	}
+	if _, err := os.Stat(out); err == nil {
+		t.Error("output directory created")
+	}
+}
+
+// TestExtractSplitSessionsClamped:a window starting before the first raw
+// log is cut to its start, and stderr says so.
+func TestExtractSplitSessionsClamped(t *testing.T) {
+	noEnv(t)
+	inCET(t)
+	out := filepath.Join(t.TempDir(), "o")
+	code, _, stderr := runCmd(t, "extract", "--dir", threeSessionDir(t), "-s", "2026-11-14 05:00", "-u", "2026-11-14 08:59",
+		"--split-sessions", "--out", out)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	if !strings.Contains(stderr, "the window starts before the first raw log; part 1 starts at 2026-11-14 06:05:52.646") {
+		t.Errorf("stderr = %q, want the clamp named", stderr)
+	}
+	// Without parts to name, a plain extract keeps quiet about it.
+	code, _, stderr = runCmd(t, "extract", "--dir", extractDir(t), "-s", "2026-11-14 05:00", "-u", "2026-11-14 08:59", "--out", "-")
+	if code != 0 || strings.Contains(stderr, "part 1") {
+		t.Errorf("plain: exit %d, stderr %q", code, stderr)
 	}
 }
 
