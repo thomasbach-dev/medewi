@@ -171,10 +171,11 @@ text); masked is ? in text, null in jsonl, empty in csv.`,
 		name: "summary",
 		text: `usage: levalog summary [--format F] [FILE|DIR ...]
 
-summary prints what each source holds: firmware and XML (in this file),
-events, modes, READY, runs, masked fields and gaps. On raw logs (no
-capture in the input) it first prints a sessions: block: one line per
-raw-log session overlapping the window, with its start (local, with zone;
+summary prints what each source holds: firmware (in this file), XML (in
+this file, or in effect when carried over), events, modes, READY, runs,
+masked fields and gaps. On raw logs (no capture in the input) it first
+prints a sessions: block: one line per raw-log session overlapping the
+window, with its start (local, with zone;
 "starts before" when its first file is not in the input), its first file,
 firmware, XML and the part of the window it covers. jsonl carries the
 same as a "sessions" array on every record (start and first_file null
