@@ -89,7 +89,7 @@ func TestHelp(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code %d", code)
 	}
-	for _, w := range []string{"check", "show", "diff", "layout", "license key", "Exit codes", "problems are rows on stdout", "no header", "past the end of the image", "uses A's"} {
+	for _, w := range []string{"check", "show", "diff", "layout", "license key", "Exit codes", "problems are rows on stdout", "no header", "past the end of the image", "uses A's", "--path", "·", "pid1.csv", "damaged region", "section only in", "silences"} {
 		if !strings.Contains(errs, w) {
 			t.Errorf("help lacks %q", w)
 		}
@@ -111,7 +111,7 @@ func TestCheckGood(t *testing.T) {
 	d := t.TempDir()
 	p := write(t, d, "2026-11-10T094200Z_3.2.mcu.txt", backuptest.ValidMCu())
 	code, out, _ := run0(t, "check", p)
-	if code != 0 || strings.TrimSpace(out) != p+": ok" {
+	if code != 0 || strings.TrimSpace(out) != filepath.Base(p)+": ok" {
 		t.Errorf("code %d out %q", code, out)
 	}
 }
@@ -121,7 +121,7 @@ func TestCheckDamaged(t *testing.T) {
 	u := backuptest.ValidMCu()
 	p := write(t, d, "2026-11-10T094200Z_3.2.mcu.txt", u[:len(u)-1]) // no Cancel
 	code, out, _ := run0(t, "check", p)
-	if code != 1 || !strings.Contains(out, p+": damaged, 1 problems") {
+	if code != 1 || !strings.Contains(out, filepath.Base(p)+": damaged, 1 problems") {
 		t.Errorf("code %d out %q", code, out)
 	}
 	code, out, _ = run0(t, "check", "--format", "jsonl", p)
@@ -169,7 +169,7 @@ func TestShow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(recs[0], " ") != "src note line path label value raw" {
+	if strings.Join(recs[0], " ") != "src note line path label value number unit flag raw" {
 		t.Errorf("header %v", recs[0])
 	}
 	if !utf8.ValidString(out) || !strings.Contains(out, "°") {
@@ -177,7 +177,7 @@ func TestShow(t *testing.T) {
 	}
 	found := false
 	for _, r := range recs[1:] {
-		if r[3] == "Alpha/Gain" && r[1] == "morning" && r[2] == "2" {
+		if r[3] == "Alpha/Gain" && r[1] == "morning" && r[2] == "2" && r[6] == "1.0" && r[7] == "%°" && r[8] == "" {
 			found = true
 		}
 	}

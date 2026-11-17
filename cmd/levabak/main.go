@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/pflag"
 
@@ -111,7 +113,7 @@ func loadBackups(args []string, stderr io.Writer) (bks []backup.Backup, code int
 		return nil, fail(stderr, 1, "%v", err)
 	}
 	for _, n := range notes {
-		warn(stderr, "%s", n)
+		warn(stderr, "%s", shortNote(n))
 	}
 	if len(bks) == 0 {
 		return nil, fail(stderr, 1, "no backups found in %v", args)
@@ -147,3 +149,44 @@ func (ls *layouts) get(fw string) (backup.Layout, bool) {
 }
 
 func hex4(off int) string { return fmt.Sprintf("0x%04X", off) }
+
+// shortSrc is how a backup's src prints for humans (text tables, verdict
+// lines, stderr warnings): relative to the current directory unless that
+// path leaves it ("..") or cannot be made relative, else the base name.
+// jsonl and csv keep the full src.
+func shortSrc(src string) string {
+	if wd, err := os.Getwd(); err == nil {
+		abs := src
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(wd, abs)
+		}
+		if rel, err := filepath.Rel(wd, abs); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return rel
+		}
+	}
+	return filepath.Base(src)
+}
+
+// shortNote shortens the path in a Resolve note ("unpaired mcu file PATH",
+// "skipped PATH: not a backup file name") like shortSrc.
+func shortNote(n string) string {
+	if rest, ok := strings.CutPrefix(n, "skipped "); ok {
+		if p, tail, ok := strings.Cut(rest, ": not a backup file name"); ok {
+			return "skipped " + shortSrc(p) + ": not a backup file name" + tail
+		}
+	}
+	if i := strings.Index(n, " file "); i >= 0 && strings.HasPrefix(n, "unpaired ") {
+		return n[:i+len(" file ")] + shortSrc(n[i+len(" file "):])
+	}
+	return n
+}
+
+// noMatch warns that --path PREFIX selected nothing.
+func noMatch(stderr io.Writer, prefix string) {
+	warn(stderr, "no rows match --path %q", prefix)
+}
+
+// addPath registers --path on fs.
+func addPath(fs *pflag.FlagSet) *string {
+	return fs.String("path", "", "keep only rows whose path (diff: setting key) starts with PREFIX; a trailing / selects a whole menu")
+}

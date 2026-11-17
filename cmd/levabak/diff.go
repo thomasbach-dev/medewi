@@ -10,6 +10,7 @@ import (
 func diffCmd(args []string, firmware string, stdout, stderr io.Writer) int {
 	fs := subFlags("diff", stderr)
 	format := addFormat(fs)
+	prefix := addPath(fs)
 	if code, done := parse(fs, args, format, stderr); done {
 		return code
 	}
@@ -20,7 +21,7 @@ func diffCmd(args []string, firmware string, stdout, stderr io.Writer) int {
 	if len(bks) != 2 {
 		var found []string
 		for _, b := range bks {
-			found = append(found, "  "+b.Src+" ("+kinds(b)+")")
+			found = append(found, "  "+shortSrc(b.Src)+" ("+kinds(b)+")")
 		}
 		return fail(stderr, 2, "diff needs exactly two backups, found %d:\n%s", len(bks), strings.Join(found, "\n"))
 	}
@@ -34,7 +35,7 @@ func diffCmd(args []string, firmware string, stdout, stderr io.Writer) int {
 			n += len(x.MCm.Problems)
 		}
 		if n > 0 {
-			warn(stderr, "%s: damaged, %d problems (see levabak check); diffing anyway", x.Src, n)
+			warn(stderr, "%s: damaged, %d problems (see levabak check); diffing anyway", shortSrc(x.Src), n)
 		}
 	}
 	if (a.MCu == nil) != (b.MCu == nil) {
@@ -56,15 +57,46 @@ func diffCmd(args []string, firmware string, stdout, stderr io.Writer) int {
 	}
 	t := table{cols: []string{"section", "key", "a", "b", "note"}}
 	for _, c := range backup.Diff(a, b, l, haveLayout) {
+		if !keepChange(c, *prefix, l, haveLayout) {
+			continue
+		}
 		t.rows = append(t.rows, []string{c.Section, c.Key, c.A, c.B, c.Note})
 	}
 	if err := t.write(stdout, *format); err != nil {
 		return fail(stderr, 1, "%v", err)
 	}
-	if len(t.rows) == 0 {
-		warn(stderr, "no differences (a: %s, b: %s)", a.Src, b.Src)
+	switch {
+	case len(t.rows) > 0:
+	case *prefix != "":
+		noMatch(stderr, *prefix)
+	default:
+		warn(stderr, "no differences (a: %s, b: %s)", shortSrc(a.Src), shortSrc(b.Src))
 	}
 	return 0
+}
+
+// keepChange applies --path: a setting row by its key, a section row
+// ("<label>/") when either path is a prefix of the other, an EEPROM row by
+// its layout entry's MCuPath (unknown byte runs have none and are dropped).
+func keepChange(c backup.Change, prefix string, l backup.Layout, haveLayout bool) bool {
+	if prefix == "" {
+		return true
+	}
+	switch {
+	case c.Section == "eeprom":
+		if !haveLayout {
+			return false
+		}
+		for _, e := range l.Entries {
+			if hex4(e.Offset) == c.Key {
+				return strings.HasPrefix(e.MCuPath, prefix)
+			}
+		}
+		return false
+	case strings.HasPrefix(c.Note, "section only in "):
+		return strings.HasPrefix(prefix, c.Key) || strings.HasPrefix(c.Key, prefix)
+	}
+	return strings.HasPrefix(c.Key, prefix)
 }
 
 // kinds says which dumps b holds.

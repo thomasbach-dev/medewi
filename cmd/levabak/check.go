@@ -27,9 +27,9 @@ func checkCmd(args []string, firmware string, stdout, stderr io.Writer) int {
 		var probs []backup.Problem
 		switch {
 		case b.MCu == nil:
-			warn(stderr, "%s: no MCu file: the settings were not checked", b.Src)
+			warn(stderr, "%s: no MCu file: the settings were not checked", shortSrc(b.Src))
 		case b.MCm == nil:
-			warn(stderr, "%s: no MCm file: the EEPROM was not checked", b.Src)
+			warn(stderr, "%s: no MCm file: the EEPROM was not checked", shortSrc(b.Src))
 		}
 		if b.MCu != nil {
 			probs = append(probs, b.MCu.Problems...)
@@ -49,11 +49,23 @@ func checkCmd(args []string, firmware string, stdout, stderr io.Writer) int {
 			}
 			t.rows = append(t.rows, []string{b.Src, b.Note, line, string(p.Kind), p.Text})
 		}
+		var regions []backup.Region
+		if b.MCu != nil {
+			regions = b.MCu.Regions
+		}
+		for _, r := range regions {
+			t.rows = append(t.rows, []string{b.Src, b.Note, strconv.Itoa(r.From), string(backup.KindMCu), regionText(r)})
+		}
+		src := shortSrc(b.Src)
 		if len(probs) == 0 {
-			verdicts = append(verdicts, b.Src+": ok")
+			verdicts = append(verdicts, src+": ok")
 		} else {
 			bad = true
-			verdicts = append(verdicts, fmt.Sprintf("%s: damaged, %d problems", b.Src, len(probs)))
+			v := fmt.Sprintf("%s: damaged, %d problems", src, len(probs))
+			if len(regions) > 0 {
+				v += fmt.Sprintf(", %d damaged regions (lines %s)", len(regions), spans(regions))
+			}
+			verdicts = append(verdicts, v)
 		}
 	}
 	if err := t.write(stdout, *format); err != nil {
@@ -68,4 +80,13 @@ func checkCmd(args []string, firmware string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// regionText is the problem text of a damaged-region row.
+func regionText(r backup.Region) string {
+	in := ""
+	if r.Section != "" {
+		in = ", starting in section " + r.Section
+	}
+	return fmt.Sprintf("damaged region: lines %d-%d%s; lines may be lost here and the settings in it may sit under wrong paths", r.From, r.To, in)
 }

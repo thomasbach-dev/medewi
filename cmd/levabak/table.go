@@ -10,12 +10,14 @@ import (
 )
 
 // table is the output of a subcommand: named columns and string rows. An
-// empty cell is null in jsonl, empty in csv and "-" in text; columns in num
-// print as JSON numbers.
+// empty cell is null in jsonl, empty in csv and "·" (U+00B7) in text, since
+// a real value can be "-"; columns in num print as JSON numbers. Text
+// prints src through shortSrc and leaves out the columns in textHide.
 type table struct {
-	cols []string
-	num  map[string]bool
-	rows [][]string
+	cols     []string
+	num      map[string]bool
+	textHide map[string]bool
+	rows     [][]string
 }
 
 // write prints t as text (aligned, with a header; nothing when there are
@@ -55,21 +57,30 @@ func (t table) write(w io.Writer, format string) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(w, 0, 8, 2, ' ', 0)
-	row := func(cells []string) {
+	row := func(cells []string, header bool) {
+		first := true
 		for i, c := range cells {
-			if c == "" {
-				c = "-"
+			if t.textHide[t.cols[i]] {
+				continue
 			}
-			if i > 0 {
+			switch {
+			case header:
+			case c == "":
+				c = "·"
+			case t.cols[i] == "src":
+				c = shortSrc(c)
+			}
+			if !first {
 				_, _ = fmt.Fprint(tw, "\t")
 			}
+			first = false
 			_, _ = fmt.Fprint(tw, c)
 		}
 		_, _ = fmt.Fprintln(tw)
 	}
-	row(t.cols)
+	row(t.cols, true)
 	for _, r := range t.rows {
-		row(r)
+		row(r, false)
 	}
 	return tw.Flush()
 }
