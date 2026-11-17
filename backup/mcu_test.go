@@ -70,13 +70,13 @@ func TestCheckMCuGlued(t *testing.T) {
 		cell(0, "Cancel"),
 	}
 	u := ParseMCu(lines)
-	if len(u.Problems) != 2 {
+	if len(u.Problems) != 3 { // the padded path also has an empty segment
 		t.Fatalf("problems: %+v", u.Problems)
 	}
 	if got := problemsAt(u, 3); len(got) != 1 || !strings.Contains(got[0], "5 bytes") {
 		t.Errorf("line 3: %v", got)
 	}
-	if got := problemsAt(u, 4); len(got) != 1 || !strings.Contains(got[0], "deeper than a non-menu line") {
+	if got := problemsAt(u, 4); len(got) != 2 || !strings.Contains(got[0], "deeper than a non-menu line") {
 		t.Errorf("line 4: %v", got)
 	}
 }
@@ -107,10 +107,16 @@ func TestCheckMCuStructure(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			u := ParseMCu(tc.lines)
-			if len(u.Problems) != 1 {
+			var probs []Problem // the empty-segment follow-up is not under test here
+			for _, p := range u.Problems {
+				if !strings.Contains(p.Text, "empty segment") {
+					probs = append(probs, p)
+				}
+			}
+			if len(probs) != 1 {
 				t.Fatalf("problems: %+v", u.Problems)
 			}
-			p := u.Problems[0]
+			p := probs[0]
 			if p.Line != tc.line || p.Kind != KindMCu || !strings.Contains(p.Text, tc.text) {
 				t.Errorf("got %+v, want line %d containing %q", p, tc.line, tc.text)
 			}

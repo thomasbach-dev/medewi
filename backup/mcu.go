@@ -34,12 +34,21 @@ type Setting struct {
 	Value       string
 	Raw         string // the 15-char cell as UTF-8
 	Section     string // the depth-0 label it lies under
+	Damaged     bool   // its Line lies in one of MCu.Regions
+}
+
+// Region is a stretch of an MCu dump whose paths are unreliable: lines
+// may be lost there and the surviving lines may sit under wrong parents.
+type Region struct {
+	From, To int    // first and last line, 1-based, inclusive
+	Section  string // the depth-0 label the region starts in ("" if none)
 }
 
 // MCu is a parsed menu dump.
 type MCu struct {
 	Settings []Setting
 	Problems []Problem
+	Regions  []Region // sorted by From; see Region
 }
 
 const cellWidth = 15
@@ -162,6 +171,9 @@ func ParseMCu(lines []string) *MCu {
 		}
 		stack = append(stack, s.Path)
 		s.Section = section
+		if strings.HasPrefix(s.Path, "/") || strings.Contains(s.Path, "//") {
+			problem(n, "path has an empty segment: %q (a parent line is missing)", s.Path)
+		}
 
 		u.Settings = append(u.Settings, s)
 		prev = &u.Settings[len(u.Settings)-1]
@@ -173,18 +185,63 @@ func ParseMCu(lines []string) *MCu {
 		problem(len(lines), "last line is not Cancel at depth 0")
 	}
 	sort.SliceStable(u.Problems, func(i, j int) bool { return u.Problems[i].Line < u.Problems[j].Line })
+	u.markRegions(len(lines))
 	return u
+}
+
+// markRegions derives Regions from the line problems and flags the
+// settings inside them. Each problem starts a region that runs to the
+// line before the next depth-0 setting, or to the last line.
+func (u *MCu) markRegions(last int) {
+	for _, p := range u.Problems { // sorted by line
+		if p.Line == 0 {
+			continue
+		}
+		to := last
+		for _, s := range u.Settings {
+			if s.Depth == 0 && s.Line > p.Line {
+				to = s.Line - 1
+				break
+			}
+		}
+		if n := len(u.Regions); n > 0 && p.Line <= u.Regions[n-1].To+1 {
+			u.Regions[n-1].To = max(u.Regions[n-1].To, to)
+			continue
+		}
+		sec := ""
+		for _, s := range u.Settings {
+			if s.Line > p.Line {
+				break
+			}
+			sec = s.Section
+		}
+		u.Regions = append(u.Regions, Region{From: p.Line, To: to, Section: sec})
+	}
+	for i := range u.Settings {
+		for _, r := range u.Regions {
+			if u.Settings[i].Line >= r.From && u.Settings[i].Line <= r.To {
+				u.Settings[i].Damaged = true
+			}
+		}
+	}
 }
 
 // splitLeaf splits trailing-space-trimmed leaf text into label and value:
 // at the last run of two or more spaces, else the last single space, else
-// the first letter-to-digit boundary, else label only.
+// the first letter-to-digit boundary, else label only. The single-space
+// split applies only when the part after the space looks like a value:
+// it starts with a digit, "-", "+" or ".", or is all upper case, digits
+// and "%°.-:/" (Latin-1 0xB0 for the degree sign); otherwise the whole
+// text is the label.
 func splitLeaf(s string) (label, value string) {
 	if i := strings.LastIndex(s, "  "); i >= 0 {
 		return strings.TrimRight(s[:i], " "), strings.TrimLeft(s[i:], " ")
 	}
 	if i := strings.LastIndex(s, " "); i >= 0 {
-		return s[:i], s[i+1:]
+		if looksLikeValue(s[i+1:]) {
+			return s[:i], s[i+1:]
+		}
+		return s, ""
 	}
 	for i := 1; i < len(s); i++ {
 		if isLetter(s[i-1]) && s[i] >= '0' && s[i] <= '9' {
@@ -195,3 +252,51 @@ func splitLeaf(s string) (label, value string) {
 }
 
 func isLetter(b byte) bool { return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' }
+
+func looksLikeValue(v string) bool {
+	if v == "" {
+		return false
+	}
+	if c := v[0]; c >= '0' && c <= '9' || c == '-' || c == '+' || c == '.' {
+		return true
+	}
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		upper, digit := c >= 'A' && c <= 'Z', c >= '0' && c <= '9'
+		if !upper && !digit && strings.IndexByte("%\xb0.-:/", c) < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// SplitNumber splits a setting value into a leading decimal number and
+// the unit after it: "88.0°" → "88.0", "°"; "2.000°/cycle" → "2.000",
+// "°/cycle"; "-5" → "-5", "". ok is false (both empty) when the value
+// does not start with a number or the rest holds a digit ("1:30").
+func SplitNumber(value string) (number, unit string, ok bool) {
+	i := 0
+	if i < len(value) && (value[i] == '-' || value[i] == '+') {
+		i++
+	}
+	digits := 0
+	for i < len(value) && value[i] >= '0' && value[i] <= '9' {
+		i++
+		digits++
+	}
+	if i < len(value) && value[i] == '.' {
+		i++
+		for i < len(value) && value[i] >= '0' && value[i] <= '9' {
+			i++
+			digits++
+		}
+	}
+	if digits == 0 {
+		return "", "", false
+	}
+	rest := strings.TrimSpace(value[i:])
+	if strings.ContainsAny(rest, "0123456789") {
+		return "", "", false
+	}
+	return value[:i], rest, true
+}
