@@ -16,10 +16,10 @@ func TestLayout32(t *testing.T) {
 		{Offset: 0x002F, Type: "u24", Scale: 1, Confidence: "likely"},
 		{Offset: 0x0033, Type: "u16", Scale: 1, Confidence: "likely"},
 		{Offset: 0x0037, Type: "u8", Scale: 1, Confidence: "guess"},
-		{Offset: 0x0173, Type: "u16", Scale: 0.1, MCuPath: "PID 1/Kc", Confidence: "confirmed"},
-		{Offset: 0x0175, Type: "u16", Scale: 0.1, MCuPath: "PID 1/Ti", Confidence: "confirmed"},
-		{Offset: 0x0177, Type: "u16", Scale: 0.1, MCuPath: "PID 1/Td", Confidence: "confirmed"},
-		{Offset: 0x0179, Type: "u16", Scale: 0.1, MCuPath: "PID 1/WU limit", Confidence: "likely"},
+		{Offset: 0x0173, Type: "u16", Scale: 0.1, MCuPath: "PID 1/Kc", Compare: true, Confidence: "confirmed"},
+		{Offset: 0x0175, Type: "u16", Scale: 0.1, MCuPath: "PID 1/Ti", Compare: true, Confidence: "confirmed"},
+		{Offset: 0x0177, Type: "u16", Scale: 0.1, MCuPath: "PID 1/Td", Compare: true, Confidence: "confirmed"},
+		{Offset: 0x0179, Type: "u16", Scale: 0.1, MCuPath: "PID 1/WU limit", Compare: true, Confidence: "likely"},
 		{Offset: 0x04F9, Type: "u8", Scale: 1, MCuPath: "Profiles/Use", Confidence: "likely"},
 	}
 	if len(l.Entries) != len(want) {
@@ -29,7 +29,7 @@ func TestLayout32(t *testing.T) {
 	for i, e := range l.Entries {
 		w := want[i]
 		if e.Offset != w.Offset || e.Type != w.Type || e.Scale != w.Scale ||
-			e.MCuPath != w.MCuPath || e.Confidence != w.Confidence {
+			e.MCuPath != w.MCuPath || e.Compare != w.Compare || e.Confidence != w.Confidence {
 			t.Errorf("entry %d = %+v, want %+v", i, e, w)
 		}
 		if e.Name == "" || e.Evidence == "" {
@@ -61,10 +61,33 @@ func TestEntryDecode(t *testing.T) {
 	}
 }
 
+func TestCrossCheckCompareFalse(t *testing.T) {
+	l := Layout{Firmware: "test", Entries: []Entry{
+		{Offset: 0, Type: "u8", Scale: 1, MCuPath: "Alpha/Use", Compare: false},
+	}}
+	u := &MCu{Settings: []Setting{{Path: "Alpha/Use", Value: "9BAR"}}}
+	if p := CrossCheck(u, &MCm{Image: []byte{2}}, l); len(p) != 0 {
+		t.Errorf("Compare=false gave %v", p)
+	}
+}
+
+func TestEntryFormat(t *testing.T) {
+	e := Entry{Offset: 0, Type: "u16", Scale: 0.1}
+	_, v, _ := e.Decode([]byte{0xd3, 0x02})
+	if got := e.Format(v); got != "72.3" {
+		t.Errorf("Format = %q", got)
+	}
+	e = Entry{Offset: 0, Type: "u24", Scale: 1}
+	_, v, _ = e.Decode([]byte{0xa1, 0x6d, 0x0a})
+	if got := e.Format(v); got != "683425" {
+		t.Errorf("Format = %q", got)
+	}
+}
+
 func TestCrossCheck(t *testing.T) {
 	l := Layout{Firmware: "test", Entries: []Entry{
-		{Offset: 0, Type: "u16", Scale: 0.1, MCuPath: "Alpha/Gain"},
-		{Offset: 2, Type: "u8", Scale: 1, MCuPath: "Alpha/Missing"},
+		{Offset: 0, Type: "u16", Scale: 0.1, MCuPath: "Alpha/Gain", Compare: true},
+		{Offset: 2, Type: "u8", Scale: 1, MCuPath: "Alpha/Missing", Compare: true},
 		{Offset: 3, Type: "u8", Scale: 1},
 	}}
 	mcu := func(v string) *MCu {
