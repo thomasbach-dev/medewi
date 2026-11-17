@@ -146,8 +146,8 @@ Details and evidence: [docs/machine-behaviour.md](docs/machine-behaviour.md).
   the pump pulses of the warm-up program: it counts on through the
   program) and keeps counting during wand draws; the Flow rate field is a decaying estimate
   that lingers for seconds after the pump stops.
-- `MCu` lines are `"| "` x depth + a 15-char cell (a `...` cell is a
-  menu); a dump can lose lines mid-dump and still end in `Cancel`:
+- `MCu` lines are `"| "` x depth + a 15-char cell (a `...` cell, or a
+  full-width cell ending in `..`, is a menu; menus may be empty); a dump can lose lines mid-dump and still end in `Cancel`:
   verify with `levabak check`, the daemon refuses damaged ones.
 - `MCm` ends with `:00000001F`, one digit short of the Intel HEX EOF
   `:00000001FF`; 256 contiguous 16-byte data records precede it.

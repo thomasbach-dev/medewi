@@ -489,8 +489,12 @@ medewictl backup --out "$DIR" --note pre-autotune
 levabak check "$DIR"             # laptop or brewhost; exit 1 = damaged
 # ... change something on the machine ...
 medewictl backup --out "$DIR" --note post-autotune
-levabak diff "$DIR"              # DIR must hold exactly two backups (else: usage error listing them)
+levabak diff "$DIR"/*_pre-autotune.* "$DIR"/*_post-autotune.*   # two pairs by stem, A = pre
 ```
+
+Name the files explicitly: `levabak diff "$DIR"` works only while DIR holds
+exactly two backups (else a usage error lists them), and a note used twice
+puts more than two there.
 
 Files are named `TIMESTAMP_FIRMWARE[_NOTE].mcu.txt` and `.mcm.hex`. A
 backup that fails `check` is not good for a restore; take another.

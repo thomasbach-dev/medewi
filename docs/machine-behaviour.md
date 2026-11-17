@@ -242,8 +242,9 @@ the pump marker show the program.
 
   0x0087 changed (cd -> a0) and is unknown. Counter widths (u8 vs u16,
   u24 vs u32) are not settled by one pair. `levabak check` cross-checks
-  the MCu values `PID 1/Kc`, `PID 1/Ti`, `PID 1/Td`, `PID 1/WU limit` and
-  `Profiles/Use` against these offsets.
+  the MCu values `PID 1/Kc`, `PID 1/Ti`, `PID 1/Td` and `PID 1/WU limit`
+  against these offsets. `Profiles/Use` is named in the layout but not
+  compared (the MCu shows the profile name).
 
 ## Autotune
 
