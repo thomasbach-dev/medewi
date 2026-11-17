@@ -89,7 +89,7 @@ func TestHelp(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code %d", code)
 	}
-	for _, w := range []string{"check", "show", "diff", "layout", "license key", "Exit codes"} {
+	for _, w := range []string{"check", "show", "diff", "layout", "license key", "Exit codes", "problems are rows on stdout", "no header", "past the end of the image", "uses A's"} {
 		if !strings.Contains(errs, w) {
 			t.Errorf("help lacks %q", w)
 		}

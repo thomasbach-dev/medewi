@@ -41,7 +41,8 @@ over many backups is the long-term view of a setting.
 --format (after the subcommand) is text (default: aligned columns with a
 header), jsonl (one object per row; numbers are JSON numbers, an empty
 cell is null) or csv (header and rows). The jsonl keys equal the csv
-headers. Offsets print as 0x0173. All output is UTF-8 (the dumps are
+headers. Text prints an empty cell as "-" and, with no rows, no header at
+all: use jsonl or csv for exact values. Offsets print as 0x0173. All output is UTF-8 (the dumps are
 Latin-1; the degree sign arrives as °).
 
 Firmware comes from the file name. --firmware V, given BEFORE the
@@ -53,7 +54,7 @@ Sensitive data: output is local, like the dumps it reads, and is NOT
 redacted. A dump may hold the license key. Keep dumps and output out of the
 repo and out of pasted text.
 
-Warnings and problems go to stderr as "levabak: ..." lines.
+Warnings and errors go to stderr as "levabak: ..." lines; check's problems are rows on stdout.
 Exit codes: 0 ok, 1 read error (and check finding a problem), 2 usage error.
 diff exits 0 whether or not the backups differ.`
 
@@ -101,7 +102,7 @@ are not listed.
 With --eeprom it lists the known EEPROM entries of each backup's MCm
 instead: src, note, offset, type (u8, u16, u24), raw (the integer), value
 (raw times the entry's scale), name, confidence (confirmed, likely, guess).
-Over many backups, show is the long-term view of one setting: filter the
+Entries that lie past the end of the image are skipped. Over many backups, show is the long-term view of one setting: filter the
 rows by path.`,
 		examples: []string{
 			"  levabak show x.mcu.txt                                  # the settings of one backup",
@@ -122,7 +123,8 @@ unknown changed bytes as runs of hex. A setting in a damaged region of
 a damaged backup (see check) is marked damaged in note instead of
 being reported as added or removed. Damaged input still diffs, with a
 warning. With no differences nothing is printed but a "no differences"
-line on stderr. Exit 0 either way.`,
+line on stderr. If the two backups' firmware differs (file names), diff
+warns and uses A's for the layout. Exit 0 either way.`,
 		examples: []string{
 			"  levabak diff private/backups/2026-11-10 private/backups/2026-11-12  # two backup directories",
 			"  levabak diff --format jsonl a.mcu.txt b.mcu.txt | jq -r '.key'     # changed paths",
