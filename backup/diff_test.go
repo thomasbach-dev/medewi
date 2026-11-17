@@ -120,6 +120,44 @@ func TestDiffNoLayout(t *testing.T) {
 	}
 }
 
+func TestDiffDamagedAcrossSections(t *testing.T) {
+	c := backuptest.Cell
+	b := mcuBackup([]string{
+		c(0, "Alpha..."), c(1, "Gain       1"), c(1, "Tail       2"),
+		c(0, "Beta..."), c(1, "Bone       3"),
+		c(0, "Gamma..."), c(1, "Grip       4"),
+		c(0, "Delta..."), c(1, "Dial       5"),
+		c(0, "Cancel"),
+	})
+	glued := c(1, "Grip       4")
+	a := mcuBackup([]string{
+		c(0, "Alpha..."), c(1, "Gain       1"),
+		glued[:len(glued)-4], // cut-off remainder glued under Alpha
+		c(0, "Delta..."), c(1, "Dial       6"),
+		c(0, "Cancel"),
+	})
+	if len(a.MCu.Problems) == 0 {
+		t.Fatal("setup: expected problems in A")
+	}
+	notes := map[string]string{}
+	for _, ch := range Diff(a, b, Layout{}, false) {
+		notes[ch.Key] = ch.Note
+	}
+	for _, k := range []string{"Alpha/Tail", "Beta/Bone", "Gamma/Grip"} {
+		if notes[k] != "damaged" {
+			t.Errorf("%s: note %q, want damaged (all: %v)", k, notes[k], notes)
+		}
+	}
+	if n, ok := notes["Delta/Dial"]; !ok || n != "" {
+		t.Errorf("Delta/Dial: %q, %v", n, ok)
+	}
+	for k, n := range notes {
+		if n == "added" || n == "removed" {
+			t.Errorf("%s: %q", k, n)
+		}
+	}
+}
+
 func TestDiffMissingHalves(t *testing.T) {
 	a := mcuBackup(gainLines("1.0"))
 	b := mcmBackup(make([]byte, 16))

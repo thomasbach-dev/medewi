@@ -59,6 +59,14 @@ func diffSettings(a, b *MCu) []Change {
 		}
 		return n
 	}
+	// Lost lines can sit anywhere after a glue, so with any damage a path
+	// on one side only is "damaged", never added or removed.
+	oneSided := func(_ Setting, n string) string {
+		if len(a.Problems) > 0 || len(b.Problems) > 0 {
+			return "damaged"
+		}
+		return n
+	}
 	inA := map[string]Setting{}
 	for _, s := range a.Settings {
 		if !s.Menu {
@@ -75,14 +83,14 @@ func diffSettings(a, b *MCu) []Change {
 		old, ok := inA[s.Path]
 		switch {
 		case !ok:
-			out = append(out, Change{"setting", s.Path, "", s.Value, note(s, "added")})
+			out = append(out, Change{"setting", s.Path, "", s.Value, oneSided(s, "added")})
 		case old.Value != s.Value:
 			out = append(out, Change{"setting", s.Path, old.Value, s.Value, note(s, "")})
 		}
 	}
 	for _, s := range a.Settings {
 		if !s.Menu && !seen[s.Path] {
-			out = append(out, Change{"setting", s.Path, s.Value, "", note(s, "removed")})
+			out = append(out, Change{"setting", s.Path, s.Value, "", oneSided(s, "removed")})
 		}
 	}
 	return out
