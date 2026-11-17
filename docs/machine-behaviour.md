@@ -145,6 +145,53 @@ the pump marker show the program.
 - `levalog runs` lists each pulse as a flush of its own (9 runs): nothing
   in the report stream marks the program (detection: issue #13).
 
+## Pressure test program (run menu)
+
+Observed 2026-11-17 from the raw log with LCD sampling (500 ms every
+5 s): cold machine (PID1 control off, mode `CLD`, 25 °C), no blind
+filter (the sensor sits before the firmware-controlled grouphead valve),
+operator mark on starting it. One run. Times are seconds after the mark.
+About 4 min from selecting the program to `Test pressure ✓`.
+
+1. Before: pressure left over from earlier use stays trapped with the
+   pump off (here 1.94 bar).
+2. +5.2 s: the valve opens; pressure drops to 0 within one report. The
+   `Volume` field resets to 0 here, with the pump marker still `-`,
+   2.8 s before the pump starts (outside programs it resets at the pump
+   start). LCD: `WAIT 1.9✓`, then `WAIT 0.0✓`.
+3. +8.0 s: pump marker `*`. `Phase` reads 100° for two reports, then
+   120°, and sweeps down: **120° → 50° in 2° steps**, each held about
+   4.5 s (the odd degree in between passes within about 0.5 s), then
+   **50° → 0° in 5° steps** of about 6.5 s, also passing through the
+   degrees in between. About 230 s of pump in total; the manual says
+   "approximately 2 minutes".
+4. Pressure follows the pump's static curve (pressure against phase) up
+   to the OPV. `Volume` and flow stay 0 until the OPV opens; then the
+   water it lets through shows on the flow meter with marker `*` (17 ml
+   in this run). How the curve looks is machine-specific, which is the
+   point of the test (pump health, pump-menu values).
+5. +238 s: `Phase` 180°, pressure → 0 within one report (the valve
+   opens to relieve the pressure); one more report with `*`, then `-`.
+   LCD: `Test pressure ✓`.
+
+- Mode `CLD`, setpoint and `Pressure SP` `?`-masked, heat 0 % throughout;
+  only `Phase` is live (unlike the rest of [cold mode](#cold-mode)). Its
+  descending sweep from 120° is the program's mark in the report stream.
+- LCD, third row of the run menu: `WAIT`, a progress bar growing about
+  every 10–20 s (it ended at `████▋`, not full) and the live pressure
+  (`…b`).
+- Afterwards `MCb` returns 46 points (120°–50° every 2°, 45°–0° every
+  5°); each value equals the pressure at the end of that step in the
+  report stream. The data stays in EEPROM until the next test. The test
+  also rewrites Pump › Press max, Press OPV, Phase OPV and Phase off:
+  `levabak diff` of backups before and after showed no other change. The
+  run menu shows `Test pressure ✓` / `Test flow -`: the suffix says
+  whether a test has stored data (`MCf` returns nothing while the flow
+  test has never run).
+- `levalog runs` lists the whole program as one flush (230.6 s, peak at
+  the OPV). Detection is issue #18; open: whether the test can run with
+  PID1 on and what it then shows.
+
 ## Steam
 
 - With the steam switch on, the boiler rises to about 120 °C while leva!'s
@@ -169,6 +216,8 @@ the pump marker show the program.
   the setpoint, all PID1/PID2 terms, `Pressure SP` and the phase fields
   are `?`-masked. The daemon reports power `cold`; it never switches power
   from there (what `MCa` does in cold mode is unverified).
+- Exception: while the pressure test runs, `Phase` is live in `CLD` (the
+  program's sweep, see below); the other masked fields stay masked.
 
 ## Valve test
 
