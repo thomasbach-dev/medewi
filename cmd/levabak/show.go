@@ -12,7 +12,7 @@ import (
 func showCmd(args []string, firmware string, stdout, stderr io.Writer) int {
 	fs := subFlags("show", stderr)
 	format := addFormat(fs)
-	eeprom := fs.Bool("eeprom", false, "list the known EEPROM entries of the MCm dump instead of the settings")
+	eeprom := fs.Bool("eeprom", false, "list EEPROM entries instead of settings")
 	prefix := addPath(fs)
 	if code, done := parse(fs, args, format, stderr); done {
 		return code

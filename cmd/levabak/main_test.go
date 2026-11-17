@@ -253,7 +253,7 @@ func TestDiffDamaged(t *testing.T) {
 	a := write(t, d, "2026-11-10T094200Z_3.2.mcu.txt", u[:len(u)-1])
 	b := write(t, d, "2026-11-11T094200Z_3.2.mcu.txt", mcu("2.0"))
 	code, out, errs := run0(t, "diff", a, b)
-	if code != 0 || !strings.Contains(errs, "damaged") || out == "" {
+	if code != 0 || !strings.Contains(errs, "damaged, 1 problem (see levabak check)") || out == "" {
 		t.Errorf("code %d out %q err %q", code, out, errs)
 	}
 }

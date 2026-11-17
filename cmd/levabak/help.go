@@ -82,7 +82,8 @@ type subHelp struct {
 }
 
 // pointer is the line ending each SUBCOMMAND --help: the shared rules.
-const pointer = "BACKUP forms and pairing, --format, --firmware (before the subcommand), the sensitive-data note and exit codes: levabak --help"
+const pointer = `BACKUP forms and pairing, --format, --firmware (before the
+subcommand), the sensitive-data note and exit codes: levabak --help`
 
 var subHelps = []subHelp{
 	{

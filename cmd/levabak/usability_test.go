@@ -187,12 +187,19 @@ func TestShortNote(t *testing.T) {
 func TestHelpLineLength(t *testing.T) {
 	var b strings.Builder
 	usage(&b)
-	for _, l := range strings.Split(b.String(), "\n") {
-		if strings.HasPrefix(l, "  levabak ") { // example lines carry comments
-			continue
-		}
-		if n := len([]rune(l)); n > 80 {
-			t.Errorf("help line of %d columns: %q", n, l)
+	texts := []string{b.String()}
+	for _, sub := range []string{"check", "show", "diff", "layout"} {
+		_, _, errs := run0(t, sub, "--help")
+		texts = append(texts, errs)
+	}
+	for _, text := range texts {
+		for _, l := range strings.Split(text, "\n") {
+			if strings.HasPrefix(l, "  levabak ") { // example lines carry comments
+				continue
+			}
+			if n := len([]rune(l)); n > 80 {
+				t.Errorf("help line of %d columns: %q", n, l)
+			}
 		}
 	}
 }

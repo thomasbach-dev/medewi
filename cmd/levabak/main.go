@@ -188,5 +188,5 @@ func noMatch(stderr io.Writer, prefix string) {
 
 // addPath registers --path on fs.
 func addPath(fs *pflag.FlagSet) *string {
-	return fs.String("path", "", "keep only rows whose path (diff: setting key) starts with PREFIX; a trailing / selects a whole menu")
+	return fs.String("path", "", "keep rows whose path starts with PREFIX")
 }

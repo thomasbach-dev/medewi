@@ -35,7 +35,7 @@ func diffCmd(args []string, firmware string, stdout, stderr io.Writer) int {
 			n += len(x.MCm.Problems)
 		}
 		if n > 0 {
-			warn(stderr, "%s: damaged, %d problems (see levabak check); diffing anyway", shortSrc(x.Src), n)
+			warn(stderr, "%s: damaged, %s (see levabak check); diffing anyway", shortSrc(x.Src), count(n, "problem"))
 		}
 	}
 	if (a.MCu == nil) != (b.MCu == nil) {
