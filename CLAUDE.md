@@ -10,6 +10,7 @@ machine simulator (`sim/`, `cmd/levasim`), conformance suite
 (`conformance/`), capture tooling (`cmd/levacap`). Phase 2 (implemented):
 the always-on daemon `medewid` (`daemon/`, `watch/`, `brew/`, `store/`, `rawlog/`:
 exporter, brew DB, power control, release/reclaim of the machine, ops panel, raw traffic log), the client `cmd/medewictl`,
+the settings-backup reader `cmd/levabak` (`backup/`: check, show, diff),
 the log decoder `cmd/levalog` (`logview/`, `systime/`; its `extract`
 turns a raw-log window into a fixture)
 and the NixOS module `nix/module.nix`; recipe execution is still to come.
@@ -145,5 +146,8 @@ Details and evidence: [docs/machine-behaviour.md](docs/machine-behaviour.md).
   the pump pulses of the warm-up program: it counts on through the
   program) and keeps counting during wand draws; the Flow rate field is a decaying estimate
   that lingers for seconds after the pump stops.
+- `MCu` lines are `"| "` x depth + a 15-char cell (a `...` cell is a
+  menu); a dump can lose lines mid-dump and still end in `Cancel`:
+  verify with `levabak check`, the daemon refuses damaged ones.
 - `MCm` ends with `:00000001F`, one digit short of the Intel HEX EOF
   `:00000001FF`; 256 contiguous 16-byte data records precede it.

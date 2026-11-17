@@ -130,6 +130,13 @@ a truncated kind naming the cause (`truncated-lost`, `truncated-released`,
 - `systime/` — the `systemd.time(7)` subset every command accepts for
   timestamps and spans, plus pflag values for them
   ([CLI conventions](cli-conventions.md)).
+- `backup/` — offline reader of the settings backups: parses an MCu dump
+  into a menu tree and an MCm dump into a 4 KiB image, checks both for
+  damage (the daemon uses the same check and refuses a damaged MCu dump),
+  diffs two backups and holds the known EEPROM layout per firmware. No
+  machine I/O; `backup/backuptest` has synthetic dumps for tests.
+- `cmd/levabak` — `levabak check`, `show`, `diff` and `layout` over
+  `backup/`, installed on brewhost by the module.
 - `cmd/levalog` — `levalog fields`, `runs`, `events` (with `--every`) and
   `summary` over `logview`, installed on brewhost by the module.
 - `nix/module.nix` — the `nixosModules.medewid` service.

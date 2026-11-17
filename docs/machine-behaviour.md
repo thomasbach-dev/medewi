@@ -203,3 +203,56 @@ the pump marker show the program.
   in the 2026-11-02 command capture and in both daemon backups on
   2026-11-15 (257 lines each time). The idle banner follows right after.
   The daemon's completeness check accepts both forms of the end record.
+- `MCu` replies with the settings menu tree as text, Latin-1 (`°` is byte
+  0xB0), 1711 lines in the 2026-11-16 dump of leva! 3.2, ending in
+  `Cancel`. Each line is `"| "` x depth followed by a 15-character cell,
+  so its length is 15 + 2 x depth (15..25 seen). A cell whose trimmed text
+  ends in `...` is a menu that opens the next depth; a menu may be empty
+  (8 of them in that dump, e.g. a section with no stored presets). A cell
+  with a label too long for the cell ends in `..` at full width and is a
+  menu too (found by `levabak check` on a real backup). Other cells are
+  settings: label left, value right-aligned, sometimes with no space in
+  between (`Duration00m:03s`). 26 top-level sections, from `PID 1...` to
+  `Cancel`. Evidence: two real backups of 2026-11-16 (before and after an
+  autotune).
+- **An `MCu` dump can lose lines mid-dump and still look whole.** The
+  pre-autotune dump of 2026-11-16 lost about 153 lines: line 1094 glues
+  `|    ` to `| | Time    04m:00s`, and the dump still ended in `Cancel`.
+  The daemon used to accept any non-empty `MCu` reply; it now refuses a
+  dump that fails `levabak check` (`ErrIncompleteDump`). `MCm` is checked
+  as before.
+- The daemon serves backups as `text/plain; charset=iso-8859-1`, the
+  bodies byte-identical to the machine's reply.
+- **EEPROM layout** (`MCm` image, little-endian; all from the pre/post
+  autotune pair of 2026-11-16, the table lives in `backup/`; see
+  `levabak layout`):
+
+  | offset | type | scale | meaning | confidence and evidence |
+  |---|---|---|---|---|
+  | 0x0173 | u16 | 0.1 | PID 1 Kc (%/deg) | confirmed: matches MCu 8.9 -> 8.8 |
+  | 0x0175 | u16 | 0.1 | PID 1 Ti (s) | confirmed: 67.2 -> 72.3 |
+  | 0x0177 | u16 | 0.1 | PID 1 Td (s) | confirmed: 16.8 -> 18.1 |
+  | 0x0179 | u16 | 0.1 | PID 1 windup limit (%) | likely: 200 = MCu 20.0 %, unchanged |
+  | 0x0027 | u24 | 1 | flow-meter ticks, lifetime? | likely: +1006 = sum of `field_31` over runs 5-9 |
+  | 0x002F | u24 | 1 | flow-meter ticks, copy or trip | likely: same values as 0x0027 |
+  | 0x0033 | u16 | 1 | flow-meter ticks, resettable? | likely: +1006 |
+  | 0x0022 | u8 | 1 | run counter? | guess: +5 = runs 5-9 |
+  | 0x0037 | u8 | 1 | shot counter? | guess: +1 = one shot |
+  | 0x04F9 | u8 | 1 | Profiles: Use (slot) | likely: 1 -> 3, MCu slot 1 -> 3 |
+
+  0x0087 changed (cd -> a0) and is unknown. Counter widths (u8 vs u16,
+  u24 vs u32) are not settled by one pair. `levabak check` cross-checks
+  the MCu values `PID 1/Kc`, `PID 1/Ti`, `PID 1/Td`, `PID 1/WU limit` and
+  `Profiles/Use` against these offsets.
+
+## Autotune
+
+From the raw logs of 2026-11-16, 08:08:57-08:22:30:
+
+- Report mode `ATN`. The setpoint shows 88 - Safety 1.5 = 86.5; PID terms,
+  Kc/Ti/Td, windup and dT/dt are masked; temperature and heat stay live.
+- Relay test: heat 0 % for the Wait (2 min), one pulse at Power 30 %, then
+  three cycles at 18 %, about 160 s apart, temperature about 86.2-88.4 deg C.
+- LCD: `PID 1 WAIT` blinking; a check mark after the 30 % pulse; a bar
+  grows by `██` per cycle; after Cycles = 3 back to `PID`, new constants
+  live (also in EEPROM: 0x0173..0x0177 above).

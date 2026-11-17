@@ -8,7 +8,7 @@ hand, and medewi drives the machine accordingly.
 **Status: phase 2 (daemon).** Protocol library (`leva/`), machine
 simulator (`cmd/levasim`), conformance suite (`conformance/`), capture
 tooling (`cmd/levacap`), the always-on daemon `medewid` with its client
-`medewictl`, and the log decoder `levalog`. The only writes to the machine are the power toggles.
+`medewictl`, the log decoder `levalog` and the offline settings-backup reader `levabak`. The only writes to the machine are the power toggles.
 
 ## Documentation
 
@@ -205,7 +205,7 @@ server CA. Unset, the three files default to `client.crt`, `client.key` and
 medewictl status
 medewictl power eco            # active | eco | standby
 medewictl mark pre-infusion over
-medewictl backup --out DIR
+medewictl backup --out DIR [--note TEXT]
 medewictl release --until=+1h30min  # free the machine; default +1h; also 15:00 (systemd.time)
 medewictl reclaim                   # take it back early
 medewictl --insecure --url http://127.0.0.1:8080 status
@@ -217,8 +217,10 @@ works); the release survives a daemon restart and ends by itself, or with
 `reclaim`. The ops panel shows it with a Reclaim button.
 
 `backup` reads the controller settings and writes two files into `DIR`:
-`<ts>_<fw>.mcu.txt` and `<ts>_<fw>.mcm.hex`, where `<ts>` looks like
-`2026-11-03T041500Z` and `<fw>` is the firmware version. The files contain
+`<ts>_<fw>[_<note>].mcu.txt` and `.mcm.hex` (one timestamp for both), where
+`<ts>` looks like `2026-11-03T041500Z` and `<fw>` is the firmware version;
+`--note` adds `<note>`. A damaged MCu dump is refused. Read the files with
+`levabak check|show|diff DIR` (offline; `levabak --help`). The files contain
 the license key: they are written `0600` and must never be committed. If the
 `mcm` dump fails, the `mcu` file already written stays in `DIR`.
 
@@ -270,6 +272,6 @@ and under `$MEDEWID_URL/api/brews`; counters are at `$MEDEWID_URL/metrics`.
 ```sh
 nix develop                   # Go toolchain, linters
 go test ./...                 # unit + conformance against the simulator
-nix build .#levasim           # also .#levacap, .#levalog, .#medewid, .#medewictl
+nix build .#levasim           # also .#levacap, .#levalog, .#levabak, .#medewid, .#medewictl
 go run ./cmd/levasim --fixtures testdata/fixtures/synthetic
 ```
