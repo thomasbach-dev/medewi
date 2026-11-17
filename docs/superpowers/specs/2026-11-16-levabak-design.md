@@ -180,7 +180,7 @@ levabak [--firmware V] SUBCOMMAND [OPTIONS] BACKUP ...
     its first line, problem `damaged region: lines F-T, starting in
     section S; …`), which do not count as problems; text ends with one
     verdict line per file: `SRC: ok` or `SRC: damaged, N problems[, M
-    damaged regions (lines F-T, …)]`.
+    damaged regions (lines F-T, …)]` (singular for 1).
   - `show`: `src note line path label value number unit flag raw`
     (number/unit from `SplitNumber`, empty when the value is no plain
     number, a JSON number in jsonl; flag `damaged` for a setting in a

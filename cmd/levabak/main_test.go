@@ -121,7 +121,7 @@ func TestCheckDamaged(t *testing.T) {
 	u := backuptest.ValidMCu()
 	p := write(t, d, "2026-11-10T094200Z_3.2.mcu.txt", u[:len(u)-1]) // no Cancel
 	code, out, _ := run0(t, "check", p)
-	if code != 1 || !strings.Contains(out, filepath.Base(p)+": damaged, 1 problems") {
+	if code != 1 || !strings.Contains(out, filepath.Base(p)+": damaged, 1 problem,") {
 		t.Errorf("code %d out %q", code, out)
 	}
 	code, out, _ = run0(t, "check", "--format", "jsonl", p)

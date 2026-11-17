@@ -21,7 +21,8 @@ machine.
   diff    A B: changed settings, then changed EEPROM bytes
   layout  the known EEPROM entries: offset, type, scale, name, confidence
 
-levabak SUBCOMMAND --help prints that subcommand's part of this text and its flags.`
+levabak SUBCOMMAND --help prints that subcommand's part of this text and
+its flags.`
 
 // helpShared is what every subcommand shares.
 const helpShared = `BACKUP, for all subcommands, is a *.mcu.txt or *.mcm.hex file, or a
@@ -30,9 +31,10 @@ with ":"), not only its name. A directory's files are paired into one backup
 per pair: files with the same name stem TIMESTAMP_FIRMWARE[_NOTE] first;
 for older backups without a shared stem, an MCu file and the MCm file
 closest after it in time (by the file-name timestamp, same firmware, within
-5 minutes). An unpaired file is a backup of one kind (a warning on stderr). Files named
-as arguments are paired the same way, among themselves and within one
-directory: "x.mcu.txt x.mcm.hex" is one backup, not two.
+5 minutes). An unpaired file is a backup of one kind (a warning on
+stderr). Files named as arguments are paired the same way, among
+themselves and within one directory: "x.mcu.txt x.mcm.hex" is one backup,
+not two.
 A directory with no backup files of its own is read through its
 subdirectories, in name order. File names are
 TIMESTAMP_FIRMWARE[_NOTE].mcu.txt or .mcm.hex, TIMESTAMP like
@@ -108,13 +110,14 @@ backup with only one kind of file is checked as far as it goes, with a
 warning.`,
 		examples: []string{
 			"  levabak check private/backups/morning/                   # every backup in that directory",
-			"  levabak check DIR   # a damaged one ends: x.mcu.txt: damaged, 2 problems, 1 damaged regions (lines 5-6)",
+			"  levabak check DIR   # a damaged one ends: x.mcu.txt: damaged, 2 problems, 1 damaged region (lines 5-6)",
 			"  levabak check --format jsonl x.mcu.txt | jq -r .problem  # just the problem texts",
 		},
 	},
 	{
 		name: "show",
-		text: `usage: levabak [--firmware V] show [--format F] [--path PREFIX] [--eeprom] BACKUP ...
+		text: `usage: levabak [--firmware V] show [--format F] [--path PREFIX]
+             [--eeprom] BACKUP ...
 
 show lists the settings of each backup's MCu: one row per setting with
 src, note, line, path, label, value, number, unit, flag, raw. path is the
@@ -156,15 +159,16 @@ are not listed), then the changed settings, key is the path, a and b the
 values (empty: absent on that side). --path PREFIX keeps only rows whose
 key starts with PREFIX ("PID 1/" for one menu), a section row when
 either path starts with the other, and eeprom rows of entries whose MCu
-path starts with it. Section eeprom: the changed bytes, key is the offset; known entries
-first, with the layout's name in note and the decoded values, then the
-unknown changed bytes as runs of hex. A setting in a damaged region of
-a damaged backup (see check) is marked damaged in note instead of
-being reported as added or removed. Damaged input still diffs, with a
-warning. With no differences nothing is printed but a "no differences"
-line on stderr. If the two backups' firmware differs (file names), diff
-warns and uses A's for the layout; --firmware (before the subcommand)
-chooses the layout and also silences that warning. Exit 0 either way.`,
+path starts with it. Section eeprom: the changed bytes, key is the
+offset; known entries first, with the layout's name in note and the
+decoded values, then the unknown changed bytes as runs of hex. A setting
+in a damaged region of a damaged backup (see check) is marked damaged in
+note instead of being reported as added or removed. Damaged input still
+diffs, with a warning. With no differences nothing is printed but a "no
+differences" line on stderr. If the two backups' firmware differs (file
+names), diff warns and uses A's for the layout; --firmware (before the
+subcommand) chooses the layout and also silences that warning. Exit 0
+either way.`,
 		examples: []string{
 			"  levabak diff private/backups/2026-11-10 private/backups/2026-11-12  # two backup directories",
 			"  levabak diff --format jsonl a.mcu.txt b.mcu.txt | jq -r '.key'     # changed paths",

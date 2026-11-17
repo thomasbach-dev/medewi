@@ -61,9 +61,9 @@ func checkCmd(args []string, firmware string, stdout, stderr io.Writer) int {
 			verdicts = append(verdicts, src+": ok")
 		} else {
 			bad = true
-			v := fmt.Sprintf("%s: damaged, %d problems", src, len(probs))
+			v := fmt.Sprintf("%s: damaged, %s", src, count(len(probs), "problem"))
 			if len(regions) > 0 {
-				v += fmt.Sprintf(", %d damaged regions (lines %s)", len(regions), spans(regions))
+				v += fmt.Sprintf(", %s (lines %s)", count(len(regions), "damaged region"), spans(regions))
 			}
 			verdicts = append(verdicts, v)
 		}
@@ -80,6 +80,14 @@ func checkCmd(args []string, firmware string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// count is "1 problem", "2 problems".
+func count(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // regionText is the problem text of a damaged-region row.

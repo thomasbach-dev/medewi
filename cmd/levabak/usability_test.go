@@ -104,7 +104,7 @@ func TestCheckRegionRows(t *testing.T) {
 		}
 	}
 	_, out, _ = run0(t, "check", p)
-	wantV := filepath.Base(p) + ": damaged, " + string(rune('0'+nprob)) + " problems, 1 damaged regions (lines 5-6)"
+	wantV := filepath.Base(p) + ": damaged, " + string(rune('0'+nprob)) + " problems, 1 damaged region (lines 5-6)"
 	if !strings.Contains(out, wantV) {
 		t.Errorf("verdict: want %q in\n%s", wantV, out)
 	}
@@ -164,6 +164,51 @@ func TestShowNumberUnitFlag(t *testing.T) {
 		if r["path"] == "Alpha/Duration" && (r["number"] != nil || r["unit"] != nil) {
 			t.Errorf("duration row %v", r)
 		}
+	}
+}
+
+func TestShortNote(t *testing.T) {
+	d := t.TempDir()
+	t.Chdir(d)
+	cwd, _ := os.Getwd()
+	long := filepath.Join(cwd, "sub", "x.mcu.txt")
+	for in, want := range map[string]string{
+		"unpaired mcu file " + long:                        "unpaired mcu file sub/x.mcu.txt",
+		"unpaired mcm file /elsewhere/y.mcm.hex":           "unpaired mcm file y.mcm.hex",
+		"skipped /elsewhere/z.txt: not a backup file name": "skipped z.txt: not a backup file name",
+		"something else /elsewhere/z.txt":                  "something else /elsewhere/z.txt",
+	} {
+		if got := shortNote(in); got != want {
+			t.Errorf("shortNote(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestHelpLineLength(t *testing.T) {
+	var b strings.Builder
+	usage(&b)
+	for _, l := range strings.Split(b.String(), "\n") {
+		if strings.HasPrefix(l, "  levabak ") { // example lines carry comments
+			continue
+		}
+		if n := len([]rune(l)); n > 80 {
+			t.Errorf("help line of %d columns: %q", n, l)
+		}
+	}
+}
+
+func TestCheckVerdictPlural(t *testing.T) {
+	d := t.TempDir()
+	u := backuptest.ValidMCu()
+	p := write(t, d, "2026-11-10T094200Z_3.2.mcu.txt", u[:len(u)-1]) // one problem, one region
+	_, out, _ := run0(t, "check", p)
+	if !strings.Contains(out, ": damaged, 1 problem, 1 damaged region (lines ") {
+		t.Errorf("singular: %q", out)
+	}
+	q := write(t, d, "2026-11-11T094200Z_3.2.mcu.txt", damagedMCu())
+	_, out, _ = run0(t, "check", q)
+	if !strings.Contains(out, " problems, 1 damaged region (lines 5-6)") {
+		t.Errorf("plural problems: %q", out)
 	}
 }
 
