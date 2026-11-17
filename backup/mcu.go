@@ -2,6 +2,7 @@ package backup
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -165,8 +166,9 @@ func ParseMCu(lines []string) *MCu {
 		problem(prev.Line, "menu %q has no children", prev.Label)
 	}
 	if prev.Depth != 0 || prev.Label != "Cancel" {
-		problem(prev.Line, "last line is not Cancel at depth 0")
+		problem(len(lines), "last line is not Cancel at depth 0")
 	}
+	sort.SliceStable(u.Problems, func(i, j int) bool { return u.Problems[i].Line < u.Problems[j].Line })
 	return u
 }
 
