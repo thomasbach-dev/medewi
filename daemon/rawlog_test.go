@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -97,7 +98,7 @@ func TestRawLogDumpsNeverLogged(t *testing.T) {
 			continue
 		}
 		got := string(e.Data)
-		for _, secret := range append([]string{"user setting"}, fakeMCm...) {
+		for _, secret := range append(slices.Clone(fakeMCu), fakeMCm...) {
 			if strings.Contains(got, secret) {
 				t.Errorf("dump line leaked into the raw log: %q", got)
 			}

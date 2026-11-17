@@ -69,11 +69,13 @@ const (
 	mcmBody = ":10000000AA\n:00000001FF\n"
 )
 
-func backupServer(mcmStatus int) *httptest.Server {
+func backupServer(mcmStatus int) *httptest.Server { return backupServerFW(mcmStatus, "3.2") }
+
+func backupServerFW(mcmStatus int, firmware string) *httptest.Server {
 	return httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/backup/mcu":
-			w.Header().Set("X-Medewi-Firmware", "3.2")
+			w.Header().Set("X-Medewi-Firmware", firmware)
 			w.Header().Set("X-Medewi-Lines", "2")
 			_, _ = w.Write([]byte(mcuBody))
 		case "/api/backup/mcm":
@@ -81,7 +83,7 @@ func backupServer(mcmStatus int) *httptest.Server {
 				http.Error(w, `{"ok":false,"error":"truncated"}`, mcmStatus)
 				return
 			}
-			w.Header().Set("X-Medewi-Firmware", "3.2")
+			w.Header().Set("X-Medewi-Firmware", firmware)
 			w.Header().Set("X-Medewi-Lines", "2")
 			_, _ = w.Write([]byte(mcmBody))
 		default:
@@ -133,6 +135,95 @@ func TestBackupFileNames(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "2 lines") {
 		t.Errorf("stderr lacks line count: %s", stderr)
+	}
+}
+
+// backupFiles runs backup into a fresh directory and returns the file names.
+func backupFiles(t *testing.T, srv *httptest.Server, args ...string) []string {
+	t.Helper()
+	out := t.TempDir()
+	code, _, stderr := exec(t, srv, append([]string{"backup", "--out", out}, args...)...)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	ents, err := os.ReadDir(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range ents {
+		names = append(names, e.Name())
+	}
+	return names
+}
+
+// splitBackupNames checks that names are one mcu and one mcm file with the
+// same timestamp and returns the part after "TIMESTAMP_" without the kind.
+func splitBackupNames(t *testing.T, names []string) string {
+	t.Helper()
+	re := regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T\d{6}Z)_(.+)\.(mcu\.txt|mcm\.hex)$`)
+	if len(names) != 2 {
+		t.Fatalf("files = %q, want two", names)
+	}
+	var stamps, rests, kinds []string
+	for _, n := range names {
+		m := re.FindStringSubmatch(n)
+		if m == nil {
+			t.Fatalf("unexpected file name %q", n)
+		}
+		stamps, rests, kinds = append(stamps, m[1]), append(rests, m[2]), append(kinds, m[3])
+	}
+	if stamps[0] != stamps[1] || rests[0] != rests[1] || kinds[0] == kinds[1] {
+		t.Fatalf("names differ beyond the kind: %q", names)
+	}
+	return rests[0]
+}
+
+func TestBackupNote(t *testing.T) {
+	srv := backupServer(http.StatusOK)
+	defer srv.Close()
+	names := backupFiles(t, srv, "--note", "post-autotune")
+	if got := splitBackupNames(t, names); got != "3.2_post-autotune" {
+		t.Errorf("name rest = %q, want 3.2_post-autotune (%q)", got, names)
+	}
+}
+
+func TestBackupNoteSanitized(t *testing.T) {
+	srv := backupServer(http.StatusOK)
+	defer srv.Close()
+	names := backupFiles(t, srv, "--note", "post autotune/v2")
+	if got := splitBackupNames(t, names); got != "3.2_post_autotune_v2" {
+		t.Errorf("name rest = %q (%q)", got, names)
+	}
+}
+
+func TestBackupNoteNothingUsable(t *testing.T) {
+	srv := backupServer(http.StatusOK)
+	defer srv.Close()
+	for _, note := range []string{"..", "._", "/", "   "} {
+		out := t.TempDir()
+		code, _, stderr := exec(t, srv, "backup", "--out", out, "--note", note)
+		if code != 2 || !strings.Contains(stderr, "medewictl: --note: nothing usable left") {
+			t.Errorf("--note %q: exit %d, stderr %q", note, code, stderr)
+		}
+		if ents, _ := os.ReadDir(out); len(ents) != 0 {
+			t.Errorf("--note %q wrote %v", note, ents)
+		}
+	}
+}
+
+func TestBackupFirmwareSanitized(t *testing.T) {
+	srv := backupServerFW(http.StatusOK, "3.2 beta")
+	defer srv.Close()
+	if got := splitBackupNames(t, backupFiles(t, srv)); got != "3.2-beta" {
+		t.Errorf("name rest = %q, want 3.2-beta", got)
+	}
+}
+
+func TestBackupNameUsage(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run([]string{"--help"}, &out, &errb); code != 0 || !strings.Contains(errb.String(), "--note") {
+		t.Errorf("usage lacks --note: %d %q", code, errb.String())
 	}
 }
 

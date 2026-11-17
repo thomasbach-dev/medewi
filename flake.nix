@@ -74,6 +74,7 @@
         medewid = build "medewid";
         medewictl = build "medewictl";
         levalog = build "levalog";
+        levabak = build "levabak";
       };
 
       nixosModules.medewid = import ./nix/module.nix self;
@@ -149,7 +150,7 @@
             '';
       };
 
-      # `levalog` in the dev shell always runs the working tree's code: it
+      # `levalog` and `levabak` in the dev shell always run the working tree's code: it
       # builds ./cmd/levalog from the repo root into a cache, then execs it
       # with the caller's arguments and working directory. The cache is
       # keyed on the repo path, so worktrees do not overwrite each other's
@@ -157,24 +158,24 @@
       # a concurrent call never execs a half-written one.
       devShells.${system}.default =
         let
-          levalogDev = pkgs.writeShellScriptBin "levalog" ''
+          devWrapper = name: pkgs.writeShellScriptBin name ''
             repo=$(${pkgs.git}/bin/git rev-parse --show-toplevel 2>/dev/null) || repo=""
-            [ -f "$repo/cmd/levalog/main.go" ] || repo=''${MEDEWI_REPO:-}
-            if [ ! -f "$repo/cmd/levalog/main.go" ]; then
-              echo "levalog: medewi repo not found (run from it, or set MEDEWI_REPO)" >&2
+            [ -f "$repo/cmd/${name}/main.go" ] || repo=''${MEDEWI_REPO:-}
+            if [ ! -f "$repo/cmd/${name}/main.go" ]; then
+              echo "${name}: medewi repo not found (run from it, or set MEDEWI_REPO)" >&2
               exit 1
             fi
             key=$(printf '%s' "$repo" | ${pkgs.coreutils}/bin/sha256sum | ${pkgs.coreutils}/bin/cut -c1-12)
             cache=''${XDG_CACHE_HOME:-$HOME/.cache}/medewi/$key
             ${pkgs.coreutils}/bin/mkdir -p "$cache" || exit 1
             tmp=$(${pkgs.coreutils}/bin/mktemp -d "$cache/build.XXXXXX") || exit 1
-            if ! ${pkgs.go}/bin/go build -C "$repo" -o "$tmp/levalog" ./cmd/levalog; then
+            if ! ${pkgs.go}/bin/go build -C "$repo" -o "$tmp/${name}" ./cmd/${name}; then
               ${pkgs.coreutils}/bin/rm -rf "$tmp"
               exit 1
             fi
-            ${pkgs.coreutils}/bin/mv -f "$tmp/levalog" "$cache/levalog"
+            ${pkgs.coreutils}/bin/mv -f "$tmp/${name}" "$cache/${name}"
             ${pkgs.coreutils}/bin/rmdir "$tmp"
-            exec "$cache/levalog" "$@"
+            exec "$cache/${name}" "$@"
           '';
           # The per-commit gate: the lint, fmt, vet, test and tidy checks'
           # commands with the same tools, run in the working tree with warm
@@ -202,7 +203,8 @@
             golangci-lint
             gofumpt
             govulncheck
-            levalogDev
+            (devWrapper "levalog")
+            (devWrapper "levabak")
             gate
           ];
           shellHook = ''

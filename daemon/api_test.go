@@ -385,7 +385,7 @@ func TestAPIBackup(t *testing.T) {
 	if got := rec.Body.String(); got != strings.Join(fakeMCm, "\n")+"\n" {
 		t.Errorf("body = %q", got)
 	}
-	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+	if ct := rec.Header().Get("Content-Type"); ct != "text/plain; charset=iso-8859-1" {
 		t.Errorf("Content-Type = %q", ct)
 	}
 	if rec.Header().Get("X-Medewi-Firmware") != "3.2" || rec.Header().Get("X-Medewi-Lines") != "3" {
@@ -393,8 +393,10 @@ func TestAPIBackup(t *testing.T) {
 	}
 
 	rec = apiDo(t, h, "GET", "/api/backup/mcu", "")
-	if rec.Code != 200 || rec.Header().Get("X-Medewi-Lines") != "2" || !strings.HasPrefix(rec.Body.String(), "user setting 1 = 42\n") ||
-		!strings.HasSuffix(rec.Body.String(), "\n") || strings.Count(rec.Body.String(), "\n") != 2 {
+	// Byte-identical to the machine's reply, Latin-1 0xB0 included.
+	if got := rec.Body.String(); rec.Code != 200 || got != strings.Join(fakeMCu, "\n")+"\n" || !strings.Contains(got, "\xb0") ||
+		rec.Header().Get("X-Medewi-Lines") != strconv.Itoa(len(fakeMCu)) ||
+		rec.Header().Get("Content-Type") != "text/plain; charset=iso-8859-1" {
 		t.Errorf("mcu = %d %v %q", rec.Code, rec.Header(), rec.Body)
 	}
 	assertOnlyAllowed(t, s, "MCm", "MCu")
@@ -409,6 +411,17 @@ func TestAPIBackupIncomplete(t *testing.T) {
 	}
 	if rec.Header().Get("X-Medewi-Lines") != "" || strings.Contains(rec.Body.String(), ":10000000") {
 		t.Errorf("incomplete dump leaked: %v %q", rec.Header(), rec.Body)
+	}
+}
+
+func TestAPIBackupMCuGlued(t *testing.T) {
+	t.Parallel()
+	cfg := dumpSim(idleLines(20), fakeMCm)
+	cfg.Responses["MCu"] = gluedMCu()
+	_, h, _ := apiSetup(t, cfg, shortDumps)
+	rec := apiDo(t, h, "GET", "/api/backup/mcu", "")
+	if rec.Code != 502 || rec.Header().Get("X-Medewi-Lines") != "" || strings.Contains(rec.Body.String(), "Alpha") {
+		t.Errorf("glued mcu = %d %v %q, want 502 and no dump", rec.Code, rec.Header(), rec.Body)
 	}
 }
 

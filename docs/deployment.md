@@ -471,9 +471,35 @@ real directory; `/var/lib/medewid` is only a symlink) and snapshot
 `medewi.db` and `medewi.db-wal` together. The raw traffic log under
 `raw/` is a seven-day troubleshooting buffer and needs no backup.
 
-**Controller settings.** `medewictl backup --out DIR` dumps the machine's
+**Controller settings.** `medewictl backup --out DIR [--note TEXT]` dumps the machine's
 settings (license key inside; files `0600`). They change only when
 someone edits them on the machine, so run it after such changes and
 before every firmware flash. A schedule is optional; the daemon refuses
 the dump while the machine is off or a brew is running, so a scheduled
 run fails harmlessly then.
+
+Settings backups, the procedure: take one before a change, check it, take
+one after, diff. Both files of a run share one timestamp and the note;
+the daemon refuses a damaged MCu dump, so a successful run is not proof
+of a usable backup, `levabak check` is.
+
+```sh
+DIR=~/backups/leva    # any directory, kept out of the repo
+medewictl backup --out "$DIR" --note pre-autotune
+levabak check "$DIR"             # laptop or brewhost; exit 1 = damaged
+# ... change something on the machine ...
+medewictl backup --out "$DIR" --note post-autotune
+levabak diff "$DIR"/*_pre-autotune.* "$DIR"/*_post-autotune.*   # two pairs by stem, A = pre
+```
+
+Name the files explicitly: `levabak diff "$DIR"` works only while DIR holds
+exactly two backups (else a usage error lists them), and a note used twice
+puts more than two there.
+
+Files are named `TIMESTAMP_FIRMWARE[_NOTE].mcu.txt` and `.mcm.hex`. A
+backup that fails `check` is not good for a restore; take another.
+`levabak show` lists the settings (`--path 'PID 1/'` selects one menu, e.g.
+`levabak show --path 'PID 1/' --format csv "$DIR" > pid1.csv`; text prints an
+empty cell as `·`), `levabak layout` the known EEPROM entries. For a damaged
+backup `check` names the damaged line regions, and `show` flags the settings
+in them `damaged`.

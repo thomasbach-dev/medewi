@@ -1,7 +1,7 @@
 # CLI conventions
 
 Rules for every medewi command (`levacap`, `levasim`, `levalog`,
-`medewid`, `medewictl`) and for any command added later. They keep the
+`levabak`, `medewid`, `medewictl`) and for any command added later. They keep the
 tools predictable for the operator on brewhost and for scripts.
 
 ## Options

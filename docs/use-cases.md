@@ -113,6 +113,10 @@ and provides the read-back half of verify-after-write for any future
 settings push. The license key inside the dumps is always redacted and
 dumps are never committed.
 
+Status: `levabak` (offline, `backup/`) decodes the MCu menu tree and the
+known EEPROM entries, checks a backup for damage and diffs two backups.
+`medewictl backup` still only fetches the files.
+
 ## UC12: Machine tuning
 
 Shorten the warm-up ("time to first good shot") and tune the heating

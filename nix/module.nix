@@ -214,6 +214,9 @@ in
           self.packages.${pkgs.stdenv.hostPlatform.system}.levalog
         }/bin/levalog --xml ${lib.escapeShellArg cfg.xmlFile} "$@"
       '')
+      # Offline settings-backup checker (check, show, diff, layout); it
+      # needs no XML.
+      self.packages.${pkgs.stdenv.hostPlatform.system}.levabak
     ];
 
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ listenPort ];

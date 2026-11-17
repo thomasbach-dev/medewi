@@ -107,6 +107,10 @@ pkgs.testers.runNixOSTest {
     brewhost.wait_until_succeeds(
       "levalog events --since=-5min | grep -q 'temperature_pid1='", timeout=timedelta(seconds=30))
 
+    # levabak is installed next to levalog; layout lists the known EEPROM entries.
+    brewhost.succeed("levabak --help")
+    brewhost.succeed("levabak layout | grep -q 0x0173")
+
     curl = "curl -sf --cacert ${pki}/ca.crt "
     mtls = curl + "--cert ${pki}/client.crt --key ${pki}/client.key "
     api = "https://brewhost:8443"

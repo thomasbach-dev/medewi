@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thomasbach-dev/medewi/backup/backuptest"
 	"github.com/thomasbach-dev/medewi/fixture"
 	"github.com/thomasbach-dev/medewi/sim"
 )
@@ -254,9 +255,12 @@ var fakeMCm = []string{
 	":00000001FF",
 }
 
+// fakeMCu is a small invented valid MCu tree (with a Latin-1 0xB0 byte).
+var fakeMCu = backuptest.ValidMCu()
+
 func dumpSim(lines [][]byte, mcm []string) sim.Config {
 	cfg := simConfig(lines)
-	cfg.Responses["MCu"] = []string{"user setting 1 = 42", "user setting 2 = 7"}
+	cfg.Responses["MCu"] = fakeMCu
 	cfg.Responses["MCm"] = mcm
 	return cfg
 }
@@ -289,7 +293,7 @@ func TestDumpMCm(t *testing.T) {
 	}
 
 	u, err := d.DumpMCu(reqCtx(t))
-	if err != nil || len(u.Lines) != 2 || u.Lines[0] != "user setting 1 = 42" {
+	if err != nil || !slices.Equal(u.Lines, fakeMCu) {
 		t.Errorf("DumpMCu = %+v, %v", u, err)
 	}
 	assertOnlyAllowed(t, s, "MCm", "MCu")
@@ -381,8 +385,33 @@ func TestCompleteMCu(t *testing.T) {
 	if complete("MCu", nil) || complete("MCu", []string{"", " "}) {
 		t.Error("an empty MCu reply counts as complete")
 	}
-	if !complete("MCu", []string{"user setting 1 = 42"}) {
-		t.Error("a non-empty MCu reply counts as incomplete")
+	if !complete("MCu", fakeMCu) || !complete("MCu", append(slices.Clone(fakeMCu), "", " ")) {
+		t.Error("a valid MCu tree counts as incomplete")
+	}
+	if complete("MCu", gluedMCu()) {
+		t.Error("an MCu tree with a glued line counts as complete")
+	}
+	if complete("MCu", fakeMCu[:5]) {
+		t.Error("a truncated MCu tree counts as complete")
+	}
+}
+
+// gluedMCu is fakeMCu with two lines glued into one.
+func gluedMCu() []string {
+	g := slices.Clone(fakeMCu)
+	g[2] += g[3]
+	return slices.Delete(g, 3, 4)
+}
+
+func TestDumpMCuGlued(t *testing.T) {
+	t.Parallel()
+	cfg := dumpSim(idleLines(20), fakeMCm)
+	cfg.Responses["MCu"] = gluedMCu()
+	s := startSim(t, cfg)
+	d, _ := runDaemon(t, daemonConfig(s.Addr().String(), openStore(t)), shortDumps)
+	waitActive(t, d)
+	if _, err := d.DumpMCu(reqCtx(t)); !errors.Is(err, ErrIncompleteDump) {
+		t.Fatalf("DumpMCu error = %v, want ErrIncompleteDump", err)
 	}
 }
 

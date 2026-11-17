@@ -46,7 +46,10 @@ func usage(w io.Writer) {
   status
   power active|eco|standby
   mark TEXT...              note TEXT in medewid's raw traffic log
-  backup --out DIR|-
+  backup --out DIR|- [--note TEXT]
+                             save MCu and MCm; --note TEXT is appended to both
+                             file names (letters, digits, . - _ kept, others
+                             become _)
   release [--until TIME]     free the machine (default +1h; e.g. +1h30min, 15:00)
   reclaim                    take it back now
 
@@ -87,9 +90,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	sfs.SetOutput(stderr)
 	sfs.SetInterspersed(false) // mark TEXT... keeps dashes in its text
 	cfg.register(sfs)
-	var outDir string
+	var outDir, note string
 	if sub == "backup" {
 		sfs.StringVar(&outDir, "out", "", "output directory, or - for stdout")
+		sfs.StringVar(&note, "note", "", "text appended to the file names (unsafe characters become _)")
 	}
 	untilArg := "+1h"
 	if sub == "release" {
@@ -145,6 +149,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 			_, _ = fmt.Fprintln(stderr, "medewictl: backup needs --out DIR (or --out -)")
 			return 2
 		}
+		if note != "" && strings.Trim(safeName(note, '_'), "._") == "" {
+			_, _ = fmt.Fprintln(stderr, "medewictl: --note: nothing usable left")
+			return 2
+		}
 	}
 
 	client, err := cfg.client()
@@ -166,7 +174,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "reclaim":
 		return cmdReclaim(client, base, stdout, stderr)
 	default:
-		return cmdBackup(client, base, outDir, stdout, stderr)
+		return cmdBackup(client, base, outDir, note, stdout, stderr)
 	}
 }
 
@@ -441,7 +449,8 @@ var backupKinds = []struct{ name, endpoint, ext string }{
 	{"mcm", "/api/backup/mcm", "mcm.hex"},
 }
 
-func cmdBackup(client *http.Client, base, outDir string, stdout, stderr io.Writer) int {
+func cmdBackup(client *http.Client, base, outDir, note string, stdout, stderr io.Writer) int {
+	now := time.Now() // one timestamp: both files of a run share it
 	for _, k := range backupKinds {
 		resp, body, err := get(client, base+k.endpoint)
 		if err != nil {
@@ -452,9 +461,8 @@ func cmdBackup(client *http.Client, base, outDir string, stdout, stderr io.Write
 			_, _ = fmt.Fprintf(stderr, "medewictl: %s: %s: %s\n", k.name, resp.Status, bytes.TrimSpace(body))
 			return 1
 		}
-		fw := safeName(resp.Header.Get("X-Medewi-Firmware"))
 		lines := resp.Header.Get("X-Medewi-Lines")
-		name := fmt.Sprintf("%s_%s.%s", time.Now().UTC().Format("2006-01-02T150405Z"), fw, k.ext)
+		name := backupName(now, resp.Header.Get("X-Medewi-Firmware"), note, k.ext)
 		if outDir == "-" {
 			if _, err := fmt.Fprintf(stdout, "==> %s <==\n%s", name, body); err != nil {
 				_, _ = fmt.Fprintf(stderr, "medewictl: %v\n", err)
@@ -472,19 +480,34 @@ func cmdBackup(client *http.Client, base, outDir string, stdout, stderr io.Write
 	return 0
 }
 
-// safeName keeps a header value usable as a file-name component.
-func safeName(s string) string {
-	s = strings.Map(func(r rune) rune {
+// backupName is TIMESTAMP_FIRMWARE[_NOTE].EXT with the timestamp in UTC. The
+// firmware part never contains "_" (unsafe characters become "-"); the note
+// keeps "_" and maps unsafe characters to it.
+func backupName(t time.Time, firmware, note, ext string) string {
+	fw := safeName(firmware, '-')
+	if strings.Trim(fw, ".") == "" {
+		fw = "unknown"
+	}
+	name := t.UTC().Format("2006-01-02T150405Z") + "_" + fw
+	if note != "" {
+		name += "_" + safeName(note, '_')
+	}
+	return name + "." + ext
+}
+
+// safeName keeps letters, digits, "." and "-" and replaces every other
+// character, "_" included, with repl, so s is usable as a file-name
+// component. With repl "_" that keeps "_" as it is.
+func safeName(s string, repl rune) string {
+	return strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-':
 			return r
+		case r == '_' && repl == '_':
+			return r
 		}
-		return '_'
+		return repl
 	}, s)
-	if s == "" || strings.Trim(s, ".") == "" {
-		return "unknown"
-	}
-	return s
 }
 
 // writeAtomic writes data to path via a temp file in the same directory and a
