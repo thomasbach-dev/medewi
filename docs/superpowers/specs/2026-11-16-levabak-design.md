@@ -145,9 +145,11 @@ levabak [--firmware V] SUBCOMMAND [OPTIONS] BACKUP ...
   backups without a shared stem, an MCu file and the MCm file closest
   after it in time (by the file-name timestamp, same firmware, within
   5 min); an unpaired file is a backup of one kind (one warning). The
-  note, if any, is its own output column (`note`) next to `src`. Directories whose subdirectories hold backups (the
-  operator's `private/backups/<label>/` layout) are read in name order,
-  as levalog reads a parent of captures. Every row carries `src`, so
+  note, if any, is its own output column (`note`) next to `src`. A directory's subdirectories are always read too (the
+  operator's `private/backups/<label>/` layout), in name order, as
+  levalog reads a parent of captures; the backups from one directory
+  argument are then ordered by file-name time (stable, undated last), so
+  `diff DIR` takes the older as A. Every row carries `src`, so
   `show` over many backups is the long-term view (use case 2). `diff`
   needs exactly two backups after resolution, else usage error listing
   what it found. The kind of a file comes from its content (an MCm line
@@ -170,10 +172,12 @@ levabak [--firmware V] SUBCOMMAND [OPTIONS] BACKUP ...
   split); else at the first letter-to-digit boundary.
 - **diff** pairs settings by path. Damaged input (failing `check`) still
   diffs, with a warning, and marks the paths in the damaged region as
-  `damaged` instead of reporting them as added or removed. A section
-  (depth-0 label) with settings on one side only gets one row first,
-  `Key` `<label>/`, `A`/`B` `<n> settings`, note `section only in A`
-  (or `B`), instead of a row per path.
+  `damaged` instead of reporting them as added or removed; with any
+  damage a path on one side only is `damaged; only in A` (or `B`). A
+  section (depth-0 menu; top-level leaves like `Cancel` are none) with
+  settings on one side only gets one row first, `Key` `<label>/`,
+  `A`/`B` `<n> settings`, note `section only in A` (or `B`), plus
+  ` (damaged)` when either backup is damaged, instead of a row per path.
 - **Output columns** (jsonl keys equal csv headers):
   - `check`: `src note line kind problem` (kind `mcu`/`mcm`/`pair`); after
     a backup's problem rows come one `mcu` row per damaged region (line =
@@ -190,7 +194,8 @@ levabak [--firmware V] SUBCOMMAND [OPTIONS] BACKUP ...
   - `diff`: `section key a b note`, section `setting` or `eeprom`; for
     eeprom, key is the offset and note the layout name (or empty). A
     section on one side only is one row, key `Label/`, note `section only
-    in A|B`.
+    in A|B` (` (damaged)` appended for damaged input); one-sided paths of
+    damaged input carry `damaged; only in A|B`.
   - `--path PREFIX` (show, diff): keep rows whose path (diff: key) starts
     with PREFIX; a trailing `/` selects a menu. EEPROM rows match by their
     layout entry's MCu path; unknown byte runs are dropped. No match:

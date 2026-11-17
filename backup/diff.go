@@ -12,8 +12,9 @@ type Change struct{ Section, Key, A, B, Note string }
 
 // Diff compares two backups: first one row per section (depth-0 label)
 // that has settings on one side only (Key "<label>/", A or B "<n>
-// settings", Note "section only in A" or "only in B"; A's sections first,
-// then B's, each in file order) in place of that section's path rows; then
+// settings", Note "section only in A" or "only in B", with " (damaged)"
+// appended when either side has problems; A's sections first, then B's,
+// each in file order; depth-0 leaves such as Cancel are not sections) in place of that section's path rows; then
 // changed settings (in B's file order, settings only in A last), then
 // changed EEPROM bytes. Known entries come
 // first by offset, then unknown changed bytes as contiguous runs. A half
@@ -65,26 +66,36 @@ func diffSettings(a, b *MCu) []Change {
 	}
 	// Lost lines can sit anywhere after a glue, so with any damage a path
 	// on one side only is "damaged", never added or removed.
-	oneSided := func(_ Setting, n string) string {
-		if len(a.Problems) > 0 || len(b.Problems) > 0 {
-			return "damaged"
+	anyDamage := len(a.Problems) > 0 || len(b.Problems) > 0
+	oneSided := func(side, n string) string {
+		if anyDamage {
+			return "damaged; only in " + side
 		}
 		return n
+	}
+	secNote := func(side string) string {
+		if anyDamage {
+			return "section only in " + side + " (damaged)"
+		}
+		return "section only in " + side
 	}
 	countA, orderA := sectionCounts(a)
 	countB, orderB := sectionCounts(b)
 	var out []Change
 	for _, sec := range orderA {
 		if countB[sec] == 0 {
-			out = append(out, Change{"setting", sec + "/", fmt.Sprintf("%d settings", countA[sec]), "", "section only in A"})
+			out = append(out, Change{"setting", sec + "/", fmt.Sprintf("%d settings", countA[sec]), "", secNote("A")})
 		}
 	}
 	for _, sec := range orderB {
 		if countA[sec] == 0 {
-			out = append(out, Change{"setting", sec + "/", "", fmt.Sprintf("%d settings", countB[sec]), "section only in B"})
+			out = append(out, Change{"setting", sec + "/", "", fmt.Sprintf("%d settings", countB[sec]), secNote("B")})
 		}
 	}
-	oneSection := func(s Setting) bool { return countA[s.Section] == 0 || countB[s.Section] == 0 }
+	// Depth-0 leaves are no sections; they diff as plain paths.
+	oneSection := func(s Setting) bool {
+		return (s.Depth != 0 || s.Menu) && (countA[s.Section] == 0 || countB[s.Section] == 0)
+	}
 	inA := map[string]Setting{}
 	for _, s := range a.Settings {
 		if !s.Menu {
@@ -100,25 +111,25 @@ func diffSettings(a, b *MCu) []Change {
 		old, ok := inA[s.Path]
 		switch {
 		case !ok:
-			out = append(out, Change{"setting", s.Path, "", s.Value, oneSided(s, "added")})
+			out = append(out, Change{"setting", s.Path, "", s.Value, oneSided("B", "added")})
 		case old.Value != s.Value:
 			out = append(out, Change{"setting", s.Path, old.Value, s.Value, note(s, "")})
 		}
 	}
 	for _, s := range a.Settings {
 		if !s.Menu && !seen[s.Path] && !oneSection(s) {
-			out = append(out, Change{"setting", s.Path, s.Value, "", oneSided(s, "removed")})
+			out = append(out, Change{"setting", s.Path, s.Value, "", oneSided("A", "removed")})
 		}
 	}
 	return out
 }
 
-// sectionCounts returns the number of non-menu settings per section and
-// the sections that have any, in file order.
+// sectionCounts returns the number of non-menu settings below a depth-0
+// menu per section and the sections that have any, in file order.
 func sectionCounts(u *MCu) (count map[string]int, order []string) {
 	count = map[string]int{}
 	for _, s := range u.Settings {
-		if s.Menu {
+		if s.Menu || s.Depth == 0 {
 			continue
 		}
 		if count[s.Section] == 0 {

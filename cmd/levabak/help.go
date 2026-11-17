@@ -35,8 +35,10 @@ closest after it in time (by the file-name timestamp, same firmware, within
 stderr). Files named as arguments are paired the same way, among
 themselves and within one directory: "x.mcu.txt x.mcm.hex" is one backup,
 not two.
-A directory with no backup files of its own is read through its
-subdirectories, in name order. File names are
+A directory is also read through its subdirectories, always. The
+backups from one directory argument come ordered by the time in their file
+names (stable; undated ones last), so "diff DIR" takes the older as A.
+File names are
 TIMESTAMP_FIRMWARE[_NOTE].mcu.txt or .mcm.hex, TIMESTAMP like
 2026-11-10T094200Z (UTC); the optional _NOTE is its own output column.
 Every row carries src, the MCu file's path (else the MCm file's), so show
@@ -155,23 +157,26 @@ diff compares exactly two backups (after resolution: two files, two pairs,
 or a directory holding two; anything else is a usage error that lists what
 it found). Rows: section, key, a, b, note. Section setting: first one row
 per menu section that has settings on one side only (key "Label/", a or b
-"N settings", note "section only in A" or "section only in B"; its paths
-are not listed), then the changed settings, key is the path, a and b the
-values (empty: absent on that side). --path PREFIX keeps only rows whose
+"N settings", note "section only in A" or "section only in B", plus
+" (damaged)" when either backup is damaged; its paths are not listed;
+top-level leaves like Cancel are no sections), then the changed
+settings, key is the path, a and b the values (empty: absent on that
+side). --path PREFIX keeps only rows whose
 key starts with PREFIX ("PID 1/" for one menu), a section row when
 either path starts with the other, and eeprom rows of entries whose MCu
 path starts with it. Section eeprom: the changed bytes, key is the
 offset; known entries first, with the layout's name in note and the
 decoded values, then the unknown changed bytes as runs of hex. A setting
 in a damaged region of a damaged backup (see check) is marked damaged in
-note instead of being reported as added or removed. Damaged input still
-diffs, with a warning. With no differences nothing is printed but a "no
-differences" line on stderr. If the two backups' firmware differs (file
-names), diff warns and uses A's for the layout; --firmware (before the
-subcommand) chooses the layout and also silences that warning. Exit 0
-either way.`,
+note instead of being reported as added or removed; with any damage a
+path on one side only is "damaged; only in A" or "damaged; only in B".
+Damaged input still diffs, with a warning. With no differences nothing
+is printed but a "no differences" line on stderr. If the two backups'
+firmware differs (file names), diff warns and uses A's for the layout;
+--firmware (before the subcommand) chooses the layout and also silences
+that warning. Exit 0 either way.`,
 		examples: []string{
-			"  levabak diff private/backups/2026-11-10 private/backups/2026-11-12  # two backup directories",
+			"  levabak diff \"$D\"/*_pre-x.* \"$D\"/*_post-x.*   # two pairs, A = pre",
 			"  levabak diff --format jsonl a.mcu.txt b.mcu.txt | jq -r '.key'     # changed paths",
 		},
 	},

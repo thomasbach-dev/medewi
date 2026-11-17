@@ -162,3 +162,16 @@ func TestLoad(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestResolveDirOrdersByTimeAcrossSubdirs(t *testing.T) {
+	dir := t.TempDir()
+	writePair(t, dir, "2026-11-16T120000Z_3.2")
+	writePair(t, filepath.Join(dir, "old"), "2026-11-16T100000Z_3.2")
+	bks, _, err := Resolve([]string{dir})
+	if err != nil || len(bks) != 2 {
+		t.Fatalf("got %d backups, err %v", len(bks), err)
+	}
+	if !bks[0].Time.Before(bks[1].Time) {
+		t.Errorf("order: %v then %v", bks[0].Time, bks[1].Time)
+	}
+}

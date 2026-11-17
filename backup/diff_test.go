@@ -62,7 +62,7 @@ func TestDiffDamaged(t *testing.T) {
 	for _, c := range got {
 		notes[c.Key] = c.Note
 	}
-	if notes["Alpha/New"] != "damaged" || notes["Alpha/Old"] != "damaged" {
+	if notes["Alpha/New"] != "damaged; only in B" || notes["Alpha/Old"] != "damaged; only in A" {
 		t.Errorf("one-sided in damaged section: %+v", got)
 	}
 	if n, ok := notes["Beta/Limit"]; !ok || n != "" {
@@ -143,14 +143,14 @@ func TestDiffDamagedAcrossSections(t *testing.T) {
 	for _, ch := range Diff(a, b, Layout{}, false) {
 		notes[ch.Key] = ch.Note
 	}
-	for _, k := range []string{"Alpha/Tail", "Alpha/Grip"} {
-		if notes[k] != "damaged" {
-			t.Errorf("%s: note %q, want damaged (all: %v)", k, notes[k], notes)
+	for k, want := range map[string]string{"Alpha/Tail": "damaged; only in B", "Alpha/Grip": "damaged; only in A"} {
+		if notes[k] != want {
+			t.Errorf("%s: note %q, want %q (all: %v)", k, notes[k], want, notes)
 		}
 	}
 	// Sections missing on A are one row each, not per-path rows.
 	for _, k := range []string{"Beta/", "Gamma/"} {
-		if notes[k] != "section only in B" || notes[k+"Bone"] != "" {
+		if notes[k] != "section only in B (damaged)" || notes[k+"Bone"] != "" {
 			t.Errorf("%s: note %q", k, notes[k])
 		}
 	}

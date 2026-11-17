@@ -90,9 +90,10 @@ func newFile(path string, kind Kind) file {
 // Resolve turns FILE and DIR arguments into backups. The FILE arguments
 // are paired among themselves like a directory's files (same stem, then
 // by time), but only within one directory; a pair sits at the position of
-// its first file. A DIR's backups come sorted by time then name. A DIR
-// without backup files of its own contributes its subdirectories, in name
-// order. Skipped and unpaired files are reported in notes.
+// its first file. A DIR's backups (its own files, then those of its
+// subdirectories, which are always read, in name order) are ordered by
+// the time in their file names, stable; backups without a parseable time
+// come after the dated ones. Skipped and unpaired files are reported in notes.
 func Resolve(args []string) (bks []Backup, notes []string, err error) {
 	type item struct {
 		pos int
@@ -199,6 +200,15 @@ func resolveDir(dir string, descend bool) (bks []Backup, notes []string, err err
 			}
 			bks, notes = append(bks, b...), append(notes, n...)
 		}
+	}
+	if descend {
+		sort.SliceStable(bks, func(i, j int) bool {
+			zi, zj := bks[i].Time.IsZero(), bks[j].Time.IsZero()
+			if zi || zj {
+				return !zi && zj
+			}
+			return bks[i].Time.Before(bks[j].Time)
+		})
 	}
 	return bks, notes, nil
 }
