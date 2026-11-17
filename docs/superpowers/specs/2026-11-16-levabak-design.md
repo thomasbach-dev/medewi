@@ -175,12 +175,29 @@ levabak [--firmware V] SUBCOMMAND [OPTIONS] BACKUP ...
   `Key` `<label>/`, `A`/`B` `<n> settings`, note `section only in A`
   (or `B`), instead of a row per path.
 - **Output columns** (jsonl keys equal csv headers):
-  - `check`: `src note line kind problem` (kind `mcu`/`mcm`); text ends
-    with one verdict line per file.
-  - `show`: `src note line path label value raw`; `show --eeprom`:
-    `src note offset type raw value name confidence`.
+  - `check`: `src note line kind problem` (kind `mcu`/`mcm`/`pair`); after
+    a backup's problem rows come one `mcu` row per damaged region (line =
+    its first line, problem `damaged region: lines F-T, starting in
+    section S; …`), which do not count as problems; text ends with one
+    verdict line per file: `SRC: ok` or `SRC: damaged, N problems[, M
+    damaged regions (lines F-T, …)]`.
+  - `show`: `src note line path label value number unit flag raw`
+    (number/unit from `SplitNumber`, empty when the value is no plain
+    number, a JSON number in jsonl; flag `damaged` for a setting in a
+    damaged region). Text omits number and unit, and flag when no printed
+    row has one. `show --eeprom`: `src note offset type raw value name
+    confidence`.
   - `diff`: `section key a b note`, section `setting` or `eeprom`; for
-    eeprom, key is the offset and note the layout name (or empty).
+    eeprom, key is the offset and note the layout name (or empty). A
+    section on one side only is one row, key `Label/`, note `section only
+    in A|B`.
+  - `--path PREFIX` (show, diff): keep rows whose path (diff: key) starts
+    with PREFIX; a trailing `/` selects a menu. EEPROM rows match by their
+    layout entry's MCu path; unknown byte runs are dropped. No match:
+    empty output, one stderr line.
+  - Text format only: src prints relative to the current directory (the
+    base name when that would start with `..`), an empty cell prints as
+    `·`. jsonl and csv keep src and empty cells exact (null / empty).
   - `layout`: `firmware offset type scale name confidence evidence`.
 - **Exit codes**: 0 ok; 1 read error, and `check` finding a problem;
   2 usage. `diff` exits 0 whether or not things differ.

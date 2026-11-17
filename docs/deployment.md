@@ -494,5 +494,8 @@ levabak diff "$DIR"              # DIR must hold exactly two backups (else: usag
 
 Files are named `TIMESTAMP_FIRMWARE[_NOTE].mcu.txt` and `.mcm.hex`. A
 backup that fails `check` is not good for a restore; take another.
-`levabak show` lists the settings, `levabak layout` the known EEPROM
-entries.
+`levabak show` lists the settings (`--path 'PID 1/'` selects one menu, e.g.
+`levabak show --path 'PID 1/' --format csv "$DIR" > pid1.csv`; text prints an
+empty cell as `·`), `levabak layout` the known EEPROM entries. For a damaged
+backup `check` names the damaged line regions, and `show` flags the settings
+in them `damaged`.
