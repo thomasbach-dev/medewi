@@ -87,11 +87,11 @@ func TestParseMCmImageStopsAtProblem(t *testing.T) {
 }
 
 func TestParseMCuProblemsSortedByLine(t *testing.T) {
-	// The "no children" problem for line 1 is found after the length
-	// problem for line 2; the result must be ordered by line.
+	// A length problem on line 1 and a last-line problem on line 2; the
+	// result must be ordered by line.
 	u := backup.ParseMCu([]string{
-		backuptest.Cell(0, "Alpha..."),
-		backuptest.Cell(0, "Cancel") + "x",
+		backuptest.Cell(0, "Alpha") + "x",
+		backuptest.Cell(0, "Other"),
 	})
 	if len(u.Problems) < 2 {
 		t.Fatalf("want >= 2 problems: %+v", u.Problems)

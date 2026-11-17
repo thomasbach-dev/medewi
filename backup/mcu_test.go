@@ -91,9 +91,6 @@ func TestCheckMCuStructure(t *testing.T) {
 		{"depth jump", []string{
 			cell(0, "Alpha..."), cell(1, "Beta..."), cell(3, "Reset"), cell(2, "Reset"), cell(0, "Cancel"),
 		}, 3, "jumps"},
-		{"menu without children", []string{
-			cell(0, "Alpha..."), cell(1, "Beta..."), cell(0, "Gamma        -"), cell(0, "Cancel"),
-		}, 2, "no children"},
 		{"first line deep", []string{
 			cell(1, "Solo"), cell(0, "Alpha"), cell(0, "Cancel"),
 		}, 1, "first line"},
@@ -136,5 +133,25 @@ func TestParseMCuEmpty(t *testing.T) {
 	u := ParseMCu(nil)
 	if len(u.Problems) != 1 || u.Problems[0].Line != 0 {
 		t.Errorf("problems: %+v", u.Problems)
+	}
+}
+
+// Real dumps hold empty menus and menus whose label overflows the cell
+// (it shows two dots, not three); neither is damage.
+func TestParseMCuEmptyAndOverlongMenus(t *testing.T) {
+	u := ParseMCu([]string{
+		cell(0, "Alpha..."), cell(1, "Empty..."), cell(1, "Gain     1.0%"),
+		cell(0, "Overlong name.."), cell(1, "Reset"), cell(0, "Cancel"),
+	})
+	if len(u.Problems) != 0 {
+		t.Fatalf("problems: %+v", u.Problems)
+	}
+	for _, path := range []string{"Alpha/Empty", "Overlong name"} {
+		if s, ok := u.Lookup(path); !ok || !s.Menu {
+			t.Errorf("%s: %+v, %v", path, s, ok)
+		}
+	}
+	if s, ok := u.Lookup("Overlong name/Reset"); !ok || s.Menu {
+		t.Errorf("child of overlong menu: %+v, %v", s, ok)
 	}
 }

@@ -113,10 +113,15 @@ func ParseMCu(lines []string) *MCu {
 
 		trimmed := strings.TrimRight(rest, " ")
 		s := Setting{Line: n, Depth: depth, Raw: Latin1(rest)}
-		if strings.HasSuffix(trimmed, "...") {
+		switch {
+		case strings.HasSuffix(trimmed, "..."):
 			s.Menu = true
 			s.Label = Latin1(strings.TrimRight(strings.TrimSuffix(trimmed, "..."), " "))
-		} else {
+		case len(rest) == cellWidth && strings.HasSuffix(rest, ".."):
+			// A menu label too long for the cell loses its last dot.
+			s.Menu = true
+			s.Label = Latin1(strings.TrimRight(strings.TrimSuffix(rest, ".."), " "))
+		default:
 			label, value := splitLeaf(trimmed)
 			s.Label, s.Value = Latin1(label), Latin1(value)
 		}
@@ -130,9 +135,8 @@ func ParseMCu(lines []string) *MCu {
 		case prev != nil && depth == prev.Depth+1 && !prev.Menu:
 			problem(n, "deeper than a non-menu line")
 		}
-		if prev != nil && prev.Menu && depth <= prev.Depth {
-			problem(prev.Line, "menu %q has no children", prev.Label)
-		}
+		// A menu without children is valid: the machine shows empty ones
+		// (e.g. no stored presets) as a menu followed by its sibling.
 
 		// Path.
 		if depth == 0 {
@@ -161,9 +165,6 @@ func ParseMCu(lines []string) *MCu {
 	}
 	if prev == nil {
 		return u
-	}
-	if prev.Menu {
-		problem(prev.Line, "menu %q has no children", prev.Label)
 	}
 	if prev.Depth != 0 || prev.Label != "Cancel" {
 		problem(len(lines), "last line is not Cancel at depth 0")
