@@ -85,6 +85,17 @@ func TestRegionsTwoSectionsAndWholeFile(t *testing.T) {
 	}
 }
 
+func TestSlashInLabelIsNoEmptySegment(t *testing.T) {
+	u := ParseMCu([]string{
+		cell(0, "Alpha/..."), // joined with its child: "Alpha//Gain"
+		cell(1, "Gain   1.0"),
+		cell(0, "Cancel"),
+	})
+	if len(u.Problems) != 0 || len(u.Regions) != 0 {
+		t.Fatalf("problems %+v, regions %+v", u.Problems, u.Regions)
+	}
+}
+
 func TestSplitLeafRules(t *testing.T) {
 	for _, tc := range []struct{ in, label, value string }{
 		{"Clear weight", "Clear weight", ""},
@@ -96,6 +107,10 @@ func TestSplitLeafRules(t *testing.T) {
 		{"Ratio 1:30", "Ratio", "1:30"},
 		{"Unit \xb0", "Unit", "\xb0"},
 		{"Gain     1.0%", "Gain", "1.0%"},
+		{"Clear name", "Clear name", ""},
+		{"Beep ERR>1.0\xb0", "Beep", "ERR>1.0\xb0"},
+		{"Lamp BUZZ+LED", "Lamp", "BUZZ+LED"},
+		{"Gate SENSOR->V", "Gate", "SENSOR->V"},
 		{"Reset", "Reset", ""},
 		{"Duration00m:03s", "Duration", "00m:03s"},
 		{"Ratio 1 :   5.0", "Ratio 1 :", "5.0"},

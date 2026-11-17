@@ -70,13 +70,13 @@ func TestCheckMCuGlued(t *testing.T) {
 		cell(0, "Cancel"),
 	}
 	u := ParseMCu(lines)
-	if len(u.Problems) != 3 { // the padded path also has an empty segment
+	if len(u.Problems) != 2 {
 		t.Fatalf("problems: %+v", u.Problems)
 	}
 	if got := problemsAt(u, 3); len(got) != 1 || !strings.Contains(got[0], "5 bytes") {
 		t.Errorf("line 3: %v", got)
 	}
-	if got := problemsAt(u, 4); len(got) != 2 || !strings.Contains(got[0], "deeper than a non-menu line") {
+	if got := problemsAt(u, 4); len(got) != 1 || !strings.Contains(got[0], "deeper than a non-menu line") {
 		t.Errorf("line 4: %v", got)
 	}
 }

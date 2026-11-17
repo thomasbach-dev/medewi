@@ -165,10 +165,9 @@ levabak [--firmware V] SUBCOMMAND [OPTIONS] BACKUP ...
   siblings gets `#2`, `#3`. The label/value split is best effort; the raw
   cell is always available (`raw` column) so a bad split never loses data.
   Leaf split: at the last run of two or more spaces; else at the last
-  single space, but only when the text after it starts with a digit, `-`,
-  `+` or `.`, or is all upper case, digits and `%°.-:/` (`Clear weight`
-  stays a label, `Gain 1.0%` and `Mode ON` split); else at the first
-  letter-to-digit boundary.
+  single space, unless the text after it starts with a lower-case letter
+  (`Clear weight` stays a label; `Gain 1.0%`, `Mode ON`, `Lamp BUZZ+LED`
+  split); else at the first letter-to-digit boundary.
 - **diff** pairs settings by path. Damaged input (failing `check`) still
   diffs, with a warning, and marks the paths in the damaged region as
   `damaged` instead of reporting them as added or removed. A section
@@ -199,7 +198,8 @@ MCu (each a problem with line number):
 - (not a problem: a menu with no children — real dumps hold empty
   menus, e.g. a section with no stored presets, 8× in the 2026-11-16
   dump; found by the gated real-backup test);
-- a path with an empty segment (starts with `/` or holds `//`): the
+- a path with an empty segment (found structurally, never by looking
+  for `/` in labels): the
   depth jump after lost lines pads the path with `""`, so a parent line
   is missing (`Doses//Time`);
 - first line not at depth 0, last line not `Cancel` at depth 0;

@@ -2,6 +2,7 @@ package backup
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -101,6 +102,7 @@ func ParseMCu(lines []string) *MCu {
 	}
 	var (
 		stack   []string           // unique path per depth of the current branch
+		padded  []bool             // stack entry invented for a missing ancestor
 		section string             // current depth-0 label
 		seen    = map[string]int{} // base path -> sibling count
 		prev    *Setting
@@ -155,10 +157,10 @@ func ParseMCu(lines []string) *MCu {
 			section = s.Label
 		}
 		if depth < len(stack) {
-			stack = stack[:depth]
+			stack, padded = stack[:depth], padded[:depth]
 		}
 		for len(stack) < depth {
-			stack = append(stack, "")
+			stack, padded = append(stack, ""), append(padded, true)
 		}
 		base := s.Label
 		if depth > 0 {
@@ -169,9 +171,10 @@ func ParseMCu(lines []string) *MCu {
 		if seen[base] > 1 {
 			s.Path = fmt.Sprintf("%s#%d", base, seen[base])
 		}
-		stack = append(stack, s.Path)
+		orphan := slices.Contains(padded, true) // an ancestor line is missing
+		stack, padded = append(stack, s.Path), append(padded, false)
 		s.Section = section
-		if strings.HasPrefix(s.Path, "/") || strings.Contains(s.Path, "//") {
+		if orphan {
 			problem(n, "path has an empty segment: %q (a parent line is missing)", s.Path)
 		}
 
@@ -229,10 +232,8 @@ func (u *MCu) markRegions(last int) {
 // splitLeaf splits trailing-space-trimmed leaf text into label and value:
 // at the last run of two or more spaces, else the last single space, else
 // the first letter-to-digit boundary, else label only. The single-space
-// split applies only when the part after the space looks like a value:
-// it starts with a digit, "-", "+" or ".", or is all upper case, digits
-// and "%°.-:/" (Latin-1 0xB0 for the degree sign); otherwise the whole
-// text is the label.
+// split is skipped when the part after the space starts with a lower-case
+// letter ("Clear weight" is a label); the whole text is then the label.
 func splitLeaf(s string) (label, value string) {
 	if i := strings.LastIndex(s, "  "); i >= 0 {
 		return strings.TrimRight(s[:i], " "), strings.TrimLeft(s[i:], " ")
@@ -254,20 +255,7 @@ func splitLeaf(s string) (label, value string) {
 func isLetter(b byte) bool { return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' }
 
 func looksLikeValue(v string) bool {
-	if v == "" {
-		return false
-	}
-	if c := v[0]; c >= '0' && c <= '9' || c == '-' || c == '+' || c == '.' {
-		return true
-	}
-	for i := 0; i < len(v); i++ {
-		c := v[i]
-		upper, digit := c >= 'A' && c <= 'Z', c >= '0' && c <= '9'
-		if !upper && !digit && strings.IndexByte("%\xb0.-:/", c) < 0 {
-			return false
-		}
-	}
-	return true
+	return v != "" && (v[0] < 'a' || v[0] > 'z')
 }
 
 // SplitNumber splits a setting value into a leading decimal number and
