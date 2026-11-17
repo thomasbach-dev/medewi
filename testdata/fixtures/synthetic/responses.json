@@ -13,22 +13,15 @@
     "XML=synthetic"
   ],
   "MCu": [
-    "Setup (SYNTHETIC - fake values)",
-    "  PID",
-    "    Kp = 1.0",
-    "    Ki = 0.1",
-    "    Kd = 0.0",
-    "    Heater = 1000 W",
-    "  Sensors",
-    "    Boiler = TSIC@AUX1",
-    "    Pressure = 100 psi @AUX2",
-    "  Pump",
-    "    Kc = 0.5",
-    "    I = 0.2",
-    "  Flow",
-    "    Calibration = 1000 imp/l",
-    "  License",
-    "    Key = 00000000-FAKE"
+    "Alpha...       ",
+    "| Gain     1.0%  ",
+    "| Ratio 1 :   5.0",
+    "| Duration00m:03s",
+    "| Beta...        ",
+    "| | Reset          ",
+    "| | Reset          ",
+    "Gamma        - ",
+    "Cancel         "
   ],
   "MCm": [
     ":10000000101112131415161718191A1B1C1D1E1F78",

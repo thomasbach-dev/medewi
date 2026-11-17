@@ -155,3 +155,38 @@ func TestParseMCuEmptyAndOverlongMenus(t *testing.T) {
 		t.Errorf("child of overlong menu: %+v, %v", s, ok)
 	}
 }
+
+func TestParseMCuDropsTrailingBlankLines(t *testing.T) {
+	lines := append(backuptest.ValidMCu(), "", "  ", "")
+	if u := ParseMCu(lines); len(u.Problems) != 0 {
+		t.Errorf("problems with trailing blank lines: %+v", u.Problems)
+	}
+	if u := ParseMCu([]string{"", " "}); len(u.Problems) != 1 || u.Problems[0].Text != "empty dump" {
+		t.Errorf("blank-only dump: %+v", u.Problems)
+	}
+}
+
+func TestParseMCuWrongLengthDotsIsNotAMenu(t *testing.T) {
+	lines := backuptest.ValidMCu()
+	lines[1] = cell(1, "Gain 1.0%") + "x.." // 17 cell bytes, ends in ..
+	u := ParseMCu(lines)
+	var got []string
+	for _, p := range u.Problems {
+		got = append(got, p.Text)
+	}
+	if len(got) != 1 || !strings.Contains(got[0], "bytes, want") {
+		t.Fatalf("problems = %q, want only the length problem", got)
+	}
+	if s := u.Settings[1]; s.Menu {
+		t.Errorf("wrong-length '..' line parsed as menu: %+v", s)
+	}
+}
+
+func TestParseMCuLastLineMenu(t *testing.T) {
+	lines := backuptest.ValidMCu()
+	lines = append(lines[:8], cell(0, "Delta..."))
+	u := ParseMCu(lines)
+	if len(u.Problems) != 1 || !strings.Contains(u.Problems[0].Text, "last line is not Cancel") {
+		t.Errorf("problems = %+v", u.Problems)
+	}
+}

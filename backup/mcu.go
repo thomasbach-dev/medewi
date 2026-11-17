@@ -77,8 +77,11 @@ func (u *MCu) Lookup(path string) (Setting, bool) {
 }
 
 // ParseMCu parses and checks the lines of an MCu dump. It never fails;
-// damage is reported in Problems.
+// damage is reported in Problems. Trailing blank lines are ignored.
 func ParseMCu(lines []string) *MCu {
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
 	u := &MCu{}
 	problem := func(line int, format string, args ...any) {
 		u.Problems = append(u.Problems, Problem{Line: line, Kind: KindMCu, Text: fmt.Sprintf(format, args...)})

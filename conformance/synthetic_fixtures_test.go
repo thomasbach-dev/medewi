@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thomasbach-dev/medewi/backup"
 	"github.com/thomasbach-dev/medewi/fixture"
 	"github.com/thomasbach-dev/medewi/leva"
 	"github.com/thomasbach-dev/medewi/sim"
@@ -106,4 +107,16 @@ func verifyAndDecode(spec *leva.RecordSpec, line []byte) ([]byte, error) {
 	}
 	_, err = spec.Decode(payload)
 	return payload, err
+}
+
+// TestSyntheticMCuIsValid pins that the synthetic MCu is an invented tree in
+// the real line format, so the daemon accepts it as a whole dump.
+func TestSyntheticMCuIsValid(t *testing.T) {
+	resp, _ := loadSynthetic(t)
+	if u := backup.ParseMCu(resp["MCu"]); len(u.Problems) != 0 || len(u.Settings) == 0 {
+		t.Errorf("synthetic MCu: %d settings, problems %+v", len(u.Settings), u.Problems)
+	}
+	if m := backup.ParseMCm(resp["MCm"]); len(m.Problems) != 0 {
+		t.Errorf("synthetic MCm problems: %+v", m.Problems)
+	}
 }

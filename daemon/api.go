@@ -316,7 +316,7 @@ func (a *api) backup(w http.ResponseWriter, r *http.Request, dump func(context.C
 		writeErr(w, statusFor(err), err)
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Type", "text/plain; charset=iso-8859-1")
 	w.Header().Set("X-Medewi-Firmware", dp.Firmware)
 	w.Header().Set("X-Medewi-Lines", strconv.Itoa(len(dp.Lines)))
 	body := strings.Join(dp.Lines, "\n")

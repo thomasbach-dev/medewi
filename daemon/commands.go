@@ -179,7 +179,8 @@ func (d *Daemon) verifyPower(ctx context.Context, want PowerState) (PowerState, 
 	}
 }
 
-// DumpMCu returns the machine's user settings (MCu).
+// DumpMCu returns the machine's user settings (MCu). A dump that fails
+// backup.ParseMCu gives ErrIncompleteDump.
 func (d *Daemon) DumpMCu(ctx context.Context) (Dump, error) { return d.dump(ctx, "MCu") }
 
 // DumpMCm returns the machine's settings memory (MCm) as Intel HEX. A dump
@@ -220,8 +221,9 @@ func (d *Daemon) dump(ctx context.Context, cmd string) (Dump, error) {
 	return out, rerr
 }
 
-// complete reports whether a dump reply is whole: non-empty, and for MCm
-// passing backup.ParseMCm. Trailing blank lines are ignored.
+// complete reports whether a dump reply is whole: non-empty, and for MCm and
+// MCu passing backup.ParseMCm / backup.ParseMCu. Trailing blank lines are
+// ignored.
 func complete(cmd string, lines []string) bool {
 	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
 		lines = lines[:len(lines)-1]
@@ -229,5 +231,11 @@ func complete(cmd string, lines []string) bool {
 	if len(lines) == 0 {
 		return false
 	}
-	return cmd != "MCm" || len(backup.ParseMCm(lines).Problems) == 0
+	switch cmd {
+	case "MCm":
+		return len(backup.ParseMCm(lines).Problems) == 0
+	case "MCu":
+		return len(backup.ParseMCu(lines).Problems) == 0
+	}
+	return true
 }

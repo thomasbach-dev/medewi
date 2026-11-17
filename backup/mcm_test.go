@@ -119,3 +119,10 @@ func TestParseMCuLastLineProblemAtDumpEnd(t *testing.T) {
 		t.Fatalf("no 'not Cancel' problem: %+v", u.Problems)
 	}
 }
+
+func TestParseMCmDropsTrailingBlankLines(t *testing.T) {
+	lines := append(backuptest.ValidMCm(), "", " ")
+	if m := backup.ParseMCm(lines); len(m.Problems) != 0 {
+		t.Errorf("problems with trailing blank lines: %+v", m.Problems)
+	}
+}
