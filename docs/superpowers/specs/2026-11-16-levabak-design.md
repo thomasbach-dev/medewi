@@ -164,9 +164,17 @@ levabak [--firmware V] SUBCOMMAND [OPTIONS] BACKUP ...
   removed: `PID 1/Ramp&Soak/Warm-Up/PID/Kc`. A label that repeats among
   siblings gets `#2`, `#3`. The label/value split is best effort; the raw
   cell is always available (`raw` column) so a bad split never loses data.
+  Leaf split: at the last run of two or more spaces; else at the last
+  single space, but only when the text after it starts with a digit, `-`,
+  `+` or `.`, or is all upper case, digits and `%°.-:/` (`Clear weight`
+  stays a label, `Gain 1.0%` and `Mode ON` split); else at the first
+  letter-to-digit boundary.
 - **diff** pairs settings by path. Damaged input (failing `check`) still
   diffs, with a warning, and marks the paths in the damaged region as
-  `damaged` instead of reporting them as added or removed.
+  `damaged` instead of reporting them as added or removed. A section
+  (depth-0 label) with settings on one side only gets one row first,
+  `Key` `<label>/`, `A`/`B` `<n> settings`, note `section only in A`
+  (or `B`), instead of a row per path.
 - **Output columns** (jsonl keys equal csv headers):
   - `check`: `src note line kind problem` (kind `mcu`/`mcm`); text ends
     with one verdict line per file.
@@ -191,6 +199,9 @@ MCu (each a problem with line number):
 - (not a problem: a menu with no children — real dumps hold empty
   menus, e.g. a section with no stored presets, 8× in the 2026-11-16
   dump; found by the gated real-backup test);
+- a path with an empty segment (starts with `/` or holds `//`): the
+  depth jump after lost lines pads the path with `""`, so a parent line
+  is missing (`Doses//Time`);
 - first line not at depth 0, last line not `Cancel` at depth 0;
 - non-Latin-1-printable bytes;
 - with the layout known for the firmware: MCu values that contradict the
@@ -203,6 +214,13 @@ line 1094. A gated test reads `MEDEWI_BACKUP_DIR` (skips when unset, like
 the day in a temp directory the operator names. Because the daemon will
 refuse every MCu dump that fails these rules, the daemon change lands
 only after the gated test has passed on both real dumps.
+
+**Damaged regions.** Lost lines make the lines after them unreliable:
+they may sit under wrong parents. Every problem with a line number
+starts a region at that line; it ends before the next depth-0 line after
+it, or at the last line. Overlapping or adjacent regions merge. A
+region's section is the depth-0 label it starts in; every setting inside
+is `damaged`. Whole-file problems make no region.
 
 MCm: the existing rules (contiguous from 0, checksums, end record last),
 reported per line instead of a bare false.

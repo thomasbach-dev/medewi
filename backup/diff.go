@@ -10,8 +10,12 @@ import (
 // "eeprom"; Key is the setting path or the offset ("0x0173").
 type Change struct{ Section, Key, A, B, Note string }
 
-// Diff compares two backups: changed settings first (in B's file order,
-// settings only in A last), then changed EEPROM bytes. Known entries come
+// Diff compares two backups: first one row per section (depth-0 label)
+// that has settings on one side only (Key "<label>/", A or B "<n>
+// settings", Note "section only in A" or "only in B"; A's sections first,
+// then B's, each in file order) in place of that section's path rows; then
+// changed settings (in B's file order, settings only in A last), then
+// changed EEPROM bytes. Known entries come
 // first by offset, then unknown changed bytes as contiguous runs. A half
 // missing on either side yields no rows for that half. Without a layout
 // (haveLayout false) every changed byte is unknown.
@@ -67,16 +71,29 @@ func diffSettings(a, b *MCu) []Change {
 		}
 		return n
 	}
+	countA, orderA := sectionCounts(a)
+	countB, orderB := sectionCounts(b)
+	var out []Change
+	for _, sec := range orderA {
+		if countB[sec] == 0 {
+			out = append(out, Change{"setting", sec + "/", fmt.Sprintf("%d settings", countA[sec]), "", "section only in A"})
+		}
+	}
+	for _, sec := range orderB {
+		if countA[sec] == 0 {
+			out = append(out, Change{"setting", sec + "/", "", fmt.Sprintf("%d settings", countB[sec]), "section only in B"})
+		}
+	}
+	oneSection := func(s Setting) bool { return countA[s.Section] == 0 || countB[s.Section] == 0 }
 	inA := map[string]Setting{}
 	for _, s := range a.Settings {
 		if !s.Menu {
 			inA[s.Path] = s
 		}
 	}
-	var out []Change
 	seen := map[string]bool{}
 	for _, s := range b.Settings {
-		if s.Menu {
+		if s.Menu || oneSection(s) {
 			continue
 		}
 		seen[s.Path] = true
@@ -89,11 +106,27 @@ func diffSettings(a, b *MCu) []Change {
 		}
 	}
 	for _, s := range a.Settings {
-		if !s.Menu && !seen[s.Path] {
+		if !s.Menu && !seen[s.Path] && !oneSection(s) {
 			out = append(out, Change{"setting", s.Path, s.Value, "", oneSided(s, "removed")})
 		}
 	}
 	return out
+}
+
+// sectionCounts returns the number of non-menu settings per section and
+// the sections that have any, in file order.
+func sectionCounts(u *MCu) (count map[string]int, order []string) {
+	count = map[string]int{}
+	for _, s := range u.Settings {
+		if s.Menu {
+			continue
+		}
+		if count[s.Section] == 0 {
+			order = append(order, s.Section)
+		}
+		count[s.Section]++
+	}
+	return count, order
 }
 
 func offsetKey(off int) string { return fmt.Sprintf("0x%04X", off) }

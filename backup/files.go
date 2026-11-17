@@ -87,37 +87,64 @@ func newFile(path string, kind Kind) file {
 	return f
 }
 
-// Resolve turns FILE and DIR arguments into backups. A FILE keeps its
-// argument position; a DIR's backups come sorted by time then name. A DIR
+// Resolve turns FILE and DIR arguments into backups. The FILE arguments
+// are paired among themselves like a directory's files (same stem, then
+// by time), but only within one directory; a pair sits at the position of
+// its first file. A DIR's backups come sorted by time then name. A DIR
 // without backup files of its own contributes its subdirectories, in name
 // order. Skipped and unpaired files are reported in notes.
 func Resolve(args []string) (bks []Backup, notes []string, err error) {
-	var loose []file
-	flush := func() {
-		b, n := pair(loose)
-		bks, notes, loose = append(bks, b...), append(notes, n...), nil
+	type item struct {
+		pos int
+		bks []Backup
 	}
-	for _, a := range args {
+	var items []item
+	argPos := map[string]int{} // file path -> argument position
+	var dirs []string          // directories of the file arguments, in order
+	byDir := map[string][]file{}
+	for i, a := range args {
 		st, err := os.Stat(a)
 		if err != nil {
 			return nil, nil, err
 		}
 		if st.IsDir() {
-			flush()
 			b, n, err := resolveDir(a, true)
 			if err != nil {
 				return nil, nil, err
 			}
-			bks, notes = append(bks, b...), append(notes, n...)
+			items = append(items, item{i, b})
+			notes = append(notes, n...)
 			continue
 		}
 		kind, err := sniff(a)
 		if err != nil {
 			return nil, nil, err
 		}
-		loose = append(loose, newFile(a, kind))
+		f := newFile(a, kind)
+		if _, ok := argPos[a]; !ok {
+			argPos[a] = i
+		}
+		d := filepath.Dir(a)
+		if _, ok := byDir[d]; !ok {
+			dirs = append(dirs, d)
+		}
+		byDir[d] = append(byDir[d], f)
 	}
-	flush()
+	for _, d := range dirs {
+		b, n := pair(byDir[d])
+		notes = append(notes, n...)
+		for _, bk := range b {
+			pos := argPos[bk.MCuPath]
+			if bk.MCuPath == "" || (bk.MCmPath != "" && argPos[bk.MCmPath] < pos) {
+				pos = argPos[bk.MCmPath]
+			}
+			items = append(items, item{pos, []Backup{bk}})
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool { return items[i].pos < items[j].pos })
+	for _, it := range items {
+		bks = append(bks, it.bks...)
+	}
 	return bks, notes, nil
 }
 

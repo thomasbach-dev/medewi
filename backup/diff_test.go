@@ -143,9 +143,15 @@ func TestDiffDamagedAcrossSections(t *testing.T) {
 	for _, ch := range Diff(a, b, Layout{}, false) {
 		notes[ch.Key] = ch.Note
 	}
-	for _, k := range []string{"Alpha/Tail", "Beta/Bone", "Gamma/Grip"} {
+	for _, k := range []string{"Alpha/Tail", "Alpha/Grip"} {
 		if notes[k] != "damaged" {
 			t.Errorf("%s: note %q, want damaged (all: %v)", k, notes[k], notes)
+		}
+	}
+	// Sections missing on A are one row each, not per-path rows.
+	for _, k := range []string{"Beta/", "Gamma/"} {
+		if notes[k] != "section only in B" || notes[k+"Bone"] != "" {
+			t.Errorf("%s: note %q", k, notes[k])
 		}
 	}
 	if n, ok := notes["Delta/Dial"]; !ok || n != "" {
