@@ -186,8 +186,11 @@ MCu (each a problem with line number):
 - a line whose length is not 15 + 2·depth, or whose `| ` prefix is not
   well formed;
 - a depth jump of more than one, or deeper than the previous line
-  without that line being a menu (`...`);
-- a menu with no children;
+  without that line being a menu (`...`, or `..` when the label fills
+  the 15-character cell, as a long dose name did in a real dump);
+- (not a problem: a menu with no children — real dumps hold empty
+  menus, e.g. a section with no stored presets, 8× in the 2026-11-16
+  dump; found by the gated real-backup test);
 - first line not at depth 0, last line not `Cancel` at depth 0;
 - non-Latin-1-printable bytes;
 - with the layout known for the firmware: MCu values that contradict the
