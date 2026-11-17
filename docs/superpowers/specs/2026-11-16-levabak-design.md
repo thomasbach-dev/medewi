@@ -65,6 +65,8 @@ for MCu it accepts any non-empty reply.
    utf-8 today). The body stays byte-identical to the machine's reply: a
    backup is raw.
 8. **Usability run** as the final test (below).
+9. levabak is installed on brewhost by the NixOS module, next to
+   levalog (operator's request), and in the dev shell.
 
 ## Non-goals
 
