@@ -97,19 +97,23 @@ pkgs.testers.runNixOSTest {
     import json
     from datetime import timedelta
 
+    # Never pipe into `grep -q`: it exits at the first match, the writer can
+    # die of SIGPIPE, and the test shell's pipefail turns that into a flaky
+    # exit 141. `grep … >/dev/null` reads all input and keeps the exit status.
+
     brewhost.wait_for_unit("medewid.service")
-    brewhost.wait_until_succeeds("journalctl -u medewid | grep -q 'reports started'", timeout=timedelta(seconds=60))
+    brewhost.wait_until_succeeds("journalctl -u medewid | grep 'reports started' >/dev/null", timeout=timedelta(seconds=60))
     brewhost.succeed("curl -sf http://127.0.0.1:9114/healthz")
 
     # levalog events decodes the raw log the levasim traffic produced; the log
     # flushes every 5 s. A decoded field key proves the spec was applied;
     # `=` before a leading `-` is recommended for readability (docs/cli-conventions.md).
     brewhost.wait_until_succeeds(
-      "levalog events --since=-5min | grep -q 'temperature_pid1='", timeout=timedelta(seconds=30))
+      "levalog events --since=-5min | grep 'temperature_pid1=' >/dev/null", timeout=timedelta(seconds=30))
 
     # levabak is installed next to levalog; layout lists the known EEPROM entries.
     brewhost.succeed("levabak --help")
-    brewhost.succeed("levabak layout | grep -q 0x0173")
+    brewhost.succeed("levabak layout | grep 0x0173 >/dev/null")
 
     curl = "curl -sf --cacert ${pki}/ca.crt "
     mtls = curl + "--cert ${pki}/client.crt --key ${pki}/client.key "
@@ -126,10 +130,10 @@ pkgs.testers.runNixOSTest {
     assert code == "403", code
 
     # The tripwire never fired: medewid kept off the bootloader port.
-    brewhost.fail("journalctl -u levasim | grep -q 'TRIPWIRE:'")
+    brewhost.fail("journalctl -u levasim | grep 'TRIPWIRE:' >/dev/null")
 
     # openFirewall opened the listen port.
-    brewhost.succeed("iptables -S nixos-fw | grep -q 'dport 8443'")
+    brewhost.succeed("iptables -S nixos-fw | grep 'dport 8443' >/dev/null")
 
     # The hook runs inside the sandbox.
     brewhost.wait_until_succeeds(
