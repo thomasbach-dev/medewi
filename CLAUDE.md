@@ -144,7 +144,8 @@ Details and evidence: [docs/machine-behaviour.md](docs/machine-behaviour.md).
   the OPV with the pump off (thermal expansion) — not a pump signal.
   The Volume field resets to 0 at each leva! pump start (but not between
   the pump pulses of the warm-up program: it counts on through the
-  program) and keeps counting during wand draws; the Flow rate field is a decaying estimate
+  program; the pressure test resets it 2.8 s before its pump starts)
+  and keeps counting during wand draws; the Flow rate field is a decaying estimate
   that lingers for seconds after the pump stops.
 - `MCu` lines are `"| "` x depth + a 15-char cell (a `...` cell, or a
   full-width cell ending in `..`, is a menu; menus may be empty); a dump can lose lines mid-dump and still end in `Cancel`:
