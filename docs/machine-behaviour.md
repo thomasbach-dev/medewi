@@ -248,12 +248,28 @@ the pump marker show the program.
 
 ## Autotune
 
-From the raw logs of 2026-11-16, 08:08:57-08:22:30:
+From the raw logs of three runs (2026-11-16, two on 2026-11-19), each
+12.5-13.5 min, autotune config Safety 1.5, Power 30 %, Wait 2 min, Cycles 3:
 
 - Report mode `ATN`. The setpoint shows 88 - Safety 1.5 = 86.5; PID terms,
   Kc/Ti/Td, windup and dT/dt are masked; temperature and heat stay live.
-- Relay test: heat 0 % for the Wait (2 min), one pulse at Power 30 %, then
-  three cycles at 18 %, about 160 s apart, temperature about 86.2-88.4 deg C.
+- Relay test with hysteresis: the heater switches on when the temperature
+  falls to 86.3 (setpoint - 0.2) and off when it rises to 86.65
+  (setpoint + 0.15), in every run.
+- The first phase (heat 0 %) is not a fixed 2 min Wait: it lasted 126, 112
+  and 108 s and always ended at the switch-on threshold.
+- Then one pulse at Power 30 % (24.2 s in all three runs), then three
+  cycles at 18 %: heater on 32-33 s, periods (on to on) 149-165 s,
+  temperature 86.15-87.70 deg C. The swing after the 30 % pulse reaches
+  88.4-88.5.
+- The new constants follow from the cycles:
+  - Kc = 0.6 Ku (Ziegler-Nichols), with Ku = 4 d / (pi a), d half the 18 %
+    step and a half the temperature swing: 8.87 computed against 8.8-9.0
+    stored.
+  - Ti = 0.445 x the mean of the three periods in all three runs (within
+    0.3 s; the textbook rule would be 0.5).
+  - Td = Ti / 4.
+- Run-to-run scatter: Ti 67.2-72.3 s (+-4 %), Kc 8.8-9.0.
 - LCD: `PID 1 WAIT` blinking; a check mark after the 30 % pulse; a bar
   grows by `██` per cycle; after Cycles = 3 back to `PID`, new constants
   live (also in EEPROM: 0x0173..0x0177 above).
