@@ -67,7 +67,12 @@ type tuning struct {
 	// releaseBannerTimeout bounds the wait for the idle banner after the
 	// release's "MC " (banners come about once a second).
 	releaseBannerTimeout time.Duration
+	// dialTimeout bounds each connect attempt: a dial to a switched-off
+	// machine can hang instead of failing, delaying the next one.
+	dialTimeout time.Duration
 
+	// dial connects to the machine; tests make it hang.
+	dial func(ctx context.Context, addr string) (*leva.Conn, error)
 	// sessionEnding runs as a session's end is derived; tests land a
 	// release there.
 	sessionEnding func()
@@ -88,6 +93,8 @@ func defaultTuning() tuning {
 		dumpFirstLine:        5 * time.Second,
 		dumpIdleGap:          2 * time.Second,
 		releaseBannerTimeout: 3 * time.Second,
+		dialTimeout:          time.Minute,
+		dial:                 func(ctx context.Context, addr string) (*leva.Conn, error) { return leva.Dial(ctx, addr) },
 		sessionEnding:        func() {},
 		releaseStoreWrite:    func(ctx context.Context, write func(context.Context) error) error { return write(ctx) },
 		afterReleaseWrite:    func() {},
@@ -288,7 +295,9 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	if d.attempts++; d.attempts > 1 {
 		d.met.reconnects.Inc()
 	}
-	conn, err := leva.Dial(sctx, d.cfg.Addr)
+	dctx, dcancel := context.WithTimeout(sctx, d.tn.dialTimeout)
+	conn, err := d.tn.dial(dctx, d.cfg.Addr) // dctx bounds only the connect
+	dcancel()
 	if err != nil {
 		if sctx.Err() == nil {
 			now := time.Now()

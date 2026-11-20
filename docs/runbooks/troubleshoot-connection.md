@@ -29,7 +29,7 @@ The connection messages, in the order of a normal session:
 
 | Message | Meaning |
 | --- | --- |
-| `dial failed` | TCP connect to `MEDEWID_MACHINE_ADDR` failed (machine off, network, DNS, `ipAddressAllow`); only the first of a run is logged (the repeats are debug, below medewid's info level) |
+| `dial failed` | TCP connect to `MEDEWID_MACHINE_ADDR` failed (machine off, network, DNS, `ipAddressAllow`); only the first of a run is logged (the repeats are debug, below medewid's info level); `context deadline exceeded` means the connect hung for a minute without an answer |
 | `machine still unreachable` | at most hourly while the dials keep failing; carries `failed_dials` and `unreachable_for` |
 | `machine reachable again` | the first successful dial after failures; carries `failed_dials` and `unreachable_for` |
 | `machine not ready; stopping a possibly running stream and reconnecting` | connected, but no banner within 10 s: a stream left on by another client, or the controller is hung |

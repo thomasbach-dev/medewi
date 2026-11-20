@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/thomasbach-dev/medewi/brew"
 	"github.com/thomasbach-dev/medewi/fixture"
+	"github.com/thomasbach-dev/medewi/leva"
 )
 
 func TestPowerFromPayload(t *testing.T) {
@@ -378,6 +380,40 @@ func TestDialFailuresQuiet(t *testing.T) {
 		if strings.Contains(line, "machine reachable again") &&
 			(!strings.Contains(line, "level=INFO") || !strings.Contains(line, "failed_dials=") || !strings.Contains(line, "unreachable_for=")) {
 			t.Errorf("reconnect line wrong: %s", line)
+		}
+	}
+}
+
+// A dial to a switched-off machine can hang (no RST, no ARP answer) instead
+// of failing: each attempt is bounded, so the loop keeps redialling. A
+// failed or cancelled dial must count as a failure (the backoff runs on).
+func TestDialBounded(t *testing.T) {
+	t.Parallel()
+	if got := defaultTuning().dialTimeout; got != time.Minute {
+		t.Errorf("default dialTimeout = %v, want 1m", got)
+	}
+	var calls atomic.Int32
+	deadlines := make(chan time.Duration, 16)
+	_, _ = runDaemon(t, daemonConfig("127.0.0.1:1", openStore(t)), func(tn *tuning) {
+		tn.dialTimeout = 40 * time.Millisecond
+		tn.dial = func(ctx context.Context, _ string) (*leva.Conn, error) {
+			calls.Add(1)
+			dl, ok := ctx.Deadline()
+			if !ok {
+				dl = time.Now().Add(time.Hour)
+			}
+			select {
+			case deadlines <- time.Until(dl):
+			default:
+			}
+			<-ctx.Done() // hangs like a dial to a host that never answers
+			return nil, ctx.Err()
+		}
+	})
+	waitFor(t, "a hanging dial is given up and retried", func() bool { return calls.Load() >= 3 })
+	for range 3 {
+		if left := <-deadlines; left <= 0 || left > 40*time.Millisecond {
+			t.Errorf("dial context deadline %v away, want within the 40ms dial timeout", left)
 		}
 	}
 }
