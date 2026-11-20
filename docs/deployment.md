@@ -351,7 +351,7 @@ services.prometheus.checkConfig = "syntax-only";
 | `medewi_water_liters_total` | counter | liters drawn at the wand | — |
 | `medewi_report_lines_total` | counter | report lines received (~4/s while connected) | flat |
 | `medewi_decode_errors_total` | counter | report lines skipped (checksum or decode error) | flat |
-| `medewi_reconnects_total` | counter | connection attempts after the first, failed ones included | +2/min while off |
+| `medewi_reconnects_total` | counter | connection attempts after the first, failed ones included | about +6/min while off (10 s cap) |
 | `medewi_fragments_total` | counter | report/frame pieces cut off at a stream switch | — |
 | `medewi_rawlog_dropped_total` | counter | raw-log events dropped, queue full | — |
 | `medewi_rawlog_write_errors_total` | counter | raw-log write, flush or close errors | — |

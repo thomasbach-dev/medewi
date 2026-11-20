@@ -344,7 +344,7 @@ func clearEnv(t *testing.T) {
 		"MEDEWID_DB", "MEDEWID_LISTEN", "MEDEWID_TLS_CERT", "MEDEWID_TLS_KEY",
 		"MEDEWID_TLS_CLIENT_CA", "MEDEWID_TLS_METRICS_CA", "MEDEWID_HEALTH_ADDR", "MEDEWID_EVENT_EXEC",
 		"MEDEWID_RAW_DIR", "MEDEWID_RAW_RETENTION", "MEDEWID_RAW_MAX_MB",
-		"MEDEWID_DISPLAY_EVERY", "MEDEWID_DISPLAY_FOR",
+		"MEDEWID_DISPLAY_EVERY", "MEDEWID_DISPLAY_FOR", "MEDEWID_RECONNECT_MAX",
 	} {
 		t.Setenv(k, "")
 	}
@@ -728,6 +728,41 @@ func TestHelpShowsSpanDefaults(t *testing.T) {
 	clearEnv(t)
 	code, se := runExit(t, "--help")
 	if code != 0 || !strings.Contains(se, "(default 7d)") || strings.Contains(se, "000000000") {
+		t.Errorf("exit %d; help:\n%s", code, se)
+	}
+}
+
+// --reconnect-max (env MEDEWID_RECONNECT_MAX) caps the reconnect backoff;
+// below the 1 s first delay it is a usage error.
+func TestReconnectMaxFlag(t *testing.T) {
+	clearEnv(t)
+	machine, xml := startSim(t)
+	for _, extra := range [][]string{
+		{"--reconnect-max", "0"},
+		{"--reconnect-max", "500ms"},
+		{"--reconnect-max", "-10s"},
+		{"--reconnect-max", "x"},
+	} {
+		args := append(append(baseArgs(t, machine, xml), "--insecure-http"), extra...)
+		if code, se := runExit(t, args...); code != 2 {
+			t.Errorf("%v: exit %d, want 2\n%s", extra, code, se)
+		}
+	}
+	t.Setenv("MEDEWID_RECONNECT_MAX", "bogus")
+	if code, se := runExit(t, append(baseArgs(t, machine, xml), "--insecure-http")...); code != 2 || !strings.Contains(se, "MEDEWID_RECONNECT_MAX") {
+		t.Errorf("bad env: exit %d, stderr %q; want 2 naming the variable", code, se)
+	}
+	t.Setenv("MEDEWID_RECONNECT_MAX", "30s")
+	r := start(t, append(baseArgs(t, machine, xml), "--insecure-http")...)
+	if code := r.shutdown(); code != 0 {
+		t.Fatalf("MEDEWID_RECONNECT_MAX=30s: exit %d\n%s", code, r.stderr.String())
+	}
+}
+
+func TestHelpShowsReconnectDefault(t *testing.T) {
+	clearEnv(t)
+	code, se := runExit(t, "--help")
+	if code != 0 || !strings.Contains(se, "reconnect-max") || !strings.Contains(se, "(default 10s)") {
 		t.Errorf("exit %d; help:\n%s", code, se)
 	}
 }

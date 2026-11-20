@@ -55,6 +55,11 @@ const (
 	// thresholds; reports pause meanwhile.
 	maxDisplayFor = 2 * time.Second
 
+	// A cold boiler reaches its setpoint in 3–4 min; the cap bounds how
+	// much of that heat-up a late reconnect misses (issue #66).
+	defaultReconnectMax = 10 * time.Second
+	minReconnectMax     = time.Second // the daemon's first reconnect delay
+
 	shutdownTimeout = 5 * time.Second
 )
 
@@ -114,6 +119,8 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 	fset.Var(systime.NewSpan(&displayEvery), "display-every", "sample the machine's display this often, 0 disables it (env MEDEWID_DISPLAY_EVERY)")
 	displayFor := defaultDisplayFor
 	fset.Var(systime.NewSpan(&displayFor), "display-for", "length of one display sample (env MEDEWID_DISPLAY_FOR)")
+	reconnectMax := defaultReconnectMax
+	fset.Var(systime.NewSpan(&reconnectMax), "reconnect-max", "cap of the reconnect backoff, how late a power-on is noticed at worst (env MEDEWID_RECONNECT_MAX)")
 	logFlavour := fset.String("log-flavour", envOr("MEDEWID_LOG_FLAVOUR", "text"), "log format: text, or systemd (no timestamps, syslog priority prefixes) (env MEDEWID_LOG_FLAVOUR)")
 	insecure := fset.Bool("insecure-http", false, "serve the API without TLS")
 	exit := func(code int, format string, a ...any) int {
@@ -126,6 +133,7 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 		"MEDEWID_RAW_RETENTION": &rawRetention,
 		"MEDEWID_DISPLAY_EVERY": &displayEvery,
 		"MEDEWID_DISPLAY_FOR":   &displayFor,
+		"MEDEWID_RECONNECT_MAX": &reconnectMax,
 	} {
 		if v := os.Getenv(name); v != "" {
 			p, err := systime.ParseSpan(v)
@@ -171,6 +179,9 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 	}
 	if displayEvery < 0 || (displayEvery > 0 && (displayFor <= 0 || displayFor >= displayEvery || displayFor > maxDisplayFor)) {
 		return exit(2, "need --display-every 0 (off), or 0 < --display-for < --display-every and --display-for at most %v", maxDisplayFor)
+	}
+	if reconnectMax < minReconnectMax {
+		return exit(2, "--reconnect-max must be at least %v", minReconnectMax)
 	}
 	nTLS := 0
 	for _, s := range []string{*certFile, *keyFile, *caFile} {
@@ -288,6 +299,7 @@ func run(args []string, stderr io.Writer, ready chan<- string, done <-chan struc
 		Raw:          raw,
 		DisplayEvery: displayEvery,
 		DisplayFor:   displayFor,
+		BackoffMax:   reconnectMax,
 	})
 
 	handler := daemon.NewHandler(d, promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
