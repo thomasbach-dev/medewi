@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/thomasbach-dev/medewi/brew"
 	"github.com/thomasbach-dev/medewi/fixture"
+	"github.com/thomasbach-dev/medewi/leva"
 )
 
 func TestPowerFromPayload(t *testing.T) {
@@ -137,7 +139,7 @@ func TestMCqUnansweredRetries(t *testing.T) {
 }
 
 func TestMissingFieldWarns(t *testing.T) {
-	// Not parallel: it swaps the default slog logger (see TestDialFailureIsInfo).
+	// Not parallel: it swaps the default slog logger (see TestDialFailuresQuiet).
 	logs := &lockedBuffer{}
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
@@ -331,13 +333,15 @@ func TestStalledStreamReconnects(t *testing.T) {
 }
 
 // A machine that is switched off refuses or drops connections: that is a
-// normal state, logged at info level, not a warning.
-func TestDialFailureIsInfo(t *testing.T) {
+// normal state. The first failed dial is logged at info level, never as a
+// warning; the repeats (one every BackoffMax) go to debug, so the journal
+// stays quiet. The machine coming back is logged at info level.
+func TestDialFailuresQuiet(t *testing.T) {
 	// Not parallel: it swaps the default slog logger. Serial tests finish
 	// before any parallel one starts, so nothing else logs meanwhile.
 	logs := &lockedBuffer{}
 	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -345,19 +349,80 @@ func TestDialFailureIsInfo(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := l.Addr().String()
-	_ = l.Close()
+	_ = l.Close() // nothing listens here now: the machine is off
 	runDaemon(t, daemonConfig(addr, openStore(t)))
-	waitFor(t, "dial failure logged", func() bool { return strings.Contains(logs.String(), "dial failed") })
+	dialLines := func() []string {
+		var out []string
+		for _, line := range strings.Split(logs.String(), "\n") {
+			if strings.Contains(line, "dial failed") {
+				out = append(out, line)
+			}
+		}
+		return out
+	}
+	waitFor(t, "three failed dials logged", func() bool { return len(dialLines()) >= 3 })
+	for i, line := range dialLines() {
+		want := "level=DEBUG"
+		if i == 0 {
+			want = "level=INFO"
+		}
+		if !strings.Contains(line, want) {
+			t.Errorf("failed dial %d not at %s: %s", i, want, line)
+		}
+	}
+
+	// Power-on: the machine answers on the same address.
+	cfg := simConfig(idleLines(40))
+	cfg.Addr = addr
+	startSim(t, cfg)
+	waitFor(t, "reconnect logged", func() bool { return strings.Contains(logs.String(), "machine reachable again") })
 	for _, line := range strings.Split(logs.String(), "\n") {
-		if strings.Contains(line, "dial failed") && !strings.Contains(line, "level=INFO") {
-			t.Errorf("dial failure not at info level: %s", line)
+		if strings.Contains(line, "machine reachable again") &&
+			(!strings.Contains(line, "level=INFO") || !strings.Contains(line, "failed_dials=") || !strings.Contains(line, "unreachable_for=")) {
+			t.Errorf("reconnect line wrong: %s", line)
 		}
 	}
 }
 
+// A dial to a switched-off machine can hang (no RST, no ARP answer) instead
+// of failing: each attempt is bounded, so the loop keeps redialling. A
+// failed or cancelled dial must count as a failure (the backoff runs on).
+func TestDialBounded(t *testing.T) {
+	t.Parallel()
+	if got := defaultTuning().dialTimeout; got != time.Minute {
+		t.Errorf("default dialTimeout = %v, want 1m", got)
+	}
+	var calls atomic.Int32
+	deadlines := make(chan time.Duration, 16)
+	_, _ = runDaemon(t, daemonConfig("127.0.0.1:1", openStore(t)), func(tn *tuning) {
+		tn.dialTimeout = 40 * time.Millisecond
+		tn.dial = func(ctx context.Context, _ string) (*leva.Conn, error) {
+			calls.Add(1)
+			dl, ok := ctx.Deadline()
+			if !ok {
+				dl = time.Now().Add(time.Hour)
+			}
+			select {
+			case deadlines <- time.Until(dl):
+			default:
+			}
+			<-ctx.Done() // hangs like a dial to a host that never answers
+			return nil, ctx.Err()
+		}
+	})
+	waitFor(t, "a hanging dial is given up and retried", func() bool { return calls.Load() >= 3 })
+	for range 3 {
+		if left := <-deadlines; left <= 0 || left > 40*time.Millisecond {
+			t.Errorf("dial context deadline %v away, want within the 40ms dial timeout", left)
+		}
+	}
+}
+
+// The cap bounds how late medewid notices a power-on: a cold boiler
+// reaches its setpoint in 3–4 min, and the heat-up must be captured.
 func TestDefaultMaxBackoff(t *testing.T) {
 	t.Parallel()
-	if got := New(Config{}).cfg.BackoffMax; got != 3*time.Minute {
-		t.Errorf("default BackoffMax = %v, want 3m", got)
+	if got := New(Config{}).cfg.BackoffMax; got != 10*time.Second {
+		t.Errorf("default BackoffMax = %v, want 10s", got)
 	}
 }

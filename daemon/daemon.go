@@ -36,7 +36,7 @@ import (
 const (
 	defaultSettle     = 1500 * time.Millisecond
 	defaultMinBackoff = time.Second
-	defaultMaxBackoff = 3 * time.Minute
+	defaultMaxBackoff = 10 * time.Second
 	defaultDisplayFor = 500 * time.Millisecond
 
 	readyTimeout = 10 * time.Second       // bound on WaitReady per attempt
@@ -44,6 +44,7 @@ const (
 	storeTimeout = 5 * time.Second        // bound on each store call
 	mcqIdleGap   = 300 * time.Millisecond // MC? reply collection gap
 	pollConn     = 250 * time.Millisecond // liveness poll while degraded
+	downReminder = time.Hour              // "still unreachable" at info at most this often
 )
 
 // tuning holds a Daemon's internal timings and test seams. Each Daemon has
@@ -66,7 +67,12 @@ type tuning struct {
 	// releaseBannerTimeout bounds the wait for the idle banner after the
 	// release's "MC " (banners come about once a second).
 	releaseBannerTimeout time.Duration
+	// dialTimeout bounds each connect attempt: a dial to a switched-off
+	// machine can hang instead of failing, delaying the next one.
+	dialTimeout time.Duration
 
+	// dial connects to the machine; tests make it hang.
+	dial func(ctx context.Context, addr string) (*leva.Conn, error)
 	// sessionEnding runs as a session's end is derived; tests land a
 	// release there.
 	sessionEnding func()
@@ -87,6 +93,8 @@ func defaultTuning() tuning {
 		dumpFirstLine:        5 * time.Second,
 		dumpIdleGap:          2 * time.Second,
 		releaseBannerTimeout: 3 * time.Second,
+		dialTimeout:          time.Minute,
+		dial:                 func(ctx context.Context, addr string) (*leva.Conn, error) { return leva.Dial(ctx, addr) },
 		sessionEnding:        func() {},
 		releaseStoreWrite:    func(ctx context.Context, write func(context.Context) error) error { return write(ctx) },
 		afterReleaseWrite:    func() {},
@@ -107,7 +115,8 @@ type Config struct {
 	// Settle is WaitReady's settle time (default 1.5 s).
 	Settle time.Duration
 	// BackoffMin and BackoffMax bound the reconnect delay, which doubles
-	// per failed attempt (defaults 1 s and 3 min).
+	// per failed attempt (defaults 1 s and 10 s). The cap bounds how late a
+	// power-on is noticed: a cold boiler reaches its setpoint in 3–4 min.
 	BackoffMin, BackoffMax time.Duration
 	// DisplayEvery, if positive, samples the LCD mirror this often for
 	// DisplayFor (default 500 ms) between reports; zero disables sampling.
@@ -146,7 +155,8 @@ type Daemon struct {
 	hooks        sync.WaitGroup // running event hooks
 	decodeErrors atomic.Uint64  // report lines skipped (checksum or decode)
 	met          *metrics
-	attempts     int // Dial calls so far; Run goroutine only
+	attempts     int    // Dial calls so far; Run goroutine only
+	down         outage // failed dials since the last successful one; Run goroutine only
 }
 
 // New returns a Daemon for cfg with defaults applied.
@@ -180,6 +190,7 @@ func New(cfg Config) *Daemon {
 		det:        watch.NewDetector(cfg.Watch),
 		rec:        brew.NewRecorder(cfg.Brew),
 		met:        newMetrics(cfg.Registry),
+		down:       outage{every: downReminder},
 	}
 }
 
@@ -230,6 +241,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		if waited {
 			backoff = d.cfg.BackoffMin
+			d.down = outage{every: downReminder} // the release, not the machine, kept it away
 		}
 		if d.session(ctx) {
 			backoff = d.cfg.BackoffMin
@@ -283,12 +295,25 @@ func (d *Daemon) session(ctx context.Context) (started bool) {
 	if d.attempts++; d.attempts > 1 {
 		d.met.reconnects.Inc()
 	}
-	conn, err := leva.Dial(sctx, d.cfg.Addr)
+	dctx, dcancel := context.WithTimeout(sctx, d.tn.dialTimeout)
+	conn, err := d.tn.dial(dctx, d.cfg.Addr) // dctx bounds only the connect
+	dcancel()
 	if err != nil {
 		if sctx.Err() == nil {
-			slog.Info("dial failed", "addr", d.cfg.Addr, "err", err)
+			now := time.Now()
+			lvl, reminder := d.down.fail(now)
+			if reminder {
+				slog.Info("machine still unreachable", "addr", d.cfg.Addr, "failed_dials", d.down.fails,
+					"unreachable_for", d.down.unreachableFor(now).Round(time.Second), "err", err)
+			} else {
+				slog.Log(sctx, lvl, "dial failed", "addr", d.cfg.Addr, "err", err)
+			}
 		}
 		return false
+	}
+	if n, dur, ok := d.down.end(time.Now()); ok {
+		slog.Info("machine reachable again", "addr", d.cfg.Addr, "failed_dials", n,
+			"unreachable_for", dur.Round(time.Second))
 	}
 	// Deferred in reverse: disconnected (and its conn.Close) runs first, the
 	// tap is removed next, the raw session closes last. The final "MC " is

@@ -29,7 +29,9 @@ The connection messages, in the order of a normal session:
 
 | Message | Meaning |
 | --- | --- |
-| `dial failed` | TCP connect to `MEDEWID_MACHINE_ADDR` failed (machine off, network, DNS, `ipAddressAllow`) |
+| `dial failed` | TCP connect to `MEDEWID_MACHINE_ADDR` failed (machine off, network, DNS, `ipAddressAllow`); only the first of a run is logged (the repeats are debug, below medewid's info level); `context deadline exceeded` means the connect hung for a minute without an answer |
+| `machine still unreachable` | at most hourly while the dials keep failing; carries `failed_dials` and `unreachable_for` |
+| `machine reachable again` | the first successful dial after failures; carries `failed_dials` and `unreachable_for` |
 | `machine not ready; stopping a possibly running stream and reconnecting` | connected, but no banner within 10 s: a stream left on by another client, or the controller is hung |
 | `connection lost before ready` | the socket closed while waiting for the banner |
 | `connected` | banner seen; carries the firmware version |
@@ -41,8 +43,12 @@ The connection messages, in the order of a normal session:
 | `connection lost` | the socket closed (the error says how) |
 | `machine released` / `machine reclaimed` / `machine release ended` | a deliberate `medewictl release`, not a fault |
 
-Reconnects back off between attempts, so a long gap between `dial failed`
-lines is normal. A loop of `connected` followed by
+Reconnects back off between attempts, from 1 s up to `--reconnect-max`
+(`MEDEWID_RECONNECT_MAX`, default 10 s), so a switched-off machine shows a
+single `dial failed`, then at most an hourly `machine still unreachable`,
+until `machine reachable again`. medewid logs at info level, so the
+repeats (debug) do not reach the journal; `medewi_reconnects_total` counts
+every attempt. A loop of `connected` followed by
 `no XML= reply to MC?; reconnecting` or `report stream silent; reconnecting`
 means the TCP side works and the controller does not answer.
 
