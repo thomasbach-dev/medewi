@@ -599,8 +599,12 @@ func (d *Daemon) finish(ctx context.Context, sum brew.Summary) {
 		slog.Error("storing brew summary", "id", id, "err", err)
 		return
 	}
+	var vol any = sum.VolumeML
+	if sum.VolumeUnknown {
+		vol = "unknown"
+	}
 	slog.Info("brew closed", "id", id, "kind", sum.Kind, "duration", sum.Duration,
-		"peak_bar", sum.PeakBar, "volume_ml", sum.VolumeML)
+		"peak_bar", sum.PeakBar, "volume_ml", vol)
 	d.refreshLastBrew(ctx)
 }
 

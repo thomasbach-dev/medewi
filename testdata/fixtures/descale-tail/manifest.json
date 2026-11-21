@@ -1,0 +1,9 @@
+{
+  "scenario": "descale-tail",
+  "firmware_version": "$id: leva! (3.2)",
+  "xml_name": "leva!-65FCB201",
+  "xml_sha256": "e63ed0ccef7d8a8dc77a20f3bc78c93a297387081a542ba91307b40687e95d63",
+  "machine_addr": "machine.example:23",
+  "notes": "The last ten purge pulses of a descale program (2026-11-20), the program's end and a wand draw about 3 min later. Volume crosses 999 ml in the second pulse and reads ? from there on; field_31 (flow-meter ticks) keeps counting. Cut from a levalog extract capture at t 1490.248-2160 s, t rebased; operator marks removed, the xml note kept. Issue #67.",
+  "recorded": "2026-11-20T04:33:45.049Z"
+}

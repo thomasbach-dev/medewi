@@ -28,6 +28,29 @@ func TestSampleFrom(t *testing.T) {
 	}
 }
 
+// The flow-meter tick counter has no export name in the XML; it is the
+// field whose unit is "ticks" (issue #67).
+func TestSampleFromTicks(t *testing.T) {
+	rec := leva.Record{Fields: []leva.Field{
+		{Spec: leva.ValueSpec{Name: "Volume", Unit: "ml"}, Raw: "???"},
+		{Spec: leva.ValueSpec{Index: 31, Unit: "ticks"}, Raw: " 4494"},
+	}}
+	s := SampleFrom(rec, []byte("{ -rest"), t0)
+	if s.Volume != nil {
+		t.Errorf("Volume = %v, want nil (masked)", *s.Volume)
+	}
+	if s.Ticks == nil || *s.Ticks != 4494 {
+		t.Errorf("Ticks = %v, want 4494", s.Ticks)
+	}
+	if s := SampleFrom(pressureRecord(), []byte("{ -rest"), t0); s.Ticks != nil {
+		t.Errorf("Ticks = %v without a ticks field, want nil", *s.Ticks)
+	}
+	named := leva.Record{Fields: []leva.Field{{Spec: leva.ValueSpec{Name: "Other", Unit: "ticks"}, Raw: "7"}}}
+	if s := SampleFrom(named, []byte("{ -rest"), t0); s.Ticks != nil {
+		t.Errorf("a named ticks field was taken for the flow meter: %v", *s.Ticks)
+	}
+}
+
 func TestSampleFromNotPumping(t *testing.T) {
 	if s := SampleFrom(pressureRecord(), []byte("{ -rest"), t0); s.Pumping {
 		t.Error("Pumping = true for '-'")

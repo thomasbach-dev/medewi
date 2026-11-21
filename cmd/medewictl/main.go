@@ -300,12 +300,12 @@ func cmdStatus(client *http.Client, base string, stdout, stderr io.Writer) int {
 			Rows []string `json:"rows"`
 		} `json:"display"`
 		LastBrew *struct {
-			ID        int64   `json:"id"`
-			StartedAt string  `json:"started_at"`
-			Kind      string  `json:"kind"`
-			DurationS float64 `json:"duration_s"`
-			PeakBar   float64 `json:"peak_bar"`
-			VolumeML  float64 `json:"volume_ml"`
+			ID        int64    `json:"id"`
+			StartedAt string   `json:"started_at"`
+			Kind      string   `json:"kind"`
+			DurationS float64  `json:"duration_s"`
+			PeakBar   float64  `json:"peak_bar"`
+			VolumeML  *float64 `json:"volume_ml"`
 		} `json:"last_brew"`
 	}
 	if err := json.Unmarshal(body, &s); err != nil {
@@ -330,8 +330,8 @@ func cmdStatus(client *http.Client, base string, stdout, stderr io.Writer) int {
 	}
 	last := "none"
 	if b := s.LastBrew; b != nil {
-		last = fmt.Sprintf("id=%d kind=%s started=%s duration_s=%g peak_bar=%g volume_ml=%g",
-			b.ID, b.Kind, b.StartedAt, b.DurationS, b.PeakBar, b.VolumeML)
+		last = fmt.Sprintf("id=%d kind=%s started=%s duration_s=%g peak_bar=%g volume_ml=%s",
+			b.ID, b.Kind, b.StartedAt, b.DurationS, b.PeakBar, num(b.VolumeML))
 	}
 	_, _ = fmt.Fprintf(stdout, "connected: %t\nspec_ok: %t\nready: %t\nmachine_ready: %t\nbrew_open: %t\npower: %s\nfirmware: %s\ntemp: %s\nsetpoint: %s\nreleased_until: %s\nlast_brew: %s\n",
 		s.Connected, s.SpecOK, s.Ready, s.MachineReady, s.BrewOpen, str(s.Power), str(s.Firmware), num(s.Temp), num(s.Setpoint), released, last)

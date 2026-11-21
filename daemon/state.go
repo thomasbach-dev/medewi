@@ -84,6 +84,10 @@ func (d *Daemon) Status() Status {
 			e := *b.EndedAt
 			b.EndedAt = &e
 		}
+		if b.VolumeML != nil {
+			v := *b.VolumeML
+			b.VolumeML = &v
+		}
 		s.LastBrew = &b
 	}
 	if s.Display != nil {

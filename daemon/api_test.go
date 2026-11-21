@@ -254,6 +254,31 @@ func TestAPIMethodRestrictions(t *testing.T) {
 	}
 }
 
+// A brew whose volume is unknown (issue #67) has volume_ml null, not 0.
+func TestAPIBrewUnknownVolume(t *testing.T) {
+	t.Parallel()
+	d, h, _ := apiSetup(t, simConfig(idleLines(20)))
+	ctx := context.Background()
+	at := time.Date(2026, 11, 20, 5, 24, 16, 0, time.UTC)
+	id, err := d.Store().BeginBrew(ctx, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Store().FinishBrew(ctx, id, brew.Summary{
+		StartedAt: at, EndedAt: at.Add(20 * time.Second), Kind: brew.Flush,
+		Duration: 20 * time.Second, VolumeML: 999, VolumeUnknown: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bs := decode[[]map[string]any](t, apiDo(t, h, "GET", "/api/brews", ""))
+	if len(bs) != 1 {
+		t.Fatalf("brews = %v, want one", bs)
+	}
+	if v, ok := bs[0]["volume_ml"]; !ok || v != nil {
+		t.Errorf("volume_ml = %v (present %v), want null", v, ok)
+	}
+}
+
 // seedBrews stores two finished brews; the second has a masked point.
 func seedBrews(t *testing.T, d *Daemon) {
 	t.Helper()

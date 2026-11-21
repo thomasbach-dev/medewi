@@ -463,6 +463,34 @@ func TestWriteRunsText(t *testing.T) {
 	}
 }
 
+// A run whose volume is unknown (Volume masked, no tick ratio; issue #67)
+// shows no volume: "-" in text, empty in csv, null in jsonl.
+func TestWriteRunsUnknownVolume(t *testing.T) {
+	peak := 0.1
+	runs := []Run{{N: 1, Kind: RunFlush, PeakBar: &peak, VolumeML: 999, VolumeUnknown: true}}
+	var b bytes.Buffer
+	if err := WriteRuns(&b, FormatText, runs, RunsOptions{Loc: time.UTC}); err != nil {
+		t.Fatal(err)
+	}
+	if f := strings.Fields(lines(b.String())[1]); len(f) < 7 || f[6] != "-" {
+		t.Errorf("text %q, want volume -", lines(b.String())[1])
+	}
+	b.Reset()
+	if err := WriteRuns(&b, FormatJSONL, runs, RunsOptions{Loc: time.UTC}); err != nil {
+		t.Fatal(err)
+	}
+	if m := decodeJSON(t, lines(b.String())[0]); m["volume_ml"] != nil {
+		t.Errorf("jsonl volume_ml = %v, want null", m["volume_ml"])
+	}
+	b.Reset()
+	if err := WriteRuns(&b, FormatCSV, runs, RunsOptions{Loc: time.UTC}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := strings.Split(lines(b.String())[1], ","); rec[6] != "" {
+		t.Errorf("csv %q, want an empty volume", lines(b.String())[1])
+	}
+}
+
 func TestFrameRealLine(t *testing.T) {
 	fr, err := leva.ParseFrame(testFrame())
 	if err != nil {

@@ -58,7 +58,7 @@ func TestRoundTrip(t *testing.T) {
 	}
 	b := brews[0]
 	if b.ID != id || !b.StartedAt.Equal(start) || b.EndedAt == nil || !b.EndedAt.Equal(sum.EndedAt) ||
-		b.Kind != "shot" || b.DurationS != 28 || b.PeakBar != 9.1 || b.VolumeML != 36 {
+		b.Kind != "shot" || b.DurationS != 28 || b.PeakBar != 9.1 || b.VolumeML == nil || *b.VolumeML != 36 {
 		t.Errorf("brew = %+v", b)
 	}
 
@@ -80,6 +80,31 @@ func TestRoundTrip(t *testing.T) {
 	}
 	if got[1].Pressure == nil || *got[1].Pressure != 6 || got[2].Pressure == nil || *got[2].Pressure != 7 {
 		t.Errorf("order lost: %+v %+v", got[1], got[2])
+	}
+}
+
+// A run whose volume is unknown (Volume masked, no tick ratio; issue #67)
+// stores NULL, not the part that was seen.
+func TestUnknownVolumeIsNull(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+	start := time.Date(2026, 11, 20, 5, 24, 16, 0, time.UTC)
+	id, err := s.BeginBrew(ctx, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishBrew(ctx, id, brew.Summary{
+		StartedAt: start, EndedAt: start.Add(20 * time.Second), Kind: brew.Flush,
+		Duration: 20 * time.Second, VolumeML: 999, VolumeUnknown: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	brews, err := s.Brews(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(brews) != 1 || brews[0].VolumeML != nil {
+		t.Errorf("brews = %+v, want one with a nil volume", brews)
 	}
 }
 

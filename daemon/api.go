@@ -66,7 +66,7 @@ type brewJSON struct {
 	Kind      string     `json:"kind"`
 	DurationS float64    `json:"duration_s"`
 	PeakBar   float64    `json:"peak_bar"`
-	VolumeML  float64    `json:"volume_ml"`
+	VolumeML  *float64   `json:"volume_ml"` // null while open or when unknown
 	Notes     string     `json:"notes"`
 }
 

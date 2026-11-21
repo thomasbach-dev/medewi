@@ -189,8 +189,9 @@ func TestMaskedVolumeAndPressure(t *testing.T) {
 	h := newHarness(t)
 	h.repeat(8, Sample{Pumping: true})
 	h.idle(4*time.Second, nil)
-	if len(h.closed) != 1 || h.closed[0].Kind != Flush || h.closed[0].PeakBar != 0 || h.closed[0].VolumeML != 0 {
-		t.Fatalf("closed = %+v", h.closed)
+	if len(h.closed) != 1 || h.closed[0].Kind != Flush || h.closed[0].PeakBar != 0 || h.closed[0].VolumeML != 0 ||
+		!h.closed[0].VolumeUnknown {
+		t.Fatalf("closed = %+v, want a flush with unknown volume", h.closed)
 	}
 }
 

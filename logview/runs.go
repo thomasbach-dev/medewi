@@ -55,7 +55,10 @@ type Run struct {
 	Duration    time.Duration
 	PeakBar     *float64 // nil for draws
 	VolumeML    float64
-	XML         string // session XML of the first sample
+	// VolumeUnknown: a sample had no Volume, read or derived from the
+	// flow-meter ticks; VolumeML is then only what was seen.
+	VolumeUnknown bool
+	XML           string // session XML of the first sample
 	// Start is the wall time of First: its Wall in a raw log; in a
 	// capture estimated from the manifest's recorded time, which levacap
 	// takes just after the last event. Zero when unknown.
@@ -218,7 +221,7 @@ func (f *RunFinder) close(s brew.Summary, atEnd bool) {
 	r.Duration = s.Duration
 	peak := s.PeakBar
 	r.PeakBar = &peak
-	r.VolumeML = s.VolumeML
+	r.VolumeML, r.VolumeUnknown = s.VolumeML, s.VolumeUnknown
 	f.runs = append(f.runs, r)
 	f.fed = f.fed[:0]
 }

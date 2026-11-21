@@ -1,6 +1,8 @@
 package brew
 
 import (
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/thomasbach-dev/medewi/leva"
@@ -17,6 +19,10 @@ const (
 	fieldFlow       = "Flow rate"   // factor-scaled to ml/s
 	fieldVolume     = "Volume"
 )
+
+// unitTicks is the XML unit of the flow-meter tick counter, a field without
+// an export name (field 31 in leva!-65FCB201).
+const unitTicks = "ticks"
 
 // FieldNames lists the export names SampleFrom reads.
 var FieldNames = []string{fieldTemp, fieldSetpoint, fieldHeat, fieldPressure, fieldPressureSP, fieldFlow, fieldVolume}
@@ -40,5 +46,22 @@ func SampleFrom(rec leva.Record, payload []byte, at time.Time) Sample {
 		Flow:       f(fieldFlow),
 		Heat:       f(fieldHeat),
 		Volume:     f(fieldVolume),
+		Ticks:      ticks(rec),
 	}
+}
+
+// ticks returns the flow-meter tick counter: the field without an export
+// name whose unit is "ticks"; nil if there is none or it is masked.
+func ticks(rec leva.Record) *float64 {
+	for _, fl := range rec.Fields {
+		if fl.Spec.Name != "" || fl.Spec.Unit != unitTicks {
+			continue
+		}
+		v, err := strconv.ParseFloat(strings.TrimSpace(fl.Raw), 64)
+		if err != nil {
+			return nil
+		}
+		return &v
+	}
+	return nil
 }

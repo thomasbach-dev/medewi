@@ -221,8 +221,12 @@ Tray 250 ml, Purge 2000 ml.
 
 - `Volume` counts on through all pulses of a phase (as in the warm-up
   program, unlike backflush) and reads `?` above 999 ml: the field is 3
-  characters wide. It stays `?` until the next pump-start reset, so run
-  volumes and wand draws in that stretch are lost (issue #67).
+  characters wide. It stays `?` until the next pump-start reset. The
+  brew recorder then derives Volume from `field_31` (below) with the
+  ml-per-tick ratio last seen while both were readable at 200 ml or
+  more; without such a ratio (medewid started while Volume read `?`) a
+  run's volume is unknown (stored NULL, shown as `-`) and draws in that
+  stretch are not found (issue #67). Fixture: `descale-tail`.
 - Report field `field_31` (offset 155, width 5, XML unit `ticks`, no
   name in the XML) is the raw flow-meter tick counter: it equals
   `Volume` × `Impulses/l` / 1000 throughout and resets with it, but keeps

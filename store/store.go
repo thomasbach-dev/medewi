@@ -65,7 +65,7 @@ type Brew struct {
 	Kind      string
 	DurationS float64
 	PeakBar   float64
-	VolumeML  float64
+	VolumeML  *float64 // nil while open, or when the volume is unknown
 	Notes     string
 }
 
@@ -180,11 +180,16 @@ func (s *Store) AddPoints(ctx context.Context, brewID int64, startedAt time.Time
 	return tx.Commit()
 }
 
-// FinishBrew records the summary of a closed brew.
+// FinishBrew records the summary of a closed brew. An unknown volume
+// (Summary.VolumeUnknown) is stored as NULL.
 func (s *Store) FinishBrew(ctx context.Context, id int64, sum brew.Summary) error {
+	var vol any = sum.VolumeML
+	if sum.VolumeUnknown {
+		vol = nil
+	}
 	res, err := s.db.ExecContext(ctx, `UPDATE brews
 		SET ended_at = ?, kind = ?, duration_s = ?, peak_bar = ?, volume_ml = ? WHERE id = ?`,
-		ts(sum.EndedAt), string(sum.Kind), sum.Duration.Seconds(), sum.PeakBar, sum.VolumeML, id)
+		ts(sum.EndedAt), string(sum.Kind), sum.Duration.Seconds(), sum.PeakBar, vol, id)
 	if err != nil {
 		return err
 	}
@@ -267,7 +272,11 @@ func (s *Store) Brews(ctx context.Context, limit int) ([]Brew, error) {
 			}
 			b.EndedAt = &t
 		}
-		b.Kind, b.DurationS, b.PeakBar, b.VolumeML = kind.String, dur.Float64, peak.Float64, volume.Float64
+		b.Kind, b.DurationS, b.PeakBar = kind.String, dur.Float64, peak.Float64
+		if volume.Valid {
+			v := volume.Float64
+			b.VolumeML = &v
+		}
 		out = append(out, b)
 	}
 	return out, rows.Err()

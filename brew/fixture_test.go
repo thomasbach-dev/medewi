@@ -108,6 +108,30 @@ func TestFixtureRuns(t *testing.T) {
 		}
 	})
 
+	// Volume reads ? above 999 ml (issue #67): from the second run on the
+	// volume comes from the tick counter, and the wand draw after the
+	// program (180 ticks) is found.
+	t.Run("descale-tail", func(t *testing.T) {
+		closed, water := replayFixture(t, spec, "descale-tail")
+		if len(closed) != 10 {
+			t.Fatalf("brews = %d, want 10 flushes: %+v", len(closed), closed)
+		}
+		if c := closed[0]; c.VolumeML != 917 || c.VolumeUnknown {
+			t.Errorf("run 1 = %+v, want 917 ml read from Volume", c)
+		}
+		if c := closed[1]; c.VolumeML < 1005 || c.VolumeML > 1020 || c.VolumeUnknown {
+			t.Errorf("run 2 = %+v, want about 1013 ml: it crosses 999 ml", c)
+		}
+		for i, c := range closed[2:] {
+			if c.VolumeML < 50 || c.VolumeUnknown {
+				t.Errorf("run %d = %+v, want a volume from the ticks", i+3, c)
+			}
+		}
+		if len(water) != 1 || water[0].VolumeML < 90 || water[0].VolumeML > 97 {
+			t.Errorf("water = %+v, want one draw of about 93 ml", water)
+		}
+	})
+
 	t.Run("steam-eco", func(t *testing.T) {
 		closed, water := replayFixture(t, spec, "steam-eco")
 		if len(closed) != 0 {

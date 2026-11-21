@@ -105,7 +105,7 @@ func TestRecordsShotEndToEnd(t *testing.T) {
 	if b.Kind != string(brew.Shot) || b.EndedAt == nil {
 		t.Fatalf("brew = %+v, want a finished shot", b)
 	}
-	if b.VolumeML != 36 || b.PeakBar != 9 {
+	if b.VolumeML == nil || *b.VolumeML != 36 || b.PeakBar != 9 {
 		t.Errorf("volume %v peak %v, want 36 and 9 (the wand draw must not count)", b.VolumeML, b.PeakBar)
 	}
 	pts, err := st.Points(context.Background(), b.ID)
