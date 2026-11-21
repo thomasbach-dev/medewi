@@ -142,6 +142,9 @@ func WriteRuns(w io.Writer, f Format, runs []Run, opt RunsOptions) error {
 			peak = FormatNum(*r.PeakBar)
 		}
 		n, vol := strconv.Itoa(r.N), FormatNum(math.Round(r.VolumeML*1e6)/1e6)
+		if r.VolumeUnknown {
+			vol = ""
+		}
 		src := srcRef(e.Path, e.Src)
 		var stats []AggValue
 		if opt.Stats != nil {
@@ -150,7 +153,7 @@ func WriteRuns(w io.Writer, f Format, runs []Run, opt RunsOptions) error {
 		switch {
 		case tw != nil:
 			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%.3f\t%s\t%s\t%s\t%s\t%s\t%s",
-				n, r.Kind, orDash(start), e.Offset.Seconds(), seconds(r.Duration), orDash(peak), vol,
+				n, r.Kind, orDash(start), e.Offset.Seconds(), seconds(r.Duration), orDash(peak), orDash(vol),
 				yesNo(r.Truncated), orDash(r.XML), src)
 			for _, v := range stats {
 				_, _ = fmt.Fprintf(tw, "\t%s", aggTextCell(v))
@@ -173,7 +176,7 @@ func WriteRuns(w io.Writer, f Format, runs []Run, opt RunsOptions) error {
 			o.raw("t", seconds(e.Offset))
 			o.raw("duration", seconds(r.Duration))
 			o.raw("peak_bar", orNull(peak))
-			o.raw("volume_ml", vol)
+			o.raw("volume_ml", orNull(vol))
 			o.raw("truncated", strconv.FormatBool(r.Truncated))
 			o.strOrNull("xml", r.XML)
 			o.str("src", src)

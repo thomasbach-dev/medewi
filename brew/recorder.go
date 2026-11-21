@@ -4,10 +4,20 @@
 //
 // The Flow field is a decaying rate estimate that lingers for seconds after
 // the pump stops, so it never decides anything here. The Volume counter
-// growing does.
+// growing does. Volume is 3 characters wide and reads ? above 999 ml; the
+// flow-meter tick counter (Ticks) keeps counting, so a masked Volume is
+// derived from it with the ml-per-tick ratio last seen while both were
+// readable (issue #67).
 package brew
 
-import "time"
+import (
+	"math"
+	"time"
+)
+
+// minRatioML is the smallest Volume a ml-per-tick ratio is learned from:
+// Volume counts whole ml, so below it the ratio is too coarse.
+const minRatioML = 200
 
 // Sample is one decoded report line. Nil means the field was masked or
 // missing.
@@ -16,6 +26,8 @@ type Sample struct {
 	Pumping bool // payload byte 2 == '*': leva! is driving the pump
 
 	Temp, Setpoint, Pressure, PressureSP, Flow, Heat, Volume *float64 // Flow is factor-scaled (ml/s)
+	// Ticks is the raw flow-meter tick counter; it resets with Volume.
+	Ticks *float64
 }
 
 // Kind classifies a finished brew.
@@ -75,6 +87,9 @@ type Summary struct {
 	Normal             Kind      // Shot or Flush: what the run looked like
 	Duration           time.Duration
 	PeakBar, VolumeML  float64
+	// VolumeUnknown is set when a sample of the run had no Volume, read or
+	// derived from the ticks: VolumeML is then only what was seen.
+	VolumeUnknown bool
 }
 
 // WaterDraw describes a finished wand draw (water that is not a brew).
@@ -99,6 +114,10 @@ type Recorder struct {
 	brew brewState
 	draw drawState
 	prev *float64 // previous non-nil Volume, for draw accounting
+	// mlPerTick is the ratio of Volume to Ticks last seen with both
+	// readable; 0 until then. A machine setting (Impulses/l), so it
+	// survives Abort.
+	mlPerTick float64
 }
 
 type brewState struct {
@@ -108,6 +127,7 @@ type brewState struct {
 	lastVol        *float64
 	peak, maxVol   float64
 	shot           bool
+	unknown        bool // a sample without Volume
 }
 
 type drawState struct {
@@ -133,8 +153,10 @@ func (r *Recorder) Clone() *Recorder {
 	return &c
 }
 
-// Feed advances the state machine by one sample.
+// Feed advances the state machine by one sample. A masked Volume is
+// derived from Ticks once a ratio is known; Points carry the derived value.
 func (r *Recorder) Feed(s Sample) Result {
+	s = r.fillVolume(s)
 	var res Result
 	if s.Pumping {
 		r.feedPumping(s, &res)
@@ -190,10 +212,26 @@ func (r *Recorder) feedIdle(s Sample, res *Result) {
 	r.feedDraw(s, res)
 }
 
+// fillVolume learns the ml-per-tick ratio from a sample with both counters
+// readable, and derives a masked Volume from Ticks when the ratio is known.
+func (r *Recorder) fillVolume(s Sample) Sample {
+	switch {
+	case s.Volume != nil && s.Ticks != nil:
+		if *s.Volume >= minRatioML && *s.Ticks > 0 {
+			r.mlPerTick = *s.Volume / *s.Ticks
+		}
+	case s.Volume == nil && s.Ticks != nil && r.mlPerTick > 0:
+		v := math.Round(*s.Ticks * r.mlPerTick) // whole ml, like the field
+		s.Volume = &v
+	}
+	return s
+}
+
 // trackVolume folds the sample's Volume into the open brew.
 func (r *Recorder) trackVolume(s Sample) {
 	b := &r.brew
 	if s.Volume == nil {
+		b.unknown = true
 		return
 	}
 	v := *s.Volume
@@ -249,6 +287,8 @@ func (r *Recorder) closeBrew(k Kind) *Summary {
 		Duration:  b.lastPmp.Sub(b.start),
 		PeakBar:   b.peak,
 		VolumeML:  b.maxVol,
+
+		VolumeUnknown: b.unknown,
 	}
 }
 

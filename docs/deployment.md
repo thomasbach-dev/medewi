@@ -346,7 +346,7 @@ services.prometheus.checkConfig = "syntax-only";
 | `medewi_shots_total` | counter | completed shots | — |
 | `medewi_flushes_total` | counter | completed flushes | — |
 | `medewi_pump_seconds_total` | counter | seconds of finished brews, truncated ones included | — |
-| `medewi_volume_liters_total` | counter | liters of finished brews and wand draws | — |
+| `medewi_volume_liters_total` | counter | liters of finished brews and wand draws (of a brew whose volume is unknown, the part seen) | — |
 | `medewi_water_draws_total` | counter | wand water draws | — |
 | `medewi_water_liters_total` | counter | liters drawn at the wand | — |
 | `medewi_report_lines_total` | counter | report lines received (~4/s while connected) | flat |
