@@ -143,7 +143,7 @@ the pump marker show the program.
 - The `Volume` field resets at every pump pulse of this program, unlike
   the warm-up program, where it counts on through all pulses.
 - `levalog runs` lists each pulse as a flush of its own (9 runs): nothing
-  in the report stream marks the program (detection: issue #13).
+  in the report stream marks the program (detection: issue #14).
 
 ## Pressure test program (run menu)
 
@@ -191,6 +191,47 @@ About 4 min from selecting the program to `Test pressure ✓`.
 - `levalog runs` lists the whole program as one flush (230.6 s, peak at
   the OPV). Detection is issue #18; open: whether the test can run with
   PID1 on and what it then shows.
+
+## Descale program (run menu)
+
+Observed 2026-11-20 from the raw log with LCD sampling (500 ms every
+5 s): cold machine in cold mode (mode `CLD`, 22 °C), no portafilter,
+operator marks at the start, at each tray emptied and at the end. One
+run, 27.6 min from the start to the return to the menu. The descale
+profile used had no PID setpoint, cycle volume or wait time; Path GROUP,
+Tray 250 ml, Purge 2000 ml.
+
+1. Start: mode `CLD` → `PID`, **setpoint 0**, heat 0 % for the whole run
+   (the profile's PID value; profiles with one would show it instead,
+   not captured). `Pressure SP` `?????`, pressure 0.1–0.2 bar (open
+   group) throughout.
+2. Descaler, one tray at a time: pump about 20 s (marker `*`), off about
+   20 s (LCD `PAUSE 00m:NNs` counting down), pump about 10 s until the
+   tray volume is reached, then `EMPTY TRAY!`; the program waits for a
+   key press, pump off. The LCD counts `DESCALER Nml` up. 9 trays, 19
+   pulses here.
+3. Tank empty (no flow during a pulse, here after about 2330 ml): the
+   pulse ends early and the LCD asks `FILL TANK!`, waiting. `Volume` and
+   the tick counter (`field_31`, below) reset to 0.
+4. Purge: the same rhythm (16 pulses here), the LCD counting `PURGE Nml`
+   **down** from the Purge volume. When the tank ran dry again it asked
+   `FILL TANK!` and went on after the refill.
+5. End: setpoint 0 → the brew setpoint, heater on. **Cold mode is not
+   restored.** The LCD returns to Run › Descale.
+
+- `Volume` counts on through all pulses of a phase (as in the warm-up
+  program, unlike backflush) and reads `?` above 999 ml: the field is 3
+  characters wide. It stays `?` until the next pump-start reset, so run
+  volumes and wand draws in that stretch are lost (issue #67).
+- Report field `field_31` (offset 155, width 5, XML unit `ticks`, no
+  name in the XML) is the raw flow-meter tick counter: it equals
+  `Volume` × `Impulses/l` / 1000 throughout and resets with it, but keeps
+  counting above 999 ml.
+- `levalog runs` lists the program as 35 flushes. In the report stream
+  only setpoint 0 with mode `PID` marks it; the LCD names every phase.
+  Detection is issue #15.
+- A `levabak diff` of backups before and after showed no change in the
+  `MCu` settings.
 
 ## Steam
 

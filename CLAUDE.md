@@ -143,9 +143,11 @@ Details and evidence: [docs/machine-behaviour.md](docs/machine-behaviour.md).
   switch, wired past leva!) show flow with marker `-`. Pressure rises to
   the OPV with the pump off (thermal expansion) — not a pump signal.
   The Volume field resets to 0 at each leva! pump start (but not between
-  the pump pulses of the warm-up program: it counts on through the
-  program; the pressure test resets it 2.8 s before its pump starts)
-  and keeps counting during wand draws; the Flow rate field is a decaying estimate
+  the pump pulses of the warm-up and descale programs: it counts on
+  through the program; the pressure test resets it 2.8 s before its pump starts)
+  and keeps counting during wand draws. It is 3 characters wide and
+  reads `?` above 999 ml; `field_31` (offset 155, unit `ticks`) is the
+  raw flow-meter tick counter, which keeps counting. The Flow rate field is a decaying estimate
   that lingers for seconds after the pump stops.
 - `MCu` lines are `"| "` x depth + a 15-char cell (a `...` cell, or a
   full-width cell ending in `..`, is a menu; menus may be empty); a dump can lose lines mid-dump and still end in `Cancel`:
