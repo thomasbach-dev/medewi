@@ -82,7 +82,11 @@ gzip file per session (rotated hourly) of JSON lines in the fixture event
 format. Every chunk sent is kept; of the received lines only report lines
 (`{`), display frames (`<`), banners (`$id:`), short machine notices such as
 `[READY]`, and replies to commands medewid itself sent shortly before.
-`MCu`/`MCm` replies (which contain the license key) are never logged. Marks
+`MCu`/`MCm` replies (which contain the license key) are never logged: for
+60 s after a dump, a received line is kept only if every record in it is
+whole (a checksummed report, an intact frame, an exact banner or notice),
+so a dump reply glued behind a cut-off record by a stream switch is
+dropped too. Marks
 (below) land in the log as `note` events. If an explicitly configured
 directory cannot be opened, medewid exits 1; with the default directory it
 only warns and runs without the log.
