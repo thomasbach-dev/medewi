@@ -400,9 +400,10 @@ func (s *Session) piece(now time.Time, data []byte, complete bool) {
 
 // judge decides from the start of a line whether it is kept. A dump line
 // (| or :, the Intel HEX of MCm) is never kept and records a dump. Otherwise
-// reports, display frames (MC@), banners and short "[…]" notices are kept,
-// and anything else only inside the window the line started in, provided
-// no dump happened since its first byte.
+// reports, display frames (MC@), banners and short "[…]" notices are kept
+// (inside the dump quiet period only if IsWholeLine holds; a dropped one
+// records a dump), and anything else only inside the window the line
+// started in, provided no dump happened since its first byte.
 func (s *Session) judge(now time.Time, data []byte) bool {
 	line := bytes.TrimRight(data, "\r\n")
 	if IsDumpLine(line) {
@@ -410,6 +411,13 @@ func (s *Session) judge(now time.Time, data []byte) bool {
 		return false
 	}
 	if IsStreamLine(line) {
+		// A stream switch can glue a dump reply behind a cut-off record:
+		// inside the quiet period only whole records are kept, and a
+		// dropped line is a dump in sight.
+		if now.Sub(s.l.lastDumpAt()) < s.l.cfg.DumpQuiet && !IsWholeLine(line) {
+			s.dump(now)
+			return false
+		}
 		return true
 	}
 	return s.lineWin && s.lineSeq == s.l.dumpSeqNow()

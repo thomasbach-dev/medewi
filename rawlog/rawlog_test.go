@@ -612,10 +612,12 @@ func TestNoteBeforeNextTx(t *testing.T) {
 }
 
 func TestDumpReplyDropped(t *testing.T) {
+	// Reports inside the dump quiet period must be whole (checksummed) to be kept.
+	r := string(sumReport()) + "\r\n"
 	evs, l := runSteps(t,
-		"tx:MCu\r\n", "rx:|secret 1\r\n{r1}\r\nKEY=x\r\n",
-		"tx:MCm\r\n", "rx::10000000AA\r\n:00000001FF\r\n{r2}\r\n")
-	if got := kept(evs); !eq(got, []string{"{r1}\r\n", "{r2}\r\n"}) {
+		"tx:MCu\r\n", "rx:|secret 1\r\n"+r+"KEY=x\r\n",
+		"tx:MCm\r\n", "rx::10000000AA\r\n:00000001FF\r\n"+r)
+	if got := kept(evs); !eq(got, []string{r, r}) {
 		t.Errorf("kept = %q", got)
 	}
 	for _, ev := range evs {
@@ -668,8 +670,9 @@ func TestStreamTogglesOpenNoWindow(t *testing.T) {
 }
 
 func TestLongLineJudgedOnce(t *testing.T) {
-	evs, l := runSteps(t, "rx:|"+strings.Repeat("a", 5000)+"\r\n", "rx:{r}\r\n")
-	if got := kept(evs); !eq(got, []string{"{r}\r\n"}) {
+	r := string(sumReport()) + "\r\n" // whole: the dump line started the quiet period
+	evs, l := runSteps(t, "rx:|"+strings.Repeat("a", 5000)+"\r\n", "rx:"+r)
+	if got := kept(evs); !eq(got, []string{r}) {
 		t.Errorf("kept = %q", got)
 	}
 	if l.Redacted() != 1 {
@@ -683,9 +686,10 @@ func TestLongLineSplitAcrossTapsAndPieces(t *testing.T) {
 	for range 5 {
 		steps = append(steps, "rx:"+strings.Repeat("a", 1000))
 	}
-	steps = append(steps, "rx:\r\n", "rx:{r}\r\n")
+	r := string(sumReport()) + "\r\n" // whole: the dump line started the quiet period
+	steps = append(steps, "rx:\r\n", "rx:"+r)
 	evs, _ := runSteps(t, steps...)
-	if got := kept(evs); !eq(got, []string{"{r}\r\n"}) {
+	if got := kept(evs); !eq(got, []string{r}) {
 		t.Errorf("kept %d events", len(got))
 	}
 }
@@ -750,8 +754,9 @@ func TestDumpQuietSurvivesReconnect(t *testing.T) {
 }
 
 func TestColonLedLineDropped(t *testing.T) {
-	evs, _ := runSteps(t, "tx:MC?\r\n", "rx::not hex at all\r\n", "rx:{r}\r\n")
-	if got := kept(evs); !eq(got, []string{"{r}\r\n"}) {
+	r := string(sumReport()) + "\r\n" // whole: the dump line started the quiet period
+	evs, _ := runSteps(t, "tx:MC?\r\n", "rx::not hex at all\r\n", "rx:"+r)
+	if got := kept(evs); !eq(got, []string{r}) {
 		t.Errorf("kept = %q", got)
 	}
 }
@@ -767,6 +772,71 @@ func TestBannerKeptDuringDumpQuiet(t *testing.T) {
 	evs, _ := runSteps(t, "tx:MCu\r\n", "rx:$id: leva! (3.2)\r\n")
 	if got := kept(evs); !eq(got, []string{"$id: leva! (3.2)\r\n"}) {
 		t.Errorf("kept = %q", got)
+	}
+}
+
+// A stream switch can glue a cut-off record onto the next line. If that is
+// a dump reply, the line starts like a report, banner or notice but carries
+// the license data: inside the dump quiet period only lines whose every
+// piece is a whole record are kept (#49).
+func TestGluedDumpTailDroppedDuringQuiet(t *testing.T) {
+	rep := string(sumReport())
+	for name, line := range map[string]string{
+		"report prefix":       "{ * 93.5 |0001 secret",
+		"report shape":        "{ * 93.5|0001 secret}",
+		"banner prefix":       "$id: leva! (3.2)|0001 secret",
+		"notice prefix":       "[READY]|secret",
+		"whole report + tail": rep + "$id: |0001 secret",
+		"cut report + hex":    rep[:120] + ":10000000secret",
+		"cut frame + dump":    testFrame()[:30] + "|0001 secret",
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, cmd := range []string{"MCu", "MCm"} {
+				evs, l := runSteps(t, "tx:"+cmd+"\r\n", "+30s", "rx:"+line+"\r\n", "rx:"+rep+"\r\n")
+				if got := kept(evs); !eq(got, []string{rep + "\r\n"}) {
+					t.Errorf("%s: kept %q, want only the whole report", cmd, got)
+				}
+				for _, ev := range evs {
+					if strings.Contains(string(ev.Data), "secret") {
+						t.Errorf("%s: leak in %+v", cmd, ev)
+					}
+				}
+				if l.Redacted() != 1 {
+					t.Errorf("%s: redacted = %d, want 1", cmd, l.Redacted())
+				}
+			}
+		})
+	}
+}
+
+// A dropped glued line is a dump in sight: the quiet period restarts.
+func TestGluedDumpTailRestartsQuiet(t *testing.T) {
+	evs, _ := runSteps(t, "tx:MCu\r\n", "+50s", "rx:$id: leva! (3.2)|0001 secret\r\n",
+		"+20s", "tx:MC?\r\n", "rx:Key tail\r\n")
+	if got := kept(evs); len(got) != 0 {
+		t.Errorf("kept = %q", got)
+	}
+}
+
+// Inside the quiet period whole records, glued or not, are kept; outside
+// it the prefix rule applies as before.
+func TestWholeRecordsKeptDuringQuiet(t *testing.T) {
+	rep, frame := string(sumReport()), testFrame()
+	steps := []string{"tx:MCu\r\n", "+1s"}
+	for _, l := range []string{rep, frame, rep + rep, frame + rep, "$id: leva! (3.2)", "[READY]"} {
+		steps = append(steps, "rx:"+l+"\r\n")
+	}
+	evs, l := runSteps(t, steps...)
+	if got := kept(evs); len(got) != 6 {
+		t.Errorf("kept %d lines, want 6: %q", len(got), got)
+	}
+	if l.Redacted() != 0 {
+		t.Errorf("redacted = %d", l.Redacted())
+	}
+	// Past the quiet period an unchecksummed or cut-off record is kept again.
+	evs, _ = runSteps(t, "tx:MCu\r\n", "+61s", "rx:{r}\r\n", "rx:"+rep[:100]+rep+"\r\n")
+	if got := kept(evs); len(got) != 2 {
+		t.Errorf("after quiet: kept %d lines, want 2", len(got))
 	}
 }
 
