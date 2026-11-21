@@ -191,6 +191,41 @@ About 4 min from selecting the program to `Test pressure ✓`.
 - `levalog runs` lists the whole program as one flush (230.6 s, peak at
   the OPV). Detection is issue #18; open: whether the test can run with
   PID1 on and what it then shows.
+- The `MCm` dump holds the same data: flag 0x0F55 (00 → 01 with the
+  first test) and the table at 0x0FA0, 46 × u16 **little-endian** in
+  centibar, in `MCb` order (120° first); the angles follow from the
+  index. Decoding it in `levabak` is issue #73.
+
+## Flow test program (run menu)
+
+Observed 2026-11-21 from the raw log with LCD sampling (500 ms every
+5 s), with the flow meter freshly calibrated (the manual, p. 48, asks
+for that): cold machine (mode `CLD`), open group, a cup drawn from the
+wand beforehand to remove air (as p. 48 asks), operator marks before
+and after. One run. The program records the pump's flow rate at 0 bar
+against phase angle; the manual's only stated purpose is display:
+afterwards the menus show pump power as a flow rate.
+
+1. LCD `Test yes [no]`; with `[yes]` the third run-menu row shows `WAIT`
+   and a progress bar that grew at every 5 s sample.
+2. Pump marker `*`, `Phase` 0°, then **+5° about every 2 s**. Flow rate
+   falls slowly at first and steeply above about 60°. At 110° no water
+   flows and the pump stops: 54 s of pump, 266 ml here. `Pressure SP`
+   `?????`, pressure 0.0–0.2 bar.
+3. LCD `Test flow ✓`.
+
+- Mode `CLD`, heat 0 % throughout; `Phase` is live (as in the pressure
+  test). The ascending 5° sweep from 0° is the program's mark in the
+  report stream; `levalog runs` lists it as one flush.
+- Afterwards `MCf` returns 37 points `[1 PPP FFF]`: 0°–180° every 5°,
+  flow in **ml/min** (inferred: 0° read 424, the report's Flow rate
+  7.02 ml/s at that time, and the menus then show 7.1 ml/s). Steps the
+  sweep did not reach (above 110°) read 0. `MCb` was unchanged.
+- The `MCm` dump holds the same data: flag 0x0F54 (00 → 01) and the
+  table at 0x0F56, 37 × u16 little-endian in ml/min (issue #73).
+- `levabak diff` before → after shows every `PumpPwr` setting (warm-up,
+  flush, flood) as changed, `85°` → `3.6ML/S`, `-°` → `7.1ML/S`: a
+  change of display only; the stored values stay the same (issue #73).
 
 ## Descale program (run menu)
 
@@ -267,8 +302,9 @@ Tray 250 ml, Purge 2000 ml.
   the setpoint, all PID1/PID2 terms, `Pressure SP` and the phase fields
   are `?`-masked. The daemon reports power `cold`; it never switches power
   from there (what `MCa` does in cold mode is unverified).
-- Exception: while the pressure test runs, `Phase` is live in `CLD` (the
-  program's sweep, see below); the other masked fields stay masked.
+- Exception: while the pressure or flow test runs, `Phase` is live in
+  `CLD` (the program's sweep, see those sections); the other masked
+  fields stay masked.
 - The descale program leaves `CLD` for `PID` with setpoint 0 and ends at
   the brew setpoint: cold mode is not restored. Purge on its own stays
   in `CLD` (see the descale section).
