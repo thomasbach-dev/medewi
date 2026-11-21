@@ -236,6 +236,12 @@ Tray 250 ml, Purge 2000 ml.
   Detection is issue #15.
 - A `levabak diff` of backups before and after showed no change in the
   `MCu` settings.
+- Purge on its own (Run › Purge; raw log of 2026-11-21, cold mode, 3
+  trays, then stopped) runs the same rhythm and LCD (`PURGE Nml` counting
+  down, `PAUSE`, `EMPTY TRAY!`) but **keeps mode `CLD`**: setpoint and
+  PID fields stay masked. Only the pump marker and the LCD show it;
+  `levalog runs` lists each pulse as a flush. `Volume` resets at the
+  first pulse and then counts on, as in the descale.
 
 ## Steam
 
@@ -263,6 +269,9 @@ Tray 250 ml, Purge 2000 ml.
   from there (what `MCa` does in cold mode is unverified).
 - Exception: while the pressure test runs, `Phase` is live in `CLD` (the
   program's sweep, see below); the other masked fields stay masked.
+- The descale program leaves `CLD` for `PID` with setpoint 0 and ends at
+  the brew setpoint: cold mode is not restored. Purge on its own stays
+  in `CLD` (see the descale section).
 
 ## Valve test
 
