@@ -133,6 +133,14 @@ flasher** do the flashing, then run the conformance suite as the
 post-flash gate and diff the settings backups (UC11). The flashing itself
 stays outside medewi — see the bootloader constraint below.
 
+## UC14: Wear tracking
+
+"Is the pump getting worse? Is the sensor's glue joint failing?" answered
+early enough to order a part before it breaks. The parts that wear: the
+pump and the hydraulics around it (non-return valve, 3-way valve, OPV),
+the temperature sensor and its glue joint, the heating element, the SSR,
+the steam thermostat, and the pressure sensor and flow meter themselves.
+
 ## Constraints
 
 - Live in-shot control stays on the machine (rotary encoder = pressure,
