@@ -1,16 +1,20 @@
-# 0007 — Serial menu for recipe execution, EEPROM restore for editing profiles and doses
+# 0007 — Write paths to explore: serial menu and EEPROM restore
 
 Date: 2026-11-22. Status: proposed.
 
 ## Context
 
-Recipe execution (#47) has to make the machine ready for a coffee: brew
-temperature, pressure profile, dose. Before designing it, #44 asked what
-the firmware lets a network client set at all. This record answers that
-from the vendor documents alone (firmware manual 3.2, ito module manual,
-Virtual Display protocol; page numbers refer to the firmware manual
-unless noted), from the machine's `MCh` reply and from the shape of our
-own backups and report stream. No write command was sent for it.
+Medewi will have to change settings on the machine: at least brew
+temperature, pressure profile and dose (#47), and the contents of
+profiles and doses (UC15). #44 asked what the firmware lets a network
+client set at all. This record answers that from the vendor documents
+(firmware manual 3.2, ito module manual, Virtual Display protocol; page
+numbers refer to the firmware manual unless noted), from the machine's
+`MCh` reply and from the shape of our own backups and report stream. No
+write command was sent for it.
+
+It is about the wire only. How recipes, profiles, doses, coffees and
+grind settings are represented in medewi is not decided here.
 
 The firmware offers three ways in.
 
@@ -116,49 +120,36 @@ only the intended settings changed.
 
 ## Decision
 
-The two jobs get different mechanisms.
-
-1. **Making the machine ready for a shot** uses the serial menu (A):
-   brew temperature and the selection among what the machine already
-   holds. It works whenever profile and dose are already as the recipe
-   expects, which is the everyday case.
-2. **Editing what the machine holds** (profile contents, dose amounts;
-   UC15) goes through an EEPROM restore (B), in stages:
-   1. Offline, no machine contact: find the profile and dose entries by
+1. Two write paths are explored: the serial menu (A) for what it can set
+   (setpoint, PID constants, selection), and EEPROM restore (B) for
+   everything else. Neither is committed to before its probes are done.
+2. Menu driving (C) is not pursued while B is open. Key codes stay
+   forbidden.
+3. For B the goal is that medewid does the restore, not a person with a
+   terminal program. The order:
+   1. Offline, no machine contact: map the profile and dose entries by
       diffing backups (#38), pin the checksum's region, and let `levabak`
-      write an edited image whose `MCu`-visible meaning is predicted.
-   2. The barista restores that image by the vendor's manual procedure
-      and takes a backup; `levabak` compares it with the prediction.
-   3. Only then, with a new record: the daemon restores by itself. That
-      record lifts the port-2323 rule for exactly this procedure and
-      names its guards (backup first, only the `e` command, read-back,
-      the restore runbook for when it fails).
-3. Menu driving (C) is the fallback if stage 1 or 2 fails, for example if
-   the bootloader rejects an edited image. Until a record says otherwise,
-   key codes stay forbidden.
-4. First slice of #47: the setpoint. The daemon reads the current
-   setpoint from the stream, moves to the clamped target in as few steps
-   as the step size allows, and checks the stream after each step; it
-   never counts steps blindly. Selection follows as the second slice.
-5. Whether medewi also starts the shot (`MCc` plus a named dose, after a
-   tap in guided mode) stays open. A recipe may name a dose either way:
-   the guided mode then tells the person which shortcut to pick. If the
-   daemon ever starts the pump, it does so only on a person's tap and
-   needs a stop command proven first.
+      write an edited image.
+   2. A record that lifts the port-2323 rule for exactly this procedure
+      and names its guards (backup first, only the `e` command,
+      read-back, a runbook for when it fails). No byte goes to the
+      bootloader before that record is accepted.
+   3. First machine probe: restore an unedited backup, so that only the
+      procedure is tested. Then an edited image.
+4. For A the first probe is the setpoint: read it from the stream, move
+   to a clamped target in as few steps as the step size allows, check the
+   stream after each step.
+
+Not decided here: the data model (recipes, profiles, doses, coffees,
+grind settings), which path a given feature uses, and whether medewi
+ever starts a shot.
 
 ## Consequences
 
-- A recipe refers to machine-side things by name (profile slot, dose) and
-  to their contents by the latest verified backup: the settings in the
-  `MCu` dump identify what a shot was pulled with, and `levabak diff`
-  shows when they changed.
-- #38 gets a precise scope instead of shrinking: the profile entries
-  (four slots with the same structure, so one mapped slot gives all
-  four), the dose entries and the checksum's bounds. The write path for
-  shots (A) needs none of it.
-- The hard rules in `CLAUDE.md` do not change with this record. Stage 2
-  is a person following the vendor's procedure; stage 3 needs its own
-  record.
+- #38 gets a precise scope: the profile entries (four slots with the
+  same structure, so one mapped slot gives all four), the dose entries
+  and the checksum's bounds. Exploring A needs none of it.
+- The hard rules in `CLAUDE.md` do not change with this record.
 - Open questions that only the machine can answer, each a single planned
   write with read-back, to be run when explicitly asked for:
   - the spelling of `MCc` + `PROFILE 1`, `SP USER 1` and the dose names;
@@ -170,8 +161,8 @@ The two jobs get different mechanisms.
     shot;
   - whether a selected profile's own temperature shows up as the stream's
     setpoint;
-  - whether the bootloader accepts an edited image at all (stage 2).
-  #47's design starts with the serial-menu probes; they need the
-  simulator to answer the same way first.
-- The `Serial menu` permission is the only one the daemon needs. `Virtual
-  LCD` and `Setup` can stay off or be turned off.
+  - whether the bootloader accepts an edited image at all.
+  The serial-menu probes need the simulator to answer the same way
+  first; the restore needs a bootloader in the simulator.
+- A needs the `Serial menu` Wifi permission only. `Virtual LCD` and
+  `Setup` are not needed while C is not pursued.
