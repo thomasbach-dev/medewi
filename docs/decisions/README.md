@@ -12,4 +12,4 @@ new record that supersedes it, not by editing history.
 | [0004](0004-go.md) | Go, with pure-Go dependencies |
 | [0005](0005-thin-clients.md) | Thin clients; phone deployment modes deferred |
 | [0006](0006-raw-log-access-via-ssh.md) | Raw-log access stays with ssh, not the daemon API |
-| [0007](0007-settings-writes-via-serial-menu.md) | Recipe execution writes through the serial menu; no restore, no menu driving (proposed) |
+| [0007](0007-settings-write-mechanisms.md) | Serial menu for recipe execution, EEPROM restore for editing profiles and doses (proposed) |
