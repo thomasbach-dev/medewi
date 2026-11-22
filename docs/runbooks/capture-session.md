@@ -112,8 +112,11 @@ line, then sends `MC `. Type `m` + Enter to mark a moment; marks land in the
 manifest notes as milliseconds since start. `--notes` says what was
 recorded. LCD sampling is off unless `--display-every` is given.
 
-1. **commands** (`--commands`) — sends `MCh MC? MCu MCm MCb MCf` with a 1 s
-   pause between them. Quiescent machine. The `MCu`/`MCm` output goes to
+1. **commands** (`--commands`) — sends `MCh MC? MCu MCm MCb MCf`, each
+   1 s after the previous reply has ended (a dump ends after 2 s without
+   a line). A damaged `MCu`/`MCm` dump stops the run with exit 1 and a
+   `log.partial.jsonl`: nothing more is sent into a dump that may still
+   be running. Quiescent machine. The `MCu`/`MCm` output goes to
    private storage (rule 3), nothing from this directory is committed
    without review.
 2. **stream, idle ~60 s** — machine idle and warm; wait about 60 s, press

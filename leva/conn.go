@@ -30,6 +30,15 @@ const (
 	noticeBuf = 16
 )
 
+// Dump timings for CommandOpts on the MCu and MCm settings dumps. Their
+// replies pause mid-stream for longer than the default idle gap (524 ms
+// seen on 2026-11-21); a command sent into a running dump can restart the
+// controller.
+const (
+	DumpFirstLine = 5 * time.Second
+	DumpIdleGap   = 2 * time.Second
+)
+
 // maxLine bounds a single wire line. A longer line is discarded in full (up
 // to and including its LF), counted in Oversized, and the reader carries on
 // with the next line; it never fails the connection. A variable only so

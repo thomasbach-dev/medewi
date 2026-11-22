@@ -152,5 +152,8 @@ Details and evidence: [docs/machine-behaviour.md](docs/machine-behaviour.md).
 - `MCu` lines are `"| "` x depth + a 15-char cell (a `...` cell, or a
   full-width cell ending in `..`, is a menu; menus may be empty); a dump can lose lines mid-dump and still end in `Cancel`:
   verify with `levabak check`, the daemon refuses damaged ones.
+- Dumps pause mid-reply (524 ms seen): fetch them with `CommandOpts` and
+  `leva.DumpIdleGap`, never send into a running dump — it restarted the
+  controller once, and a restart drops cold mode.
 - `MCm` ends with `:00000001F`, one digit short of the Intel HEX EOF
   `:00000001FF`; 256 contiguous 16-byte data records precede it.

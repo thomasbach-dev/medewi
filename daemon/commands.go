@@ -228,14 +228,5 @@ func complete(cmd string, lines []string) bool {
 	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
 		lines = lines[:len(lines)-1]
 	}
-	if len(lines) == 0 {
-		return false
-	}
-	switch cmd {
-	case "MCm":
-		return len(backup.ParseMCm(lines).Problems) == 0
-	case "MCu":
-		return len(backup.ParseMCu(lines).Problems) == 0
-	}
-	return true
+	return len(lines) > 0 && len(backup.CheckDump(cmd, lines)) == 0
 }

@@ -11,9 +11,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thomasbach-dev/medewi/backup/backuptest"
 	"github.com/thomasbach-dev/medewi/fixture"
 	"github.com/thomasbach-dev/medewi/sim"
 )
+
+// TestMain shrinks the dump idle gap: the sim's dumps never pause.
+// TestCaptureWaitsForPausingMCuDump restores the real one.
+func TestMain(m *testing.M) {
+	dumpIdleGap = 200 * time.Millisecond
+	os.Exit(m.Run())
+}
 
 func synthLine(temp string) []byte {
 	line := []byte(strings.Repeat(" ", 54))
@@ -40,7 +48,7 @@ func startSim(t *testing.T, cfg sim.Config) *sim.Server {
 		cfg.Responses = map[string][]string{
 			"MCh": {"MCh help", "MCu setup dump", "MCr reports"},
 			"MC?": {"XML=synthetic"},
-			"MCu": {"setup"}, "MCm": {"m"}, "MCb": {"b"}, "MCf": {"f"},
+			"MCu": backuptest.ValidMCu(), "MCm": backuptest.ValidMCm(), "MCb": {"b"}, "MCf": {"f"},
 		}
 	}
 	s := sim.New(cfg)
@@ -293,7 +301,7 @@ func TestCaptureMissingXMLWarns(t *testing.T) {
 	old := cmdWait
 	cmdWait = 10 * time.Millisecond
 	t.Cleanup(func() { cmdWait = old })
-	s := startSimResponses(t, map[string][]string{"MCh": {"h"}, "MC?": {"nothing"}, "MCu": {"u"}, "MCm": {"m"}, "MCb": {"b"}, "MCf": {"f"}})
+	s := startSimResponses(t, map[string][]string{"MCh": {"h"}, "MC?": {"nothing"}, "MCu": backuptest.ValidMCu(), "MCm": backuptest.ValidMCm(), "MCb": {"b"}, "MCf": {"f"}})
 	dir := t.TempDir()
 	var out, errb bytes.Buffer
 	if code := run([]string{"capture", "--commands", "--addr", s.Addr().String(), "--out", dir}, strings.NewReader(""), &out, &errb); code != 0 {
