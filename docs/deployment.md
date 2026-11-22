@@ -285,6 +285,11 @@ firmware update, keep the old XML next to the new one in a directory
 is only the default; `sudo levalog --xml DIR …` overrides it, so each old
 log is read with its own XML.
 
+To read the raw logs on another computer, mirror the directory with rsync
+over ssh and point `levalog` at the copy with `MEDEWID_RAW_DIR` (or
+`--dir`); which ssh keys may read it is up to the deployment (see
+[decision 0006](decisions/0006-raw-log-access-via-ssh.md)).
+
 When the connection drops later, follow
 [runbooks/troubleshoot-connection.md](runbooks/troubleshoot-connection.md).
 
