@@ -22,6 +22,7 @@ import (
 
 	"github.com/spf13/pflag"
 
+	"github.com/thomasbach-dev/medewi/backup"
 	"github.com/thomasbach-dev/medewi/conformance"
 	"github.com/thomasbach-dev/medewi/fixture"
 	"github.com/thomasbach-dev/medewi/leva"
@@ -46,6 +47,13 @@ var cmdWait = time.Second
 
 // cmdTimeout bounds each command round trip (shrunk in tests).
 var cmdTimeout = 10 * time.Second
+
+// dumpTimeout bounds an MCu or MCm round trip: a full MCu takes about 5 s,
+// plus the leva.DumpIdleGap that ends it.
+var dumpTimeout = 30 * time.Second
+
+// dumpIdleGap ends an MCu or MCm reply (shrunk in tests).
+var dumpIdleGap = leva.DumpIdleGap
 
 // safeCommands is the complete, read-only command whitelist capture may send
 // by capture --commands. Do not add anything else.
@@ -416,13 +424,32 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
+// captureCommands sends safeCommands one after the other, each once its
+// predecessor's reply has ended. The MCu and MCm dumps pause mid-reply, so
+// they get the dump timings: a command sent into a running dump restarted
+// the controller on 2026-11-21.
 func captureCommands(ctx context.Context, c *leva.Conn, xmlName *string) error {
 	for _, cmd := range safeCommands {
-		cctx, cancel := context.WithTimeout(ctx, cmdTimeout)
-		lines, err := c.Command(cctx, cmd)
-		cancel()
+		var (
+			lines []string
+			err   error
+		)
+		if isDump(cmd) {
+			cctx, cancel := context.WithTimeout(ctx, dumpTimeout)
+			lines, err = c.CommandOpts(cctx, cmd, leva.DumpFirstLine, dumpIdleGap)
+			cancel()
+		} else {
+			cctx, cancel := context.WithTimeout(ctx, cmdTimeout)
+			lines, err = c.Command(cctx, cmd)
+			cancel()
+		}
 		if err != nil {
 			return fmt.Errorf("%s: %w", cmd, err)
+		}
+		// A damaged dump may still be running: send nothing more.
+		if ps := backup.CheckDump(cmd, lines); len(ps) > 0 {
+			return fmt.Errorf("%s: incomplete dump (%d lines, %d problems, first at line %d: %s); "+
+				"stopped before sending anything else", cmd, len(lines), len(ps), ps[0].Line, ps[0].Text)
 		}
 		if cmd == "MC?" {
 			*xmlName, _ = leva.XMLName(lines)
@@ -433,6 +460,8 @@ func captureCommands(ctx context.Context, c *leva.Conn, xmlName *string) error {
 	}
 	return nil
 }
+
+func isDump(cmd string) bool { return cmd == "MCu" || cmd == "MCm" }
 
 // displaySample is how a capture with --display-every interleaves the LCD mirror
 // with the report stream: the machine sends only one of the two at a time.
