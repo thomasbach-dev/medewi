@@ -308,6 +308,9 @@ Tray 250 ml, Purge 2000 ml.
 - The descale program leaves `CLD` for `PID` with setpoint 0 and ends at
   the brew setpoint: cold mode is not restored. Purge on its own stays
   in `CLD` (see the descale section).
+- Cold mode is runtime state, not a setting: a controller restart drops
+  it, and the boiler heats at the brew setpoint (2026-11-21, see
+  [settings dumps](#settings-dumps)).
 
 ## Valve test
 
@@ -360,6 +363,21 @@ Tray 250 ml, Purge 2000 ml.
   The daemon used to accept any non-empty `MCu` reply; it now refuses a
   dump that fails `levabak check` (`ErrIncompleteDump`). `MCm` is checked
   as before.
+- **Dumps pause mid-reply, and a command sent into a running dump can
+  restart the controller.** A full `MCu` takes about 4.5–5 s; on
+  2026-11-21 it paused 524 ms after about 560 of its ~1712 lines, longer
+  than `leva`'s default idle gap of 300 ms. `levacap capture --commands`
+  took the reply as finished and sent `MCm` 5 ms after the last `MCu`
+  byte (#75). The `MCm` reply held 148 of 257 records mixed with the rest
+  of the menu tree, then the line went silent for about 1.4 s: the
+  controller restarted. Across the silence the mode went `CLD` → `PID`
+  at the brew setpoint with heat 100 %, `Volume` and `field_31` reset to
+  0 without a pump run, the PID I-term read 0, `Heat PID (average)` was
+  masked until 60 s after the silence (its one-minute timer restarted),
+  and the LCD backlight came on. One observation; earlier captures with
+  complete dumps and 1.3 s between them did not disturb anything. Both
+  the daemon and `levacap` now fetch dumps with `leva.DumpIdleGap` (2 s)
+  and send nothing more after a dump that fails `backup.CheckDump`.
 - The daemon serves backups as `text/plain; charset=iso-8859-1`, the
   bodies byte-identical to the machine's reply.
 - **EEPROM layout** (`MCm` image, little-endian; all from the pre/post
