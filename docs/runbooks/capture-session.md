@@ -191,40 +191,24 @@ Behavior of the tool you need to know:
 `medewid` writes every byte of machine traffic to its raw log. A window of
 it becomes a fixture without a capture session (no machine contact).
 
-1. Copy the whole day's raw logs off the brewhost. Copy the whole day, not
-   just the window: `levalog extract` refuses a window that crosses a
-   session boundary, and the firmware banner comes at session start, so
-   the file holding the start of your window must be present.
-
-   ```sh
-   HOST=brewhost                     # your brewhost's ssh name
-   DEST=$HOME/tmp/medewi-raw         # local scratch directory, outside the repo
-   DAY=$(date -u +%Y%m%d)            # UTC day of the raw-log file names
-   REMOTE_TMP=/tmp/medewi-raw-$DAY
-
-   mkdir -p "$DEST"
-   ssh -t "$HOST" "install -d -m 0700 $REMOTE_TMP && sudo sh -c 'cp /var/lib/private/medewid/raw/${DAY}T*.jsonl.gz $REMOTE_TMP/ && chown -R \$SUDO_USER $REMOTE_TMP'"
-   scp "$HOST:$REMOTE_TMP/*.jsonl.gz" "$DEST/"
-   ssh "$HOST" "rm -rf $REMOTE_TMP"
-   ```
+1. Mirror the raw-log directory from the brewhost with rsync and point
+   `levalog` at it with `MEDEWID_RAW_DIR` (see
+   [deployment.md](../deployment.md#5-switch-and-verify)). Mirror the
+   whole directory, not just the window: the firmware banner comes at
+   session start, so the file holding it must be present.
 
 2. Extract the window (vendor XML via `--xml` or `MEDEWI_XML_PATH`, so
    `xml_sha256` is filled):
 
    ```sh
-   DEST=$HOME/tmp/medewi-raw         # as in step 1
    SINCE='2026-11-14 08:58:30'       # window start, local time
    UNTIL='2026-11-14 09:07:00'       # window end, local time
    NAME=backflush                    # fixture directory and scenario
    NOTES="What happened in the window, and the marks you set."
 
-   levalog extract --dir "$DEST" -s "$SINCE" -u "$UNTIL" \
+   levalog extract -s "$SINCE" -u "$UNTIL" \
      --out "testdata/fixtures/$NAME" --scenario "$NAME" --notes "$NOTES"
    ```
-
-   If extract says the firmware is unknown (the session began on an
-   earlier UTC day), also copy the previous day's files: step 1 again with
-   `DAY=$(date -u -d yesterday +%Y%m%d)`, then extract again.
 
    For a quick look use `--out -` (e.g. `| jq`). Never run that through
    `ssh -t`: a pty turns LF into CRLF.
