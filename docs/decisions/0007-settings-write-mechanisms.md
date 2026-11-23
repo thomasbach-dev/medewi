@@ -1,6 +1,6 @@
 # 0007 — Write paths to explore: serial menu and EEPROM restore
 
-Date: 2026-11-22. Status: proposed.
+Date: 2026-11-22. Status: accepted.
 
 ## Context
 
