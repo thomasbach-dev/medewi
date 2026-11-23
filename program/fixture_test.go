@@ -55,6 +55,8 @@ func replay(t *testing.T, name string) []Run {
 					t.Fatal(err)
 				}
 				d.Sample(SampleFrom(rec, payload, at, nil))
+			} else if fr, err := leva.ParseFrame(line); err == nil {
+				d.Frame(at, fr.Rows)
 			}
 		}
 	}
@@ -78,8 +80,8 @@ func TestFixtures(t *testing.T) {
 			}
 			continue
 		}
-		if len(rs) != 1 || rs[0].Kind != c.kind || len(rs[0].Pulses) != c.pulses || rs[0].OpenStart != c.open {
-			t.Errorf("%s: %+v, want one %s with %d pulses, open start %v", name, rs, c.kind, c.pulses, c.open)
+		if len(rs) != 1 || rs[0].Kind != c.kind || len(rs[0].Pulses) != c.pulses || rs[0].OpenStart != c.open || rs[0].Status != Confirmed {
+			t.Errorf("%s: %+v, want one confirmed %s with %d pulses, open start %v", name, rs, c.kind, c.pulses, c.open)
 		}
 	}
 }

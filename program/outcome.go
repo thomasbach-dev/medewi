@@ -13,6 +13,8 @@ const (
 // program's own end beats an unseen end.
 func (d *Detector) outcome(f *found) Outcome {
 	switch {
+	case f.lcd:
+		return Unknown
 	case f.open:
 		return Cut
 	case d.ended(f):
@@ -31,6 +33,8 @@ func (d *Detector) ended(f *found) bool {
 	case PressureTest:
 		_, ok := f.pulses[0].phases[0]
 		return ok
+	case FlowTest:
+		return d.flowTestDone(f)
 	case Autotune:
 		b, a := f.tune.before, f.tune.after
 		return b != nil && a != nil && !sameConstants(*b, *a)

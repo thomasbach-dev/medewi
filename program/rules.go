@@ -31,6 +31,7 @@ type found struct {
 	openEnd bool
 	ramp    *rampSpan
 	tune    *modeSpan
+	lcd     bool // named by the LCD only
 }
 
 // Runs returns the program runs seen so far, by start. It does not change
@@ -74,15 +75,21 @@ func (d *Detector) find() []*found {
 	for i := 0; i < len(ps); {
 		if j := backflushRun(ps, taken, i); j-i >= 2 {
 			out = append(out, d.group(Backflush, ps[i:j], nil))
-			i = j
+			for ; i < j; i++ {
+				taken[i] = true
+			}
 			continue
 		}
 		f, j := d.rinse(ps, taken, i)
 		if f != nil {
 			out = append(out, f)
+			for k := i; k < j; k++ {
+				taken[k] = true
+			}
 		}
 		i = max(j, i+1)
 	}
+	out = append(out, d.lcdOnly(ps, taken)...)
 	slices.SortStableFunc(out, func(a, b *found) int { return a.first.At.Compare(b.first.At) })
 	return out
 }
@@ -217,6 +224,9 @@ func (d *Detector) run(f *found) Run {
 			pl.Stage = f.stages[k]
 		}
 		r.Pulses = append(r.Pulses, pl)
+	}
+	if d.judge(&r); f.lcd {
+		r.Status, r.Evidence = LCD, []string{"lcd"}
 	}
 	return r
 }

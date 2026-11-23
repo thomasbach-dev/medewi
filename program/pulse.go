@@ -118,6 +118,7 @@ type Detector struct {
 	sp                            *Sample // last sample with a setpoint
 	pid                           *Sample // last sample with PID constants
 	breaks                        []time.Time
+	frames                        []lcdFrame
 }
 
 // NewDetector returns an empty Detector.

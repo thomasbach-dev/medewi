@@ -10,6 +10,9 @@ const stepHold = time.Second
 
 // figures are the numbers of f for wear tracking, by kind; nil for none.
 func (d *Detector) figures(f *found) map[string]any {
+	if f.lcd {
+		return nil
+	}
 	out := map[string]any{}
 	switch f.kind {
 	case PressureTest:
