@@ -59,3 +59,79 @@ func (s *seq) pump(sec, phase float64, bar func(t float64) float64) {
 }
 
 func (s *seq) skip(sec float64) { s.at = s.at.Add(time.Duration(sec * float64(time.Second))) }
+
+// reset zeroes the counters, as a pump start outside a program does.
+func (s *seq) reset() { s.st.Ticks, s.st.Volume = fp(0), fp(0) }
+
+func flat(v float64) func(float64) float64 { return func(float64) float64 { return v } }
+
+// used sets the counters to a value left over from earlier use.
+func (s *seq) used() { s.st.Ticks, s.st.Volume = fp(400), fp(200) }
+
+// flush is one pump run at phase with a counter reset at its start.
+func (s *seq) flush(sec, phase float64, bar func(float64) float64) {
+	s.idle(5)
+	s.reset()
+	s.pump(sec, phase, bar)
+	s.idle(5)
+}
+
+// rhythm is n pulses of 10 s at full power, 20 s apart, counting on.
+func (s *seq) rhythm(n int) {
+	for range n {
+		s.pump(10, 0, flat(0.1))
+		s.idle(20)
+	}
+}
+
+func (s *seq) cold() { s.st.Mode, s.st.Setpoint = "CLD", nil }
+
+func (s *seq) backflush(n int) {
+	for range n {
+		s.reset()
+		s.pump(6, 0, func(t float64) float64 { return min(10, 3*t) })
+		s.idle(10)
+	}
+}
+
+// sweep is one pulse through the phases from..to, hold seconds each.
+func (s *seq) sweep(from, to, by, hold float64, bar func(phase float64) float64) {
+	s.st.Pump = true
+	for v := from; (by > 0 && v <= to) || (by < 0 && v >= to); v += by {
+		s.st.Phase, s.st.Pressure = fp(v), fp(bar(v))
+		for range int(hold * 4) {
+			s.sample()
+		}
+	}
+	s.st.Pump, s.st.Phase = false, nil
+}
+
+// warmup is a 90 → 110 jump, then a ramp back with three pulses.
+func (s *seq) warmup() {
+	s.st.Setpoint = fp(110)
+	s.idle(60)
+	for k := range 100 {
+		s.st.Setpoint = fp(110 - 0.2*float64(k+1))
+		if k%30 == 5 {
+			s.pump(2, 50, flat(0.2))
+		} else {
+			s.idle(2)
+		}
+	}
+	s.idle(60)
+}
+
+func (s *seq) autotune() {
+	s.st.Kc, s.st.Ti, s.st.Td = fp(1), fp(20), fp(5)
+	s.idle(5)
+	s.st.Mode, s.st.Kc, s.st.Ti, s.st.Td = "ATN", nil, nil, nil
+	for range 4 {
+		s.st.Heat = fp(0)
+		s.idle(60)
+		s.st.Heat = fp(20)
+		s.idle(40)
+	}
+	s.st.Heat, s.st.Mode = fp(0), "PID"
+	s.st.Kc, s.st.Ti, s.st.Td = fp(2), fp(30), fp(7.5)
+	s.idle(60)
+}
