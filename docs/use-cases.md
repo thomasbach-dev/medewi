@@ -141,6 +141,16 @@ pump and the hydraulics around it (non-return valve, 3-way valve, OPV),
 the temperature sensor and its glue joint, the heating element, the SSR,
 the steam thermostat, and the pressure sensor and flow meter themselves.
 
+## UC15: Profile editing
+
+Keep a handful of pressure profiles at hand and try a new coffee with
+each of them (UC4). Today a profile is entered point by point with the
+rotary encoder, which is slow enough that it rarely happens. The barista
+edits profiles and dose amounts on a screen, sees them as curves, keeps
+more of them than the machine has slots, and loads the ones in play onto
+the machine. How they get there:
+[decision 0007](decisions/0007-settings-write-mechanisms.md).
+
 ## Constraints
 
 - Live in-shot control stays on the machine (rotary encoder = pressure,
