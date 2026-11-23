@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -38,6 +39,7 @@ func SettingsFrom(u *backup.MCu) (s Settings, missing []string) {
 			val[c.Path] = c.Value
 		}
 	}
+	found, unread := false, false
 	step := regexp.MustCompile(`^Warm-Up/\d+$`)
 	for _, c := range u.Settings {
 		if !c.Menu || !step.MatchString(c.Path) {
@@ -45,11 +47,14 @@ func SettingsFrom(u *backup.MCu) (s Settings, missing []string) {
 		}
 		at, ok1 := span(val[c.Path+"/Time"])
 		dur, ok2 := span(val[c.Path+"/Duration"])
-		if ok1 && ok2 && dur > 0 {
+		found = true
+		unread = unread || !ok1 || !ok2
+		if dur > 0 {
 			s.WarmUp = append(s.WarmUp, at)
 		}
 	}
-	if s.WarmUp == nil {
+	if !found || unread {
+		s.WarmUp = nil
 		missing = append(missing, "Warm-Up")
 	}
 	cycles, err := strconv.ParseFloat(val["Backflush/Cycles"], 64)
@@ -100,6 +105,9 @@ func (d *Detector) profileDescale(f *found) bool {
 	want := d.settings.DescalePID
 	if f.kind != Purge || f.lcd || want == nil || *want == 0 {
 		return false
+	}
+	if slices.Contains(d.lcdKinds(f.first.At, f.last.At), Purge) {
+		return false // the LCD outranks the settings
 	}
 	for _, p := range f.pulses {
 		if sp := p.first.Setpoint; p.first.Mode != "PID" || sp == nil || math.Abs(*sp-*want) > 0.05 {

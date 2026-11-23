@@ -199,10 +199,10 @@ func TestPulseVolumeCoast(t *testing.T) {
 	s.reset()
 	for range 3 {
 		s.pump(10, 0, nil)
-		s.st.Ticks, s.st.Volume = fp(*s.st.Ticks+6), fp(*s.st.Volume+3)
+		s.st.Ticks, s.st.Volume = fp(*s.st.Ticks+12), fp(*s.st.Volume+3)
 		s.idle(1)
 		s.idle(20)
-		s.st.Ticks, s.st.Volume = fp(*s.st.Ticks+20), fp(*s.st.Volume+10) // a wand draw
+		s.st.Ticks, s.st.Volume = fp(*s.st.Ticks+40), fp(*s.st.Volume+10) // a wand draw
 		s.idle(1)
 	}
 	for k, p := range wantKinds(t, "purge", s, Purge)[0].Pulses {

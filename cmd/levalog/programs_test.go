@@ -47,7 +47,7 @@ func (l *progLog) report(pump byte, phase string) {
 	copy(b[4:], "CLD")
 	copy(b[13:], "?????")
 	copy(b[36:], " 0.10")
-	copy(b[50:], fmt.Sprintf("%4d", l.ticks/2))
+	copy(b[50:], fmt.Sprintf("%4d", l.ticks/4))
 	copy(b[60:], phase)
 	copy(b[70:], fmt.Sprintf("%5d", l.ticks))
 	l.evs = append(l.evs, fixture.Event{T: int64(l.t), Dir: fixture.RX, Data: append(b, '\r', '\n')})
@@ -64,7 +64,7 @@ func (l *progLog) idle(sec int) {
 func (l *progLog) purge(n int) {
 	for range n {
 		for range 40 {
-			l.ticks += 2
+			l.ticks += 4
 			l.report('*', "000")
 		}
 		l.idle(20)

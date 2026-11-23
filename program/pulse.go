@@ -16,6 +16,9 @@ const (
 	// minRatioML is the smallest Volume a ml-per-tick ratio is learned
 	// from: Volume counts whole ml.
 	minRatioML = 200
+	// minTicks is the smallest counter value a reset shows against: the
+	// first report of a pulse can already show up to 84 ticks (seen).
+	minTicks = 100
 	// coast is how long the counter may grow after the pump stopped.
 	coast = 3 * time.Second
 	// tuneGap is the longest interruption of an autotune.
@@ -36,7 +39,8 @@ type pulse struct {
 	openStart, openEnd            bool
 	startML, endML                *float64 // volume counter before and at the end
 
-	before, after *float64 // pressure just before the pulse and just after it
+	since         time.Duration // from the first sample after a Break to the pulse
+	before, after *float64      // pressure just before the pulse and just after it
 }
 
 // step is a stretch of one phase within a pulse.
@@ -110,7 +114,8 @@ type modeSpan struct {
 // Detector collects samples and frames; Runs finds the programs in them.
 // It is not safe for concurrent use.
 type Detector struct {
-	have    bool // prev is valid: no Break since
+	have    bool      // prev is valid: no Break since
+	begin   time.Time // first sample since the last Break
 	prev    Sample
 	cur     *pulse
 	pulses  []*pulse
@@ -160,14 +165,19 @@ func (d *Detector) Sample(s Sample) {
 	}
 	d.setpoint(s)
 	d.autotune(s, start)
+	if start {
+		d.begin = s.At
+	}
+	gap := false
 	if d.cur != nil && (!s.Pump || s.At.Sub(d.prev.At) >= pulseGap) {
+		gap = s.Pump
 		if !s.Pump {
 			d.cur.after = s.Pressure
 		}
 		d.closePulse()
 	}
 	if s.Pump && d.cur == nil {
-		d.open(s, start)
+		d.open(s, start, gap)
 	} else if d.ticks != nil && s.Ticks != nil && *s.Ticks < *d.ticks && !s.Pump {
 		d.resets++
 	}
@@ -188,15 +198,18 @@ func (d *Detector) Sample(s Sample) {
 	d.prev, d.have = s, true
 }
 
-func (d *Detector) open(s Sample, start bool) {
+// open starts a pulse. One that only a report gap split off says nothing
+// about the counter.
+func (d *Detector) open(s Sample, start, gap bool) {
 	p := &pulse{
 		first: s, phases: map[float64]int{}, openStart: start,
 		brk: d.brk, modes: d.modes, setpoints: d.setpoints, resets: d.resets, startML: d.ml,
+		since: s.At.Sub(d.begin),
 	}
 	if !start {
 		p.before = d.prev.Pressure
 	}
-	if d.ticks != nil && *d.ticks != 0 && s.Ticks != nil {
+	if !gap && d.ticks != nil && *d.ticks >= minTicks && s.Ticks != nil {
 		c := *s.Ticks >= *d.ticks
 		p.cont = &c
 	}

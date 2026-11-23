@@ -13,10 +13,13 @@ const (
 // program's own end beats an unseen end.
 func (d *Detector) outcome(f *found) Outcome {
 	switch {
-	case f.lcd:
-		return Unknown
 	case f.open:
 		return Cut
+	case f.lcd:
+		if f.openEnd {
+			return Cut
+		}
+		return Unknown
 	case d.ended(f):
 		return Finished
 	case f.openEnd:

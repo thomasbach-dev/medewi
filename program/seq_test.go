@@ -17,7 +17,7 @@ type seq struct {
 }
 
 func newSeq() *seq {
-	s := &seq{d: NewDetector(), at: t0, mlT: 0.5}
+	s := &seq{d: NewDetector(), at: t0, mlT: 0.25}
 	s.st = Sample{Mode: "PID", Setpoint: fp(90), Temp: fp(90), Heat: fp(0), Pressure: fp(0.1), Volume: fp(0), Ticks: fp(0)}
 	return s
 }
@@ -38,7 +38,7 @@ func (s *seq) idle(sec float64) {
 	}
 }
 
-// pump feeds sec seconds with the pump on at phase, adding 2 ticks (1 ml)
+// pump feeds sec seconds with the pump on at phase, adding 4 ticks (1 ml)
 // per sample; bar gives the pressure by time into the pulse.
 func (s *seq) pump(sec, phase float64, bar func(t float64) float64) {
 	s.st.Pump, s.st.Phase = true, fp(phase)
@@ -47,7 +47,7 @@ func (s *seq) pump(sec, phase float64, bar func(t float64) float64) {
 			s.st.Pressure = fp(bar(float64(k) / 4))
 		}
 		if s.st.Ticks != nil {
-			s.st.Ticks = fp(*s.st.Ticks + 2)
+			s.st.Ticks = fp(*s.st.Ticks + 4)
 			s.st.Volume = fp(*s.st.Ticks * s.mlT)
 			if *s.st.Volume > 999 {
 				s.st.Volume = nil

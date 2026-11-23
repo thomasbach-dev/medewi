@@ -12,6 +12,9 @@ const (
 	backflushBar = 1.0
 	// backflushGap covers EMPTY, where the program waits for a key press.
 	backflushGap = 10 * time.Minute
+	// trappedBar is the pressure a pulse leaves above the blind basket
+	// (7 bar and more seen), not what a machine at rest holds (1.5).
+	trappedBar = 5.0
 	// sweepPhases and sweepNet make a pulse a phase sweep.
 	sweepPhases = 8
 	sweepNet    = 0.8
@@ -56,6 +59,9 @@ func (d *Detector) find() []*found {
 	for _, t := range d.tunes {
 		last := t.openEnd || t == d.tune && d.have && d.prev.Mode == "ATN"
 		out = append(out, &found{kind: Autotune, first: t.first, last: t.last, open: t.openStart, openEnd: last, tune: t})
+		for i, p := range ps {
+			taken[i] = taken[i] || !p.first.At.Before(t.first.At) && !p.last.At.After(t.last.At)
+		}
 	}
 	for i, p := range ps {
 		if taken[i] || p.shot {
@@ -156,41 +162,46 @@ func backflushRun(ps []*pulse, taken []bool, i int) int {
 }
 
 // rinse finds a descale or purge starting at pulse i: full-power pulses
-// whose tick counter goes on. A descale's setpoint stays at its value over
-// a counter reset, between its descaler and its purge stage. It returns the
-// index after the group; nil if there is none.
+// whose tick counter goes on. A descale runs on over a counter reset while
+// its setpoint stays 0: its purge stage follows. It returns the index after
+// the group; nil if there is none.
 func (d *Detector) rinse(ps []*pulse, taken []bool, i int) (*found, int) {
-	if taken[i] || !fullPower(ps[i]) {
-		return nil, i + 1
+	j := d.continued(ps, taken, i)
+	if j-i < 2 {
+		return nil, max(j, i+1)
 	}
 	zero := func(p *pulse) bool {
 		return p.first.Mode != "CLD" && p.first.Setpoint != nil && *p.first.Setpoint == 0
 	}
-	stages := []string{stageDescaler}
-	purging := false
-	j := i + 1
-	for ; j < len(ps) && !taken[j] && fullPower(ps[j]) && ps[j].brk == ps[i].brk && ps[j].modes == ps[i].modes; j++ {
-		goesOn := ps[j].cont != nil && *ps[j].cont
-		same := zero(ps[i]) && zero(ps[j]) && ps[j].setpoints == ps[i].setpoints
-		if !goesOn && !same {
+	if !slices.ContainsFunc(ps[i:j], zero) {
+		return d.group(Purge, ps[i:j], nil), j
+	}
+	stages := slices.Repeat([]string{stageDescaler}, j-i)
+	for j < len(ps) && zero(ps[i]) && zero(ps[j]) && d.together(ps[i], ps[j]) && ps[j].setpoints == ps[i].setpoints &&
+		(ps[j].cont != nil || ps[j].resets != ps[j-1].resets) {
+		k := d.continued(ps, taken, j)
+		if k-j < 2 {
 			break
 		}
-		if !goesOn || ps[j].resets != ps[j-1].resets {
-			purging = true
-		}
-		stage := stageDescaler
-		if purging {
-			stage = stagePurge
-		}
-		stages = append(stages, stage)
+		stages = append(stages, slices.Repeat([]string{stagePurge}, k-j)...)
+		j = k
 	}
-	if j-i < 2 {
-		return nil, j
+	return d.group(Descale, ps[i:j], stages), j
+}
+
+// together reports whether no interruption or mode change lies between a
+// and b.
+func (d *Detector) together(a, b *pulse) bool { return a.brk == b.brk && a.modes == b.modes }
+
+// continued returns the end of the full-power pulses from i on whose
+// counter goes on from one to the next.
+func (d *Detector) continued(ps []*pulse, taken []bool, i int) int {
+	j := i
+	for j < len(ps) && !taken[j] && fullPower(ps[j]) &&
+		(j == i || d.together(ps[i], ps[j]) && ps[j].cont != nil && *ps[j].cont) {
+		j++
 	}
-	if slices.ContainsFunc(ps[i:j], zero) {
-		return d.group(Descale, ps[i:j], stages), j
-	}
-	return d.group(Purge, ps[i:j], nil), j
+	return j
 }
 
 func (d *Detector) group(kind Kind, ps []*pulse, stages []string) *found {
@@ -198,6 +209,10 @@ func (d *Detector) group(kind Kind, ps []*pulse, stages []string) *found {
 	f.open = ps[0].openStart
 	if kind == Descale || kind == Purge {
 		f.open = f.open || ps[0].cont != nil && *ps[0].cont
+	}
+	if kind == Backflush && ps[0].before != nil && *ps[0].before >= trappedBar && ps[0].since <= backflushGap {
+		// Pressure an earlier pulse trapped, with no pulse seen before?
+		f.open = f.open || !slices.ContainsFunc(d.pulses, func(p *pulse) bool { return p.brk == ps[0].brk && p.first.At.Before(ps[0].first.At) })
 	}
 	end := ps[len(ps)-1]
 	f.openEnd = end.openEnd
@@ -249,6 +264,9 @@ func ownVolume(p *pulse) *float64 {
 		return nil
 	}
 	v := *p.endML
+	if p.openStart {
+		return nil
+	}
 	if p.cont != nil && *p.cont {
 		if p.startML == nil {
 			return nil

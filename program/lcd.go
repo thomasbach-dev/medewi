@@ -23,6 +23,10 @@ const flushKind Kind = "flush"
 // flowMark is how long after a flow test its menu mark may show up.
 const flowMark = 60 * time.Second
 
+// lcdNear is how far from a pulse a frame may lie to name it: two sampling
+// periods.
+const lcdNear = 10 * time.Second
+
 // lcdFrame is a frame that says something.
 type lcdFrame struct {
 	at   time.Time
@@ -133,32 +137,50 @@ func (d *Detector) judge(r *Run) {
 	}
 }
 
-// lcdOnly finds the pulses no rule took whose frames name a program.
+// lcdOnly finds the pulses no rule took that the LCD names. Frames are
+// sparse, so frames close by count when the pulse has none of its own, and
+// an unnamed pulse between two of one program belongs to it.
 func (d *Detector) lcdOnly(ps []*pulse, taken []bool) []*found {
-	var out []*found
-	var last *pulse
+	names := make([]Kind, len(ps))
 	for i, p := range ps {
 		if taken[i] || p.shot {
-			last = nil
 			continue
 		}
 		ks := d.lcdKinds(p.first.At, p.last.At)
-		if len(ks) != 1 || ks[0] == flushKind {
-			last = nil
+		if len(ks) == 0 {
+			ks = d.lcdKinds(p.first.At.Add(-lcdNear), p.last.At.Add(lcdNear))
+		}
+		if len(ks) == 1 && ks[0] != flushKind {
+			names[i] = ks[0]
+		}
+	}
+	var out []*found
+	for i := 0; i < len(ps); i++ {
+		if names[i] == "" {
 			continue
 		}
-		if n := len(out) - 1; last != nil && out[n].kind == ks[0] && last.brk == p.brk && p.first.At.Sub(last.last.At) <= backflushGap {
-			f := d.group(ks[0], append(slices.Clone(out[n].pulses), p), nil)
-			f.lcd = true
-			out[n] = f
-		} else {
-			f := d.group(ks[0], []*pulse{p}, nil)
-			f.lcd = true
-			out = append(out, f)
+		last := i
+		for k := i + 1; k < len(ps) && d.lcdJoins(ps, taken, k); k++ {
+			if names[k] == names[i] {
+				last = k
+			} else if names[k] != "" {
+				break
+			}
 		}
-		last = p
+		f := d.group(names[i], ps[i:last+1], nil)
+		f.lcd = true
+		out = append(out, f)
+		i = last
 	}
 	return out
+}
+
+// lcdJoins reports whether pulse k may go on from the one before it.
+func (d *Detector) lcdJoins(ps []*pulse, taken []bool, k int) bool {
+	p := ps[k]
+	ks := d.lcdKinds(p.first.At, p.last.At)
+	return !taken[k] && !p.shot && p.brk == ps[k-1].brk && p.first.At.Sub(ps[k-1].last.At) <= backflushGap &&
+		!slices.Contains(ks, flushKind)
 }
 
 // flowTestDone reports whether the run menu's flow test mark appeared with f.
