@@ -193,6 +193,9 @@ func (d *Detector) group(kind Kind, ps []*pulse, stages []string) *found {
 	}
 	end := ps[len(ps)-1]
 	f.openEnd = end.openEnd
+	if kind == PressureTest || kind == FlowTest {
+		return f // one pulse: nothing can follow
+	}
 	for _, b := range d.breaks {
 		f.openEnd = f.openEnd || !b.Before(end.last.At) && b.Sub(end.last.At) < cutMargin
 	}
@@ -206,6 +209,7 @@ func (d *Detector) run(f *found) Run {
 	r := Run{
 		Kind: f.kind, Start: f.first.At, End: f.last.At, First: f.first.Ref, Last: f.last.Ref,
 		OpenStart: f.open, OpenEnd: f.openEnd,
+		Outcome: d.outcome(f), Figures: d.figures(f),
 	}
 	for k, p := range f.pulses {
 		pl := Pulse{Start: p.first.At, End: p.last.At, PeakBar: p.peak(), Phase: p.phase(), VolumeML: ownVolume(p)}

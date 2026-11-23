@@ -28,8 +28,8 @@ var kindSeqs = []struct {
 }{
 	{WarmUp, (*seq).warmup},
 	{Autotune, (*seq).autotune},
-	{PressureTest, func(s *seq) { s.cold(); s.sweep(120, 0, -5, 2, func(p float64) float64 { return (120 - p) / 12 }) }},
-	{FlowTest, func(s *seq) { s.cold(); s.sweep(0, 110, 5, 2, flat(0.1)) }},
+	{PressureTest, func(s *seq) { s.cold(); s.sweep(120, 0, -5, func(p float64) float64 { return (120 - p) / 12 }) }},
+	{FlowTest, func(s *seq) { s.cold(); s.sweep(0, 110, 5, flat(0.1)) }},
 	{Backflush, func(s *seq) { s.backflush(6); s.idle(80); s.backflush(3) }},
 	{Descale, func(s *seq) { s.st.Setpoint = fp(0); s.idle(1); s.reset(); s.rhythm(4) }},
 	{Purge, func(s *seq) { s.cold(); s.idle(1); s.reset(); s.rhythm(4) }},

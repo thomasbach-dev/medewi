@@ -94,12 +94,12 @@ func (s *seq) backflush(n int) {
 	}
 }
 
-// sweep is one pulse through the phases from..to, hold seconds each.
-func (s *seq) sweep(from, to, by, hold float64, bar func(phase float64) float64) {
+// sweep is one pulse through the phases from..to, 2 s each.
+func (s *seq) sweep(from, to, by float64, bar func(phase float64) float64) {
 	s.st.Pump = true
 	for v := from; (by > 0 && v <= to) || (by < 0 && v >= to); v += by {
 		s.st.Phase, s.st.Pressure = fp(v), fp(bar(v))
-		for range int(hold * 4) {
+		for range 8 {
 			s.sample()
 		}
 	}
