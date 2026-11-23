@@ -258,7 +258,7 @@ func (d *Detector) run(f *found) Run {
 }
 
 // ownVolume is the volume p pumped itself: the counter's growth when it
-// went on, else the counter.
+// was not reset, else the counter.
 func ownVolume(p *pulse) *float64 {
 	if p.endML == nil {
 		return nil
@@ -267,7 +267,7 @@ func ownVolume(p *pulse) *float64 {
 	if p.openStart {
 		return nil
 	}
-	if p.cont != nil && *p.cont {
+	if p.grew {
 		if p.startML == nil {
 			return nil
 		}

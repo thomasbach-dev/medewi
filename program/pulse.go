@@ -33,6 +33,7 @@ type pulse struct {
 	steps       []step
 	shot        bool  // a Pressure SP was set
 	cont        *bool // the tick counter went on; nil: unknown
+	grew        bool  // the counter was not lower than before: for volumes only
 	// Counters at the pulse's start: equal ones mean nothing happened in
 	// between. resets counts tick-counter resets with the pump off.
 	brk, modes, setpoints, resets int
@@ -209,6 +210,7 @@ func (d *Detector) open(s Sample, start, gap bool) {
 	if !start {
 		p.before = d.prev.Pressure
 	}
+	p.grew = d.ticks != nil && s.Ticks != nil && *s.Ticks >= *d.ticks
 	if !gap && d.ticks != nil && *d.ticks >= minTicks && s.Ticks != nil {
 		c := *s.Ticks >= *d.ticks
 		p.cont = &c

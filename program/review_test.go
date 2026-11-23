@@ -213,3 +213,21 @@ func TestFlushWithReportGap(t *testing.T) {
 	s.idle(90)
 	wantKinds(t, "flush with a 25 s gap", s)
 }
+
+// Few ticks cannot prove that the counter went on, but the volume must not
+// count the running total again.
+func TestVolumeOfSmallPulses(t *testing.T) {
+	s := newSeq()
+	s.used()
+	s.idle(5)
+	s.reset()
+	s.warmup()
+	sum := 0.0
+	r := only(t, "warm-up", s)
+	for _, p := range r.Pulses {
+		sum += *p.VolumeML
+	}
+	if want := float64(8 * len(r.Pulses)); len(r.Pulses) < 3 || sum != want {
+		t.Errorf("%d pulses of 8 ml: %v ml, want %v", len(r.Pulses), sum, want)
+	}
+}
