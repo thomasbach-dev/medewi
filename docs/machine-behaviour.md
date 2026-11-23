@@ -91,6 +91,30 @@ capture that teaches something new, and mark hypotheses as such.
 - To confirm: a profiled shot should widen the band during phase control
   (marker `*`, `pressure_sp` set) and shrink it to noise with the pump off.
 
+## Telling programs apart
+
+`levalog programs` (package `program/`) finds the programs in a log; the
+rules and their limits are in
+[the design](superpowers/specs/2026-11-23-program-detection-design.md).
+What distinguishes them in the report stream:
+
+- `Phase` is live whenever leva! drives the pump. A flush runs at its
+  configured phase; backflush, descale and purge ran at 0° (full power)
+  and their menus have no pump power setting (manual pp. 194-199). A flush
+  can be set to full power, so 0° alone proves nothing.
+- The tick counter resets at each pump start outside programs (every flush
+  and shot of 2026-11-06..22 where a reset could be seen) and counts on
+  between the pulses of a descale or purge phase and of the warm-up.
+- In the second half of a pulse no flush exceeded 0.15 bar; each backflush
+  pulse exceeded 10.
+- A very short full-power "flush" about 2 s before a shot (two seen) is
+  probably an aborted shot: shots start at phase 0° before their pressure
+  setpoint shows.
+
+On the LCD the running program's row of the run menu shows its state
+(`PURGE Nml`, `WAIT`, …) instead of its name; the rows around it tell which
+program it is.
+
 ## Warm-up program (run menu)
 
 Observed 2026-11-05 from a cold start (boiler 34 °C):
@@ -102,6 +126,10 @@ Observed 2026-11-05 from a cold start (boiler 34 °C):
    every 15–30 s in the last two minutes, mostly 2–4 s and 10–20 ml; one
    21 s pulse reached 12.2 bar. 285 ml in total.
    (`levalog runs` on the same capture gives 12.75 bar for that pulse.)
+   Likely this pulse is a scheduled one running into the Vent step: it
+   went to full power as the boiler fell to the configured Vent reading.
+   The falling setpoint is the Ramp & Soak "Warm-Up" program, a setting of
+   its own (PID 1 › Ramp&Soak).
    The `Volume` field does **not** reset between the pulses: it counts on
    through the whole program (15, 31, 50 … 285 ml), unlike the reset at
    every pump start outside programs. The first shot after the program
@@ -120,8 +148,8 @@ basket in the portafilter, operator marks at start, at the key press and
 at the end. Fixture: `testdata/fixtures/backflush` (cut with `levalog
 extract`; the LCD frames show the phases and the progress bar). About
 4:40 min from selecting the program to the return to the menu. Mode stays `PID`, setpoint 94, `Pressure SP` `?????`
-throughout; only the LCD (third menu row, in place of `Backflush`) and
-the pump marker show the program.
+throughout; the LCD (third menu row, in place of `Backflush`) names the
+program, and `Phase` 0° with the pressure of the pulses shows it.
 
 1. Against the blind basket: 6 pump pulses (marker `*`), 5.5–5.8 s each,
    starting every 16 s. The LCD alternates `PUMP` and `SOAK 00m:NNs`
@@ -132,18 +160,20 @@ the pump marker show the program.
    blind basket leaks down only slowly, 9.6 → 7.1 bar. The press itself
    was not seen: the frame sampling (500 ms every 5 s) has a gap from the
    last `EMPTY` frame to 3 s later, when the pump started.
-3. Rinse without the blind basket: 3 pump pulses of 19.6–19.9 s, starting
+3. Rinse with the blind basket back in (operator; as the manual, p. 37,
+   asks): 3 pump pulses of 19.6–19.9 s, starting
    every 40 s; the LCD alternates `PUMP` and `WAIT`. Within each pulse the
    pressure saws between about 0.3 and 12–13 bar with a period of about
    3.3 s (6–7 cycles per pulse): about 1.7 s rising slowly from 0.3 to
    2 bar, then about 1.3 s at the OPV. Hypothesis: the program opens and
-   closes the grouphead valve while the pump runs. 100–112 ml per pulse.
+   closes the grouphead valve while the pump runs (against the blind
+   basket, which fits the high peaks). 100–112 ml per pulse.
 4. The LCD returns to the run menu, `Backflush` selected.
 
 - The `Volume` field resets at every pump pulse of this program, unlike
   the warm-up program, where it counts on through all pulses.
-- `levalog runs` lists each pulse as a flush of its own (9 runs): nothing
-  in the report stream marks the program (detection: issue #14).
+- `levalog runs` lists each pulse as a flush of its own (9 runs);
+  `levalog programs` finds the program (issue #14).
 
 ## Pressure test program (run menu)
 
@@ -274,7 +304,8 @@ Tray 250 ml, Purge 2000 ml.
 - Purge on its own (Run › Purge; raw log of 2026-11-21, cold mode, 3
   trays, then stopped) runs the same rhythm and LCD (`PURGE Nml` counting
   down, `PAUSE`, `EMPTY TRAY!`) but **keeps mode `CLD`**: setpoint and
-  PID fields stay masked. Only the pump marker and the LCD show it;
+  PID fields stay masked. `Phase` 0° with the tick counter going on and
+  the LCD show it;
   `levalog runs` lists each pulse as a flush. `Volume` resets at the
   first pulse and then counts on, as in the descale.
 
@@ -397,6 +428,8 @@ Tray 250 ml, Purge 2000 ml.
   | 0x0037 | u8 | 1 | shot counter? | guess: +1 = one shot |
   | 0x04F9 | u8 | 1 | Profiles: Use (slot) | likely: 1 -> 3, MCu slot 1 -> 3 |
 
+  Hypothesis: 0x002F leaves out the water of descale and purge, 0x0027
+  counts it (two backup intervals with such runs fit, a third does not).
   0x0087 changed (cd -> a0) and is unknown. Counter widths (u8 vs u16,
   u24 vs u32) are not settled by one pair. `levabak check` cross-checks
   the MCu values `PID 1/Kc`, `PID 1/Ti`, `PID 1/Td` and `PID 1/WU limit`

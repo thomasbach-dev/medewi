@@ -109,16 +109,18 @@ aggregate gets only key_last and a note, here and in events --every.`,
 		name: "programs",
 		text: `usage: levalog programs [--settings BACKUP] [--format F] [FILE|DIR ...]
 
-programs numbers the program runs that start in the window, from 1, over
-the whole input given: warm-up, autotune, pressure-test, flow-test,
-backflush, descale, purge. Detection uses the pump marker, phase, pressure,
-setpoint, mode and flow-meter ticks of the reports; the LCD frames, where
-the log has them, are a cross-check. It also reads the raw log just before
-and after the window, and a program is printed whole. It needs the XML.
+programs numbers the program runs that start in the window, from 1, over the
+whole input given (another -s/-u renumbers them): warm-up, autotune,
+pressure-test, flow-test, backflush, descale, purge. Detection uses the pump
+marker, phase, pressure, setpoint, mode and flow-meter ticks of the reports;
+the LCD frames, where the log has them, are a cross-check. It also reads the
+raw log just before and after the window, and a program is printed whole. It
+needs the XML.
 
 programs prints PROGRAM KIND START T DURATION OUTCOME STATUS EVIDENCE
 PULSES PUMP_S VOLUME_ML PEAK_BAR SETTINGS_MATCH NOTES XML SRC (START, T, XML
-and SRC as in runs). How far to trust a row:
+and SRC as in runs). Text START has a space; scripts want csv or jsonl. STATUS
+says how sure the KIND is, OUTCOME says how it ended; they are independent:
   STATUS   confirmed  the rules match; the LCD or the settings agree
            inferred   the rules match; nothing confirms it
            conflict   the LCD or the settings contradict the rules (NOTES)
@@ -130,12 +132,21 @@ and SRC as in runs). How far to trust a row:
                       a program that began before the input
            unknown    no evidence; most aborts look like ends
 EVIDENCE is report, lcd, settings or several. --settings takes a backup
-(MCu dump) that was current for the whole input: SETTINGS_MATCH is then yes
+(MCu dump) that was current for the whole input; levalog
+does not check the backup's date. SETTINGS_MATCH is then yes
 or no for warm-up, backflush and descale, empty for what cannot be compared.
 Settings never add or drop a program; they turn a purge at the temperature
 of the descale profile into a descale. VOLUME_ML is empty when a pulse's volume
-is unknown. jsonl adds pulses_detail (t from the program's start), figures
-(numbers for wear tracking, by kind) and rule_version, csv rule_version.
+is unknown. csv adds rule_version; jsonl adds it, pulses_detail (t in s from
+the program's start; stage is descaler or purge within a descale) and
+figures, by kind:
+  pressure-test  steps: [phase in degrees, bar] at the end of each step
+  flow-test      steps: [phase in degrees, ml/s]
+  autotune       before, after: kc, ti, td; periods_s: the relay cycles
+  backflush      hold_bar: median pressure of each pulse's second half
+                 (rinse pulses pulsate, so theirs lies below the peak);
+                 leak_bar: pressure at both ends of the longest pause
+  warm-up        schedule: [s after the ramp's start, duration in s, phase]
 A flush, a shot and the valve test are no programs; runs still lists each
 pulse of a program as a flush.`,
 		examples: []string{
@@ -149,7 +160,8 @@ pulse of a program as a flush.`,
 
 events --run N names a run as runs numbers it, over the same input.
 events --program N names a program as programs numbers it; run and run_t are
-then the program's number and the time since its first sample.
+then the program's number and the time since its first sample. Keep the same
+-s/-u: another window renumbers programs.
 events --match TEXT keeps only events whose text contains TEXT, ignoring case
 (note and notice text, banner and reply lines, a report's raw line, a frame's
 rows joined with |); it does not combine with --every. medewictl mark TEXT

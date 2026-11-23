@@ -91,7 +91,9 @@ Reported as `inferred`, not hidden: a hand-run series of blind-basket
 flushes at full power looks like a backflush; a descale profile with a PID
 temperature looks like a purge without the LCD; a purge in mode `PID`, the
 descale `Wait`, `Path` WAND and tray `-` have never been captured.
-Every rule was fitted to one or a few runs.
+Every rule was fitted to one or a few runs. The warm-up's ramp comes from
+the Ramp & Soak "Warm-Up" program, a setting of its own: with that off or
+without a falling ramp, only the LCD names a warm-up (status `lcd`).
 
 ## Evidence and status
 

@@ -11,8 +11,8 @@ machine simulator (`sim/`, `cmd/levasim`), conformance suite
 the always-on daemon `medewid` (`daemon/`, `watch/`, `brew/`, `store/`, `rawlog/`:
 exporter, brew DB, power control, release/reclaim of the machine, ops panel, raw traffic log), the client `cmd/medewictl`,
 the settings-backup reader `cmd/levabak` (`backup/`: check, show, diff),
-the log decoder `cmd/levalog` (`logview/`, `systime/`; its `extract`
-turns a raw-log window into a fixture)
+the log decoder `cmd/levalog` (`logview/`, `systime/`, `program/`; its `extract`
+turns a raw-log window into a fixture, its `programs` finds program runs)
 and the NixOS module `nix/module.nix`; recipe execution is still to come.
 Start with
 [docs/architecture.md](docs/architecture.md); decisions live in

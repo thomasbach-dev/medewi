@@ -259,6 +259,20 @@ func TestProgramsReconnect(t *testing.T) {
 	}
 }
 
+// The help documents what scripts and agents need (usability run).
+func TestProgramsHelp(t *testing.T) {
+	noEnv(t)
+	_, _, errs := runCmd(t, "programs", "--help")
+	for _, w := range []string{
+		"hold_bar", "leak_bar", "steps", "periods_s", "schedule", "stage", "START has a space", "another -s/-u renumbers",
+		"does not check the backup's date", "OUTCOME says how it ended",
+	} {
+		if !strings.Contains(errs, w) {
+			t.Errorf("programs --help lacks %q", w)
+		}
+	}
+}
+
 func TestProgramsSettingsFlag(t *testing.T) {
 	noEnv(t)
 	xml, c, dir := programSpec(t), purgeLog().capture(t), t.TempDir()

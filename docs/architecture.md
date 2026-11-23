@@ -115,6 +115,9 @@ a truncated kind naming the cause (`truncated-lost`, `truncated-released`,
   display sampling and marks.
 - `cmd/medewid` — the daemon binary (mTLS API, plaintext health listener).
 - `cmd/medewictl` — client for status, power, release/reclaim, marks and backups.
+- `program/` — finds machine program runs (warm-up, autotune, pressure and
+  flow test, backflush, descale, purge) in report samples and LCD frames;
+  pure, no I/O. `logview` feeds it for `levalog programs`.
 - `logview/` — offline decoding of raw logs and captures: opens files
   (also a cut or still-written gzip), selects raw logs for a time window,
   reassembles and classifies lines (reports via the vendor XML, display
