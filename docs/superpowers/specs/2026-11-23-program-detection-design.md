@@ -1,7 +1,7 @@
 # Program detection in levalog — design
 
 Issues #12–#15, #17, #18, #52 (and #42, #64, #65 as consumers). Status:
-awaiting approval.
+approved 2026-11-23.
 
 ## Intent
 
@@ -167,8 +167,9 @@ purge, disconnect mid-program, masked ticks). Committed fixtures:
 `backflush` gives one backflush and no other program; `descale-tail`,
 cut mid-program, gives one program of the descale family;
 `shot-genlever` and `steam-eco` give none.
-New fixtures cut with `levalog extract`, after the capture-session review:
-pressure test, flow test, autotune, purge and warm-up.
+No new fixtures from real runs: pressure test, flow test and autotune
+recordings carry this machine's readings. Those kinds, purge and warm-up
+are tested on synthetic sequences in CI and on the private logs locally.
 
 Local acceptance (private logs, not in CI): at least the counts of
 2026-11-06..22: 3 autotune, 1 pressure test, 1 flow test, 1 backflush,
