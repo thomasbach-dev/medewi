@@ -138,6 +138,7 @@ func loadCatalog(xmlPath string, stderr io.Writer) (*logview.Catalog, int) {
 type scanned struct {
 	paths     []string // the input, with the raw logs appended to finish runs
 	runs      []logview.Run
+	programs  []logview.Program
 	specs     map[*leva.RecordSpec]bool
 	specOrder []*leva.RecordSpec // the keys of specs, in first-seen order
 	problems  []string
@@ -151,9 +152,11 @@ type scanned struct {
 // scan decodes paths one file at a time and collects the report specs and,
 // when detect is set, the runs that start in [since, until). When extend is
 // set too (input from dir), it decodes the next raw log of dir while a run
-// that keep selects is open at the end, up to maxExtend files.
+// that keep selects is open at the end, up to maxExtend files. With a
+// ProgramFinder the programs are collected too, and an open program counts
+// instead of an open run.
 func scan(paths []string, stdin []byte, dir string, detect, extend bool, cat *logview.Catalog, showDumps bool,
-	since, until time.Time, keep func(logview.Run) bool,
+	since, until time.Time, keep func(logview.Run) bool, pf *logview.ProgramFinder,
 ) (scanned, error) {
 	sc := scanned{paths: slices.Clone(paths), specs: map[*leva.RecordSpec]bool{}}
 	finder := logview.NewRunFinder(brew.DefaultConfig())
@@ -161,6 +164,9 @@ func scan(paths []string, stdin []byte, dir string, detect, extend bool, cat *lo
 		Catalog: cat, ShowDumps: showDumps, Stdin: stdin,
 		OnSource: func(si logview.SourceInfo) error {
 			finder.Source(si)
+			if pf != nil {
+				pf.Source(si)
+			}
 			return nil
 		},
 		OnEntry: func(e *logview.Entry) error {
@@ -170,6 +176,9 @@ func scan(paths []string, stdin []byte, dir string, detect, extend bool, cat *lo
 			}
 			if detect {
 				finder.Entry(e)
+			}
+			if pf != nil {
+				pf.Entry(e)
 			}
 			if e.Kind == logview.KindReport && (!e.HasWall || inWindow(e.Wall, since, until)) {
 				sc.reports++
@@ -195,7 +204,12 @@ func scan(paths []string, stdin []byte, dir string, detect, extend bool, cat *lo
 	next := -1
 	for extra := 0; ; extra++ {
 		sc.runs = finder.Runs(since, until)
-		if !extend || len(sc.paths) == 0 || !slices.ContainsFunc(sc.runs, func(r logview.Run) bool { return r.OpenAtEnd && keep(r) }) {
+		open := slices.ContainsFunc(sc.runs, func(r logview.Run) bool { return r.OpenAtEnd && keep(r) })
+		if pf != nil {
+			sc.programs = pf.Programs(since, until)
+			open = slices.ContainsFunc(sc.programs, func(p logview.Program) bool { return p.OpenAtEnd })
+		}
+		if !extend || len(sc.paths) == 0 || !open {
 			return sc, nil
 		}
 		if all == nil {

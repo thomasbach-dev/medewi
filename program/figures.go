@@ -1,6 +1,7 @@
 package program
 
 import (
+	"math"
 	"slices"
 	"time"
 )
@@ -27,8 +28,14 @@ func (d *Detector) figures(f *found) map[string]any {
 			out["after"] = constants(*f.tune.after)
 		}
 		periods := []float64{}
-		for k := 1; k < len(f.tune.heatOn); k++ {
-			periods = append(periods, f.tune.heatOn[k].Sub(f.tune.heatOn[k-1]).Seconds())
+		// The first heating is a pulse of its own; the cycles follow. The
+		// last one ends with the program.
+		ons := f.tune.heatOn
+		if f.tune.after != nil {
+			ons = append(slices.Clone(ons), f.tune.after.At)
+		}
+		for k := 2; k < len(ons); k++ {
+			periods = append(periods, round3(ons[k].Sub(ons[k-1]).Seconds()))
 		}
 		out["periods_s"] = periods
 	case WarmUp:
@@ -36,7 +43,7 @@ func (d *Detector) figures(f *found) map[string]any {
 	case Backflush:
 		hold := []float64{}
 		for _, p := range f.pulses {
-			hold = append(hold, median(p.half2()))
+			hold = append(hold, round3(median(p.half2())))
 		}
 		out["hold_bar"] = hold
 		if k := longestGap(f.pulses); k > 0 {
@@ -88,6 +95,8 @@ func longestGap(ps []*pulse) int {
 	}
 	return best
 }
+
+func round3(v float64) float64 { return math.Round(v*1000) / 1000 }
 
 func constants(s Sample) map[string]float64 {
 	out := map[string]float64{}

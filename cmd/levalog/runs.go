@@ -64,7 +64,7 @@ func runsCmd(args []string, xmlPath string, stdin io.Reader, stdout, stderr io.W
 		return code
 	}
 	keep := func(r logview.Run) bool { return len(kinds) == 0 || slices.Contains(kinds, r.Kind) }
-	sc, err := scan(paths, in.stdinData, in.dir, true, in.fromDir(), cat, false, in.since.T, in.until.T, keep)
+	sc, err := scan(paths, in.stdinData, in.dir, true, in.fromDir(), cat, false, in.since.T, in.until.T, keep, nil)
 	if err != nil {
 		return fail(stderr, 1, "%v", err)
 	}
@@ -118,17 +118,22 @@ func noRuns(sc scanned, kinds []logview.RunKind) string {
 		}
 		return fmt.Sprintf("no runs of kind %s (of %d runs)", strings.Join(ks, ","), len(sc.runs))
 	case sc.decoded == 0 && len(sc.noXML) > 0:
-		names := make([]string, len(sc.noXML))
-		for i, n := range sc.noXML {
-			names[i] = n
-			if n == "" {
-				names[i] = "a session that names none"
-			}
-		}
-		return "no runs: no report decoded (no XML for " + strings.Join(names, ", ") + ")"
+		return "no runs: no report decoded (no XML for " + noXMLNames(sc) + ")"
 	default:
 		return fmt.Sprintf("no runs in %d reports (pump marker * in %d)", sc.decoded, sc.pumping)
 	}
+}
+
+// noXMLNames lists the XML names of the reports that could not be decoded.
+func noXMLNames(sc scanned) string {
+	names := make([]string, len(sc.noXML))
+	for i, n := range sc.noXML {
+		names[i] = n
+		if n == "" {
+			names[i] = "a session that names none"
+		}
+	}
+	return strings.Join(names, ", ")
 }
 
 // checkStats validates the keys of flag (--stats, --fields): report fields

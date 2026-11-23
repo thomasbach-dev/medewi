@@ -1,6 +1,7 @@
 package program
 
 import (
+	"fmt"
 	"slices"
 	"time"
 )
@@ -218,12 +219,18 @@ func (d *Detector) run(f *found) Run {
 		OpenStart: f.open, OpenEnd: f.openEnd,
 		Outcome: d.outcome(f), Figures: d.figures(f),
 	}
+	r.OpenAtEnd = f.openEnd && d.have && !slices.ContainsFunc(d.breaks, func(b time.Time) bool { return !b.Before(r.End) })
 	for k, p := range f.pulses {
 		pl := Pulse{Start: p.first.At, End: p.last.At, PeakBar: p.peak(), Phase: p.phase(), VolumeML: ownVolume(p)}
 		if f.stages != nil {
 			pl.Stage = f.stages[k]
 		}
 		r.Pulses = append(r.Pulses, pl)
+	}
+	if f.tune != nil {
+		for _, g := range f.tune.lost {
+			r.Notes = append(r.Notes, fmt.Sprintf("connection lost for %.0f s", g.Seconds()))
+		}
 	}
 	if d.judge(&r); f.lcd {
 		r.Status, r.Evidence = LCD, []string{"lcd"}

@@ -51,7 +51,7 @@ func summaryCmd(args []string, xmlPath string, stdin io.Reader, stdout, stderr i
 	if cat != nil {
 		var err error
 		keepAll := func(logview.Run) bool { return true }
-		if sc, err = scan(paths, in.stdinData, in.dir, true, in.fromDir(), cat, false, in.since.T, in.until.T, keepAll); err != nil {
+		if sc, err = scan(paths, in.stdinData, in.dir, true, in.fromDir(), cat, false, in.since.T, in.until.T, keepAll, nil); err != nil {
 			return fail(stderr, 1, "%v", err)
 		}
 	}

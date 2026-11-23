@@ -13,6 +13,7 @@ const helpHead = `usage: levalog [--xml F] SUBCOMMAND [OPTIONS] [FILE|DIR ...]
 
   fields   list the report fields: key, name, unit, factor, offset, source
   runs     list pump runs (shot, flush) and wand draws, numbered
+  programs list program runs (warm-up, backflush, descale, ...), numbered
   events   print events, with selection, projection and formats
   summary  what each source holds: sessions, firmware, XML, events, modes, READY, runs, masked fields, gaps
   extract  cut a window of the raw logs out as a capture (log.jsonl + manifest.json)
@@ -37,7 +38,7 @@ they need raw logs. --format is text (default), jsonl or csv.
 --xml is a file, used for every source, or a directory of NAME.xml files,
 one per XML name a session reports (MC? XML=NAME). It defaults to
 $MEDEWID_XML_PATH, then $MEDEWI_XML_PATH. Without it events shows reports
-raw; fields and runs need it. --dir defaults to $MEDEWID_RAW_DIR, then
+raw; fields, runs and programs need it. --dir defaults to $MEDEWID_RAW_DIR, then
 ` + defaultRawDir + `. Problems (a missing XML, unparseable values) go to stderr
 as "levalog: ..." lines after the output and do not change the exit code;
 so does the reason for an empty result (what each filter dropped, a --run
@@ -105,11 +106,46 @@ aggregate gets only key_last and a note, here and in events --every.`,
 		},
 	},
 	{
+		name: "programs",
+		text: `usage: levalog programs [--format F] [FILE|DIR ...]
+
+programs numbers the program runs that start in the window, from 1, over
+the whole input given: warm-up, autotune, pressure-test, flow-test,
+backflush, descale, purge. Detection uses the pump marker, phase, pressure,
+setpoint, mode and flow-meter ticks of the reports; the LCD frames, where
+the log has them, are a cross-check. It also reads the raw log just before
+and after the window, and a program is printed whole. It needs the XML.
+
+programs prints PROGRAM KIND START T DURATION OUTCOME STATUS EVIDENCE
+PULSES PUMP_S VOLUME_ML PEAK_BAR SETTINGS_MATCH NOTES XML SRC (START, T, XML
+and SRC as in runs). How far to trust a row:
+  STATUS   confirmed  the rules match and the LCD agrees
+           inferred   the rules match; nothing confirms it
+           conflict   the LCD contradicts the rules (see NOTES)
+           lcd        only the LCD names the program
+  OUTCOME  finished   the log shows the program's own end
+           aborted    the log shows it stopped early
+           cut        its start or end is not in the log: the input ends,
+                      the connection dropped, or
+                      a program that began before the input
+           unknown    no evidence; most aborts look like ends
+EVIDENCE is report, lcd or both. VOLUME_ML is empty when a pulse's volume
+is unknown. jsonl adds pulses_detail (t from the program's start), figures
+(numbers for wear tracking, by kind) and rule_version, csv rule_version.
+A flush, a shot and the valve test are no programs; runs still lists each
+pulse of a program as a flush.`,
+		examples: []string{
+			"  levalog programs -s '2w ago' --format jsonl | jq .figures      # numbers for wear tracking",
+		},
+	},
+	{
 		name: "events",
-		text: `usage: levalog events [--run N|--run-kind K] [--margin SPAN] [--event KINDS] [--match TEXT]
+		text: `usage: levalog events [--run N|--run-kind K|--program N] [--margin SPAN] [--event KINDS] [--match TEXT]
        [--fields KEYS] [--every SPAN [--agg LIST]] [--format F] [FILE|DIR ...]
 
 events --run N names a run as runs numbers it, over the same input.
+events --program N names a program as programs numbers it; run and run_t are
+then the program's number and the time since its first sample.
 events --match TEXT keeps only events whose text contains TEXT, ignoring case
 (note and notice text, banner and reply lines, a report's raw line, a frame's
 rows joined with |); it does not combine with --every. medewictl mark TEXT

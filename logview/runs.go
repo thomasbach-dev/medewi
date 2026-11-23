@@ -178,14 +178,18 @@ func (f *RunFinder) feed(e *Entry) {
 
 // startOf is the wall time of p, a point of the current source (see
 // Run.Start).
-func (f *RunFinder) startOf(p Point) time.Time {
+func (f *RunFinder) startOf(p Point) time.Time { return wallOf(f.src, p) }
+
+// wallOf is the wall time of p, a point of src (see Run.Start); zero when
+// unknown.
+func wallOf(src SourceInfo, p Point) time.Time {
 	switch {
 	case p.HasWall:
 		return p.Wall
-	case f.src.Recorded.IsZero() || p.Source != f.src.Index:
+	case src.Recorded.IsZero() || p.Source != src.Index:
 		return time.Time{}
 	}
-	return f.src.Recorded.Add(p.Offset - f.src.Last)
+	return src.Recorded.Add(p.Offset - src.Last)
 }
 
 // draw records a finished wand draw, placed on the first fed samples at its

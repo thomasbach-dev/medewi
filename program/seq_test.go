@@ -131,7 +131,9 @@ func (s *seq) autotune() {
 		s.st.Heat = fp(20)
 		s.idle(40)
 	}
-	s.st.Heat, s.st.Mode = fp(0), "PID"
+	s.st.Heat = fp(0)
+	s.idle(60)
+	s.st.Mode = "PID"
 	s.st.Kc, s.st.Ti, s.st.Td = fp(2), fp(30), fp(7.5)
 	s.idle(60)
 }

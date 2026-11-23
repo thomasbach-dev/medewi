@@ -50,9 +50,11 @@ type Run struct {
 	// OpenStart, OpenEnd: the run may have begun before, or gone on
 	// after, what the Detector saw of it.
 	OpenStart, OpenEnd bool
-	Outcome            Outcome
-	Status             Status
-	Evidence, Notes    []string
-	SettingsMatch      string // yes, no, or empty: not compared
-	Figures            map[string]any
+	// OpenAtEnd: OpenEnd, and more input could show the rest.
+	OpenAtEnd       bool
+	Outcome         Outcome
+	Status          Status
+	Evidence, Notes []string
+	SettingsMatch   string // yes, no, or empty: not compared
+	Figures         map[string]any
 }

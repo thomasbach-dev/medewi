@@ -142,7 +142,7 @@ func TestFigures(t *testing.T) {
 	s = newSeq()
 	s.autotune()
 	f := only(t, "autotune", s).Figures
-	if p, _ := f["periods_s"].([]float64); len(p) != 3 || p[0] != 100 {
+	if p, _ := f["periods_s"].([]float64); len(p) != 3 || p[0] != 100 || p[2] != 100 {
 		t.Errorf("periods %v, want 3 of 100 s", p)
 	}
 	b, _ := f["before"].(map[string]float64)
@@ -175,5 +175,30 @@ func TestFigures(t *testing.T) {
 	}
 	if l, _ := f["leak_bar"].([]float64); len(l) != 2 || l[0] <= l[1] || l[1] != 7 {
 		t.Errorf("leak_bar %v, want falling to 7", l)
+	}
+}
+
+// A connection lost for a moment does not end an autotune: the mode is ATN
+// on both sides.
+func TestAutotuneReconnect(t *testing.T) {
+	tune := func(gap float64) *seq {
+		s := newSeq()
+		s.st.Kc, s.st.Ti, s.st.Td = fp(1), fp(20), fp(5)
+		s.idle(5)
+		s.st.Mode, s.st.Kc, s.st.Ti, s.st.Td = "ATN", nil, nil, nil
+		s.idle(100)
+		s.d.Break()
+		s.skip(gap)
+		s.idle(100)
+		s.st.Mode, s.st.Kc, s.st.Ti, s.st.Td = "PID", fp(2), fp(30), fp(7.5)
+		s.idle(60)
+		return s
+	}
+	r := only(t, "14 s", tune(14))
+	if r.Outcome != Finished || r.End.Sub(r.Start).Seconds() < 213 || len(r.Notes) != 1 || r.Notes[0] != "connection lost for 14 s" {
+		t.Errorf("joined run: %+v", r)
+	}
+	if n := len(tune(120).d.Runs()); n != 2 {
+		t.Errorf("120 s apart: %d runs, want 2", n)
 	}
 }

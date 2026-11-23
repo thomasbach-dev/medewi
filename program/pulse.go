@@ -16,6 +16,10 @@ const (
 	// minRatioML is the smallest Volume a ml-per-tick ratio is learned
 	// from: Volume counts whole ml.
 	minRatioML = 200
+	// coast is how long the counter may grow after the pump stopped.
+	coast = 3 * time.Second
+	// tuneGap is the longest interruption of an autotune.
+	tuneGap = 60 * time.Second
 )
 
 // pulse is a stretch of pump marker '*'.
@@ -100,6 +104,7 @@ type modeSpan struct {
 	openStart, openEnd bool
 	before, after      *Sample // nearest samples outside with PID constants
 	heatOn             []time.Time
+	lost               []time.Duration // interruptions inside
 }
 
 // Detector collects samples and frames; Runs finds the programs in them.
@@ -169,6 +174,11 @@ func (d *Detector) Sample(s Sample) {
 	if s.Pump {
 		d.cur.add(s)
 		d.cur.endML = d.ml
+	} else if n := len(d.pulses); n > 0 && d.ml != nil {
+		p := d.pulses[n-1]
+		if p.brk == d.brk && p.endML != nil && *d.ml > *p.endML && s.At.Sub(p.last.At) <= coast {
+			p.endML = d.ml
+		}
 	}
 	d.ticks = s.Ticks
 	if s.Kc != nil {
@@ -240,7 +250,11 @@ func (d *Detector) autotune(s Sample, start bool) {
 		}
 		return
 	}
-	if d.tune == nil || d.prev.Mode != "ATN" {
+	if n := len(d.tunes); start && n > 0 && d.tunes[n-1].openEnd && s.At.Sub(d.tunes[n-1].last.At) <= tuneGap {
+		d.tune = d.tunes[n-1]
+		d.tune.openEnd = false
+		d.tune.lost = append(d.tune.lost, s.At.Sub(d.tune.last.At))
+	} else if d.tune == nil || d.prev.Mode != "ATN" {
 		d.tune = &modeSpan{mode: s.Mode, first: s, openStart: start, before: d.pid}
 		d.tunes = append(d.tunes, d.tune)
 	}

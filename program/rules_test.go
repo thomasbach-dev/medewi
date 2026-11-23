@@ -189,3 +189,25 @@ func TestRunsIsRepeatable(t *testing.T) {
 		t.Errorf("after more pulses: %+v", rs)
 	}
 }
+
+// The counter adds a little after the pump stops; that belongs to the pulse.
+func TestPulseVolumeCoast(t *testing.T) {
+	s := newSeq()
+	s.cold()
+	s.used()
+	s.idle(5)
+	s.reset()
+	for range 3 {
+		s.pump(10, 0, nil)
+		s.st.Ticks, s.st.Volume = fp(*s.st.Ticks+6), fp(*s.st.Volume+3)
+		s.idle(1)
+		s.idle(20)
+		s.st.Ticks, s.st.Volume = fp(*s.st.Ticks+20), fp(*s.st.Volume+10) // a wand draw
+		s.idle(1)
+	}
+	for k, p := range wantKinds(t, "purge", s, Purge)[0].Pulses {
+		if p.VolumeML == nil || *p.VolumeML != 43 {
+			t.Errorf("pulse %d: volume %v, want 43", k, *p.VolumeML)
+		}
+	}
+}
