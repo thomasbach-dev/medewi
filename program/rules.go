@@ -214,6 +214,9 @@ func (d *Detector) group(kind Kind, ps []*pulse, stages []string) *found {
 }
 
 func (d *Detector) run(f *found) Run {
+	if d.profileDescale(f) {
+		f.kind = Descale
+	}
 	r := Run{
 		Kind: f.kind, Start: f.first.At, End: f.last.At, First: f.first.Ref, Last: f.last.Ref,
 		OpenStart: f.open, OpenEnd: f.openEnd,
@@ -235,6 +238,7 @@ func (d *Detector) run(f *found) Run {
 	if d.judge(&r); f.lcd {
 		r.Status, r.Evidence = LCD, []string{"lcd"}
 	}
+	d.compare(f, &r)
 	return r
 }
 

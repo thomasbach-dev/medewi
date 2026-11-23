@@ -124,6 +124,7 @@ type Detector struct {
 	pid                           *Sample // last sample with PID constants
 	breaks                        []time.Time
 	frames                        []lcdFrame
+	settings                      Settings
 }
 
 // NewDetector returns an empty Detector.

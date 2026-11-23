@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thomasbach-dev/medewi/backup/backuptest"
 	"github.com/thomasbach-dev/medewi/fixture"
 )
 
@@ -255,5 +256,37 @@ func TestProgramsReconnect(t *testing.T) {
 	_, out, errs := runCmd(t, "--xml", programSpec(t), "programs", "--format", "csv", "--dir", dir)
 	if rows := strings.Split(strings.TrimSpace(out), "\n"); len(rows) != 3 {
 		t.Errorf("want two programs: %q\n%s", errs, out)
+	}
+}
+
+func TestProgramsSettingsFlag(t *testing.T) {
+	noEnv(t)
+	xml, c, dir := programSpec(t), purgeLog().capture(t), t.TempDir()
+	write := func(name string, lines []string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(strings.Join(lines, "\r\n")+"\r\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	valid := backuptest.ValidMCu()
+	good := write("2026-11-10T100000Z_3.2_good.mcu.txt", valid)
+	code, out, errs := runCmd(t, "--xml", xml, "programs", "--settings", good, "--format", "csv", c)
+	if code != 0 || strings.Count(out, "\n") != 2 || errs != "levalog: --settings: not found in the backup: Warm-Up, Backflush, Descale\n" {
+		t.Errorf("foreign wording: exit %d %q\n%s", code, errs, out)
+	}
+	bad := write("2026-11-11T100000Z_3.2_bad.mcu.txt", valid[:len(valid)-1])
+	if code, out, errs = runCmd(t, "--xml", xml, "programs", "--settings", bad, c); code != 2 || out != "" || !strings.Contains(errs, "--settings: damaged") {
+		t.Errorf("damaged: exit %d, %q\n%s", code, errs, out)
+	}
+	if code, _, errs = runCmd(t, "--xml", xml, "programs", "--settings", filepath.Join(dir, "none.mcu.txt"), c); code != 1 || !strings.Contains(errs, "--settings") {
+		t.Errorf("missing file: exit %d, %q", code, errs)
+	}
+	if code, _, errs = runCmd(t, "--xml", xml, "programs", "--settings", dir, c); code != 2 || !strings.Contains(errs, "one backup") {
+		t.Errorf("directory of two: exit %d, %q", code, errs)
+	}
+	mcm := write("2026-11-12T100000Z_3.2_only.mcm.hex", backuptest.ValidMCm())
+	if code, _, errs = runCmd(t, "--xml", xml, "programs", "--settings", mcm, c); code != 2 || !strings.Contains(errs, "MCu") {
+		t.Errorf("no MCu: exit %d, %q", code, errs)
 	}
 }

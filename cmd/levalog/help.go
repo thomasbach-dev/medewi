@@ -107,7 +107,7 @@ aggregate gets only key_last and a note, here and in events --every.`,
 	},
 	{
 		name: "programs",
-		text: `usage: levalog programs [--format F] [FILE|DIR ...]
+		text: `usage: levalog programs [--settings BACKUP] [--format F] [FILE|DIR ...]
 
 programs numbers the program runs that start in the window, from 1, over
 the whole input given: warm-up, autotune, pressure-test, flow-test,
@@ -119,9 +119,9 @@ and after the window, and a program is printed whole. It needs the XML.
 programs prints PROGRAM KIND START T DURATION OUTCOME STATUS EVIDENCE
 PULSES PUMP_S VOLUME_ML PEAK_BAR SETTINGS_MATCH NOTES XML SRC (START, T, XML
 and SRC as in runs). How far to trust a row:
-  STATUS   confirmed  the rules match and the LCD agrees
+  STATUS   confirmed  the rules match; the LCD or the settings agree
            inferred   the rules match; nothing confirms it
-           conflict   the LCD contradicts the rules (see NOTES)
+           conflict   the LCD or the settings contradict the rules (NOTES)
            lcd        only the LCD names the program
   OUTCOME  finished   the log shows the program's own end
            aborted    the log shows it stopped early
@@ -129,7 +129,11 @@ and SRC as in runs). How far to trust a row:
                       the connection dropped, or
                       a program that began before the input
            unknown    no evidence; most aborts look like ends
-EVIDENCE is report, lcd or both. VOLUME_ML is empty when a pulse's volume
+EVIDENCE is report, lcd, settings or several. --settings takes a backup
+(MCu dump) that was current for the whole input: SETTINGS_MATCH is then yes
+or no for warm-up, backflush and descale, empty for what cannot be compared.
+Settings never add or drop a program; they turn a purge at the temperature
+of the descale profile into a descale. VOLUME_ML is empty when a pulse's volume
 is unknown. jsonl adds pulses_detail (t from the program's start), figures
 (numbers for wear tracking, by kind) and rule_version, csv rule_version.
 A flush, a shot and the valve test are no programs; runs still lists each

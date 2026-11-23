@@ -45,6 +45,9 @@ type ProgramFinder struct {
 // NewProgramFinder returns an empty ProgramFinder.
 func NewProgramFinder() *ProgramFinder { return &ProgramFinder{det: program.NewDetector()} }
 
+// SetSettings gives the machine settings of the whole input.
+func (f *ProgramFinder) SetSettings(s program.Settings) { f.det.SetSettings(s) }
+
 // captureSpan separates the captures of an input on the finder's timeline.
 const captureSpan = 1000 * time.Hour
 
