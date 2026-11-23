@@ -148,6 +148,6 @@ a truncated kind naming the cause (`truncated-lost`, `truncated-released`,
 3. Daemon: exporter, shot capture → DB, HTTP API — **implemented** (phase 2);
    recipe execution is still to come.
 4. Web UI: guided mode and barista mode.
-5. Extensions: hot-water dosing, steam guidance, settings push via the
-   firmware's Virtual-LCD protocol, V60 program, optional
-   Beanconqueror/Visualizer clients.
+5. Extensions: hot-water dosing, steam guidance, settings push (write
+   paths: [decision 0007](decisions/0007-settings-write-mechanisms.md)),
+   V60 program, optional Beanconqueror/Visualizer clients.
