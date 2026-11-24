@@ -8,11 +8,12 @@ import (
 // subMarkers are a phrase of each subcommand's own help paragraph(s): in
 // its SUBCOMMAND --help and in levalog --help, in no other subcommand's.
 var subMarkers = map[string]string{
-	"fields":  "fields lists the report fields of the XML in effect",
-	"runs":    "runs --stats KEYS",
-	"events":  "events --every SPAN",
-	"summary": "a sessions: block",
-	"extract": "extract reads raw logs only",
+	"fields":   "fields lists the report fields of the XML in effect",
+	"runs":     "runs --stats KEYS",
+	"events":   "events --every SPAN",
+	"programs": "a program that began before the input",
+	"summary":  "a sessions: block",
+	"extract":  "extract reads raw logs only",
 }
 
 // sharedMarker is a phrase of the shared input rules, only in levalog --help.

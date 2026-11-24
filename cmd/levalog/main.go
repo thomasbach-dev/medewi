@@ -50,11 +50,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	cmds := map[string]func([]string, string, io.Reader, io.Writer, io.Writer) int{
-		"fields":  fields,
-		"runs":    runsCmd,
-		"events":  events,
-		"summary": summaryCmd,
-		"extract": extractCmd,
+		"fields":   fields,
+		"runs":     runsCmd,
+		"programs": programsCmd,
+		"events":   events,
+		"summary":  summaryCmd,
+		"extract":  extractCmd,
 	}
 	cmd, ok := cmds[rest[0]]
 	if !ok {

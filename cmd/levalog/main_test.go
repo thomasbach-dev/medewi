@@ -1545,8 +1545,8 @@ func TestUsageExamples(t *testing.T) {
 			}
 		}
 	}
-	if lines < 6 || lines > 8 {
-		t.Errorf("%d example command lines, want 6 to 8", lines)
+	if lines < 6 || lines > 9 {
+		t.Errorf("%d example command lines, want 6 to 9", lines)
 	}
 }
 

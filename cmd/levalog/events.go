@@ -52,13 +52,14 @@ func parseRuns(s string) (runSet, error) {
 
 // eventsOpts are the flags of events beyond the input.
 type eventsOpts struct {
-	run, runKind, event, fields string
-	match                       string
-	agg                         string
-	margin, every               time.Duration
-	skipStandby, hideMasked     bool
-	changes, rawValues          bool
-	showDumps                   bool
+	run, runKind, program   string
+	event, fields           string
+	match                   string
+	agg                     string
+	margin, every           time.Duration
+	skipStandby, hideMasked bool
+	changes, rawValues      bool
+	showDumps               bool
 }
 
 // events prints the selected events of the input.
@@ -69,7 +70,8 @@ func events(args []string, xmlPath string, stdin io.Reader, stdout, stderr io.Wr
 	in.register(fs)
 	fs.StringVar(&o.run, "run", "", "only the windows of these runs, by number: 12, 3,5 or 7-9")
 	fs.StringVar(&o.runKind, "run-kind", "", "only the windows of runs of these kinds: shot, flush, draw")
-	fs.Var(systime.NewSpan(&o.margin), "margin", "widen each run window, or the -s/-u window without --run, on both sides (systemd.time span, default 0; needs -s/-u, --run or --run-kind)")
+	fs.StringVar(&o.program, "program", "", "only the windows of these programs, by number as programs lists them: 1, 1,3 or 2-4 (not with --run or --run-kind)")
+	fs.Var(systime.NewSpan(&o.margin), "margin", "widen each run window, or the -s/-u window without --run, on both sides (systemd.time span, default 0; needs -s/-u, --run, --run-kind or --program)")
 	fs.StringVar(&o.event, "event", "", "only these event kinds, comma-separated: "+kindList())
 	fs.StringVar(&o.match, "match", "", "only events whose text contains this, ignoring case: note, notice, banner and reply text, "+
 		"a report's raw line, a frame's rows joined with | (not with --every)")
@@ -104,6 +106,14 @@ func events(args []string, xmlPath string, stdin io.Reader, stdout, stderr io.Wr
 	if err != nil {
 		return fail(stderr, 2, "--run: %v", err)
 	}
+	if o.program != "" {
+		if o.run != "" || o.runKind != "" {
+			return fail(stderr, 2, "--program does not combine with --run or --run-kind")
+		}
+		if runSel, err = parseRuns(o.program); err != nil {
+			return fail(stderr, 2, "--program: %v", err)
+		}
+	}
 	if sel.RunKinds, code = parseRunKinds(o.runKind, "--run-kind", stderr); code != 0 {
 		return code
 	}
@@ -125,6 +135,7 @@ func events(args []string, xmlPath string, stdin io.Reader, stdout, stderr io.Wr
 			{o.fields != "", "--fields"},
 			{o.run != "", "--run"},
 			{o.runKind != "", "--run-kind"},
+			{o.program != "", "--program"},
 			{o.changes, "--changes"},
 			{every, "--every"},
 			{in.f == logview.FormatCSV, "--format csv"},
@@ -142,7 +153,7 @@ func events(args []string, xmlPath string, stdin io.Reader, stdout, stderr io.Wr
 	}
 	byRun := len(runSel) > 0 || len(sel.RunKinds) > 0
 	if fs.Changed("margin") && !byRun && !in.window() {
-		return fail(stderr, 2, "--margin needs a window (-s/-u), --run or --run-kind")
+		return fail(stderr, 2, "--margin needs a window (-s/-u), --run, --run-kind or --program")
 	}
 	if o.hideMasked && in.f != logview.FormatText {
 		return fail(stderr, 2, "--hide-masked applies to --format text only")
@@ -183,18 +194,26 @@ func events(args []string, xmlPath string, stdin io.Reader, stdout, stderr io.Wr
 	// one pass streams.
 	detect := cat != nil && (byRun || in.f != logview.FormatText)
 	var sc scanned
+	var pf *logview.ProgramFinder
+	what := "run"
+	if o.program != "" {
+		pf, what = logview.NewProgramFinder(), "program"
+	}
 	if detect || len(keys) > 0 || every {
-		if sc, err = scan(paths, in.stdinData, in.dir, detect, byRun && in.fromDir(), cat, o.showDumps, in.since.T, in.until.T, keep); err != nil {
+		if sc, err = scan(paths, in.stdinData, in.dir, detect, byRun && in.fromDir(), cat, o.showDumps, in.since.T, in.until.T, keep, pf); err != nil {
 			return fail(stderr, 1, "%v", err)
 		}
 		paths = sc.paths
+		if pf != nil {
+			sc.useWindows()
+		}
 	}
 	for _, r := range sc.runs {
 		if runSel.has(r.N) {
 			sel.Runs = append(sel.Runs, r.N)
 		}
 	}
-	noRun := missingRuns(runSel, sel.Runs, sc.runs)
+	noRun := missingRuns(what, runSel, sel.Runs, sc.runs)
 	if bad := unknownKeys(keys, sc.specs, cat); len(bad) > 0 {
 		return fail(stderr, 2, "--fields: unknown keys %s (see levalog fields)", strings.Join(bad, ", "))
 	}
@@ -258,7 +277,7 @@ func events(args []string, xmlPath string, stdin io.Reader, stdout, stderr io.Wr
 
 // missingRuns says, for each --run item that names no run of the input,
 // that there is no such run, with the runs there are.
-func missingRuns(runSel runSet, selected []int, runs []logview.Run) []string {
+func missingRuns(what string, runSel runSet, selected []int, runs []logview.Run) []string {
 	var out []string
 	for _, rr := range runSel {
 		if slices.ContainsFunc(selected, func(n int) bool { return rr.lo <= n && n <= rr.hi }) {
@@ -268,14 +287,14 @@ func missingRuns(runSel runSet, selected []int, runs []logview.Run) []string {
 		if rr.hi != rr.lo {
 			name += "-" + strconv.Itoa(rr.hi)
 		}
-		have := "no runs"
+		have := "no " + what + "s"
 		switch {
 		case len(runs) == 1:
-			have = "run " + strconv.Itoa(runs[0].N)
+			have = what + " " + strconv.Itoa(runs[0].N)
 		case len(runs) > 1:
-			have = fmt.Sprintf("runs %d-%d", runs[0].N, runs[len(runs)-1].N)
+			have = fmt.Sprintf("%ss %d-%d", what, runs[0].N, runs[len(runs)-1].N)
 		}
-		out = append(out, fmt.Sprintf("--run %s: no such run (%s)", name, have))
+		out = append(out, fmt.Sprintf("--%s %s: no such %s (%s)", what, name, what, have))
 	}
 	return out
 }

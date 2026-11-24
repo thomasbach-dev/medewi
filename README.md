@@ -144,6 +144,10 @@ levalog events -s yesterday --run 2 --margin 5s --format csv \
   --fields run_t,pump,pressure,pressure_sp,temperature_pid1,heat_pid,volume
 ```
 
+`levalog programs` lists the machine program runs (warm-up, autotune,
+pressure and flow test, backflush, descale, purge) with how sure each is
+(`STATUS`) and how it ended (`OUTCOME`); `--settings BACKUP` checks them
+against a settings backup, `events --program N` prints one.
 `levalog extract` cuts a window of the raw logs (or `--run N` with
 `--margin`) out as a capture directory, the shape levacap writes, to
 become a fixture; `--out -` prints its `log.jsonl` lines instead:

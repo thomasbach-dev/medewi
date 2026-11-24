@@ -116,7 +116,7 @@ func extractCmd(args []string, xmlPath string, stdin io.Reader, stdout, stderr i
 			return code
 		}
 		keep := func(r logview.Run) bool { return r.N == o.run }
-		sc, err := scan(paths, nil, in.dir, true, in.fromDir(), cat, false, in.since.T, in.until.T, keep)
+		sc, err := scan(paths, nil, in.dir, true, in.fromDir(), cat, false, in.since.T, in.until.T, keep, nil)
 		if err != nil {
 			return fail(stderr, 1, "%v", err)
 		}
@@ -124,7 +124,7 @@ func extractCmd(args []string, xmlPath string, stdin io.Reader, stdout, stderr i
 		warn(stderr, sc.warns)
 		i := slices.IndexFunc(sc.runs, keep)
 		if i < 0 {
-			warn(stderr, missingRuns(runSet{{o.run, o.run}}, nil, sc.runs))
+			warn(stderr, missingRuns("run", runSet{{o.run, o.run}}, nil, sc.runs))
 			return 1
 		}
 		r := sc.runs[i]
