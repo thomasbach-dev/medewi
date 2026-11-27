@@ -13,3 +13,4 @@ new record that supersedes it, not by editing history.
 | [0005](0005-thin-clients.md) | Thin clients; phone deployment modes deferred |
 | [0006](0006-raw-log-access-via-ssh.md) | Raw-log access stays with ssh, not the daemon API |
 | [0007](0007-settings-write-mechanisms.md) | Write paths to explore: serial menu and EEPROM restore |
+| [0008](0008-manual-restore-probe.md) | A person may restore an unedited backup by the vendor procedure |

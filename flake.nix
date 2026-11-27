@@ -206,6 +206,11 @@
             (devWrapper "levalog")
             (devWrapper "levabak")
             gate
+            # Terminal tools for docs/runbooks/eeprom-restore.md: the
+            # connection with its wire log, the keyboard, the XMODEM sender.
+            socat
+            picocom
+            lrzsz
           ];
           shellHook = ''
             export MEDEWI_REPO=$PWD

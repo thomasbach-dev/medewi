@@ -19,6 +19,8 @@ Below, `levacap ...` means `go run ./cmd/levacap ...`.
 2. **Never touch port 2323.** It is the bootloader; the first byte sent there
    resets the controller into flashing mode. `levacap` and the library refuse
    it in code; do not work around that, and do not probe it with `nc` either.
+   (The one exception has its own runbook and is no part of a capture:
+   [eeprom-restore.md](eeprom-restore.md).)
 3. **Real `MCu` and `MCm` dumps are settings backups.** The license key is
    embedded (in `MCm` as hex bytes split across records; Intel-HEX redaction
    is infeasible because it breaks record checksums). Store them in the

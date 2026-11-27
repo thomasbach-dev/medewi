@@ -20,6 +20,8 @@ tooling (`cmd/levacap`), the always-on daemon `medewid` with its client
   conformance runs, firmware-flash gate; release the machine from medewid
   first with `medewictl release`)
 - [Troubleshooting a lost connection](docs/runbooks/troubleshoot-connection.md)
+- [Restoring an unedited backup by hand](docs/runbooks/eeprom-restore.md)
+  (the one allowed contact with the bootloader port; decision 0008)
 - [CLI conventions](docs/cli-conventions.md) (GNU-style `--long` options,
   `--since`/`--until`, `systemd.time(7)` times, exit codes)
 

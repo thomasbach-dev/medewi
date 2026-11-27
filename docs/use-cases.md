@@ -158,5 +158,8 @@ the machine. How they get there:
 - Live in-shot control stays on the machine (rotary encoder = pressure,
   click = stop brew). The software never touches a running shot.
 - The default path never forces data entry (anti-goal: mandatory science).
-- Nothing may ever connect to the leva! bootloader port (2323): the first
-  byte sent to it resets the controller.
+- No medewi software may ever connect to the leva! bootloader port
+  (2323): the first byte sent to it resets the controller. The one
+  exception is a person restoring an unedited backup by
+  [runbooks/eeprom-restore.md](runbooks/eeprom-restore.md)
+  ([decision 0008](decisions/0008-manual-restore-probe.md)).

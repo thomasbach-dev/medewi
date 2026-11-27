@@ -24,7 +24,7 @@ operator procedures in [docs/runbooks/](docs/runbooks/),
 ## Commands
 
 ```sh
-nix develop                       # toolchain (go, gopls, golangci-lint, gofumpt)
+nix develop                       # toolchain (go, gopls, golangci-lint, gofumpt; socat, picocom, sx for the restore runbook)
 nix develop --command go test -race ./leva/ -run TestName -v   # one test
 go run ./cmd/levasim --fixtures testdata/fixtures/shot-genlever # replay a real shot
 levalog summary captures/   # in nix develop: levalog runs the working tree's code
@@ -66,7 +66,10 @@ local, gitignored `.envrc` — see the README's Configuration section.
 
 - **Never send a single byte to port 2323.** It is the machine's bootloader
   port; the first byte resets the controller. `leva.Dial` refuses it; the
-  sim ships a tripwire; keep both.
+  sim ships a tripwire; keep both. The one exception is for a person, not
+  for code or agents: the barista restores an unedited backup by
+  [docs/runbooks/eeprom-restore.md](docs/runbooks/eeprom-restore.md)
+  (decision 0008). Never connect there and never type into that session.
 - **Real-machine contact only when the user explicitly asks.** Machine
   tests are double-gated (`MEDEWI_MACHINE_ADDR` set AND
   `MEDEWI_MACHINE_CONFIRM=1`). At most one process talks to the machine;
