@@ -141,7 +141,11 @@ is the long-term view of one setting.
 With --eeprom it lists the known EEPROM entries of each backup's MCm
 instead: src, note, offset, type (u8, u16, u24), raw (the integer), value
 (raw times the entry's scale), name, confidence (confirmed, likely,
-guess). Entries that lie past the end of the image are skipped. There
+guess). Entries that lie past the end of the image are skipped. The
+counters and the current setpoints sit in a state block that the
+firmware moves: its entries are read where the block is in that image
+(so their offsets differ between backups) and are left out when the
+image holds no such block. There
 --path selects by the entry's MCu path (entries without one are dropped).`,
 		examples: []string{
 			"  levabak show x.mcu.txt                                  # the settings of one backup",
@@ -166,7 +170,11 @@ key starts with PREFIX ("PID 1/" for one menu), a section row when
 either path starts with the other, and eeprom rows of entries whose MCu
 path starts with it. Section eeprom: the changed bytes, key is the
 offset; known entries first, with the layout's name in note and the
-decoded values, then the unknown changed bytes as runs of hex. A setting
+decoded values, then the unknown changed bytes as runs of hex. The state
+block (counters, current setpoints) is compared by meaning: if it sits at
+different places in A and B, the first eeprom row says so (note "state
+block moved", a and b its offsets), and the block's rows have B's offset
+as key and "at 0x.... in A" in note. A setting
 in a damaged region of a damaged backup (see check) is marked damaged in
 note instead of being reported as added or removed; with any damage a
 path on one side only is "damaged; only in A" or "damaged; only in B".
@@ -189,7 +197,9 @@ factor from raw to value), name, confidence and evidence (why we believe
 it). Without BACKUP it lists the layout for --firmware, default 3.2. With
 BACKUPs it lists the layout of each distinct firmware among them. A
 firmware without a layout is an error (exit 1). These entries are what
-show --eeprom reads and diff names.`,
+show --eeprom reads and diff names. The entries of the state block come
+first; the block moves, so their offset counts from its start
+("state+0x06").`,
 		examples: []string{
 			"  levabak layout                                          # the entries for firmware 3.2",
 			"  levabak --firmware 3.2 layout --format csv > layout.csv",

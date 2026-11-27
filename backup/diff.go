@@ -17,7 +17,11 @@ type Change struct{ Section, Key, A, B, Note string }
 // each in file order; depth-0 leaves such as Cancel are not sections) in place of that section's path rows; then
 // changed settings (in B's file order, settings only in A last), then
 // changed EEPROM bytes. Known entries come
-// first by offset, then unknown changed bytes as contiguous runs. A half
+// first by offset, then unknown changed bytes as contiguous runs. The
+// layout's state block is compared by meaning: when it sits at different
+// places in A and B, one row says so (Key and B: its place in B, A: its
+// place in A) and comes first; the block's rows carry B's offsets and
+// name A's in the note. A half
 // missing on either side yields no rows for that half. Without a layout
 // (haveLayout false) every changed byte is unknown.
 func Diff(a, b *Backup, l Layout, haveLayout bool) []Change {
@@ -145,7 +149,32 @@ func offsetKey(off int) string { return fmt.Sprintf("0x%04X", off) }
 func diffEEPROM(a, b []byte, l Layout) []Change {
 	var out []Change
 	covered := map[int]bool{}
-	entries := append([]Entry(nil), l.Entries...)
+	entries := l.Entries
+	// inA names the place in A of a byte of the moved state block.
+	inA := func(int) string { return "" }
+	baseA, okA := l.State.Find(a)
+	baseB, okB := l.State.Find(b)
+	inBlock := func(int) bool { return false }
+	if okA && okB {
+		entries = sorted(l.Entries, l.State.at(baseB))
+	}
+	if okA && okB && baseA != baseB {
+		// Compare the block by meaning: put A's block where B's is.
+		size := l.State.Size
+		moved := append([]byte(nil), a...)
+		clear(moved[baseA : baseA+size])
+		copy(moved[baseB:], a[baseA:baseA+size])
+		a = moved
+		inBlock = func(off int) bool { return off >= baseB && off < baseB+size }
+		inA = func(off int) string {
+			if !inBlock(off) {
+				return ""
+			}
+			return "; at " + offsetKey(off+baseA-baseB) + " in A"
+		}
+		out = append(out, Change{"eeprom", offsetKey(baseB), offsetKey(baseA), offsetKey(baseB), "state block moved"})
+	}
+	entries = append([]Entry(nil), entries...)
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Offset < entries[j].Offset })
 	for _, e := range entries {
 		ra, va, oka := e.Decode(a)
@@ -161,7 +190,7 @@ func diffEEPROM(a, b []byte, l Layout) []Change {
 		}
 		c := Change{
 			Section: "eeprom", Key: offsetKey(e.Offset),
-			Note: fmt.Sprintf("%s (%s)", e.Name, e.Confidence),
+			Note: fmt.Sprintf("%s (%s)", e.Name, e.Confidence) + inA(e.Offset),
 		}
 		if oka {
 			c.A = e.Format(va)
@@ -192,10 +221,13 @@ func diffEEPROM(a, b []byte, l Layout) []Change {
 			continue
 		}
 		start := i
-		for i < n && changed(i) && (i < both) == (start < both) {
+		for i < n && changed(i) && (i < both) == (start < both) && inBlock(i) == inBlock(start) {
 			i++
 		}
 		c := Change{Section: "eeprom", Key: offsetKey(start)}
+		if inBlock(start) {
+			c.Note = "in the state block" + inA(start)
+		}
 		switch {
 		case start >= both && len(a) > len(b):
 			c.A, c.Note = hex.EncodeToString(a[start:i]), "only in A"

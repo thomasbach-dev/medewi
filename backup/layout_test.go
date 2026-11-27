@@ -11,11 +11,6 @@ func TestLayout32(t *testing.T) {
 		t.Fatal("no 3.2 layout")
 	}
 	want := []Entry{
-		{Offset: 0x0022, Type: "u8", Scale: 1, Confidence: "guess"},
-		{Offset: 0x0027, Type: "u24", Scale: 1, Confidence: "likely"},
-		{Offset: 0x002F, Type: "u24", Scale: 1, Confidence: "likely"},
-		{Offset: 0x0033, Type: "u16", Scale: 1, Confidence: "likely"},
-		{Offset: 0x0037, Type: "u8", Scale: 1, Confidence: "guess"},
 		{Offset: 0x0138, Type: "u16", Scale: 0.1, MCuPath: "PID 1/SP User 1", Compare: true, Confidence: "confirmed"},
 		{Offset: 0x0173, Type: "u16", Scale: 0.1, MCuPath: "PID 1/Kc", Compare: true, Confidence: "confirmed"},
 		{Offset: 0x0175, Type: "u16", Scale: 0.1, MCuPath: "PID 1/Ti", Compare: true, Confidence: "confirmed"},
@@ -70,9 +65,10 @@ func TestLayout32(t *testing.T) {
 			t.Errorf("entry at %#x = %+v, want %+v", w.Offset, e, w)
 		}
 	}
-	// 11 fixed entries, 4 profile slots of 41 entries, 11 doses of 4,
-	// 6 more in the PID 1 block, 2 eco timers.
-	if got, want := len(l.Entries), 11+4*41+11*4+6+2; got != want {
+	// 6 fixed entries, 4 profile slots of 41 entries, 11 doses of 4,
+	// 6 more in the PID 1 block, 2 eco timers. The counters are in the
+	// state block (TestLayout32State).
+	if got, want := len(l.Entries), 6+4*41+11*4+6+2; got != want {
 		t.Errorf("got %d entries, want %d", got, want)
 	}
 	if _, ok := LayoutFor("unknown"); ok {

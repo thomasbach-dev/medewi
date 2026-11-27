@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"strconv"
 
@@ -45,11 +46,19 @@ func layoutCmd(args []string, firmware string, stdout, stderr io.Writer) int {
 			}
 			return fail(stderr, 1, "no layout for firmware %s", fw)
 		}
-		for _, e := range l.Entries {
+		row := func(offset string, e backup.Entry) {
 			t.rows = append(t.rows, []string{
-				l.Firmware, hex4(e.Offset), e.Type,
+				l.Firmware, offset, e.Type,
 				strconv.FormatFloat(e.Scale, 'f', -1, 64), e.Name, e.Confidence, e.Evidence,
 			})
+		}
+		// The state block has no fixed place: its entries come first,
+		// with the offset inside the block.
+		for _, e := range l.State.Entries {
+			row(fmt.Sprintf("state+0x%02X", e.Offset), e)
+		}
+		for _, e := range l.Entries {
+			row(hex4(e.Offset), e)
 		}
 	}
 	if err := t.write(stdout, *format); err != nil {

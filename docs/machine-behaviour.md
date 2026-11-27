@@ -421,15 +421,18 @@ Tray 250 ml, Purge 2000 ml.
   | 0x0175 | u16 | 0.1 | PID 1 Ti (s) | confirmed: 67.2 -> 72.3 |
   | 0x0177 | u16 | 0.1 | PID 1 Td (s) | confirmed: 16.8 -> 18.1 |
   | 0x0179 | u16 | 0.1 | PID 1 windup limit (%) | likely: 200 = MCu 20.0 %, unchanged |
-  | 0x0027 | u24 | 1 | flow-meter ticks, lifetime? | likely: +1006 = sum of `field_31` over runs 5-9 |
-  | 0x002F | u24 | 1 | flow-meter ticks, copy or trip | likely: same values as 0x0027 |
-  | 0x0033 | u16 | 1 | flow-meter ticks, resettable? | likely: +1006 |
-  | 0x0022 | u8 | 1 | run counter? | guess: +5 = runs 5-9 |
-  | 0x0037 | u8 | 1 | shot counter? | guess: +1 = one shot |
+  | state+0x06 | u24 | 1 | flow-meter ticks, lifetime? | likely: +1006 = sum of `field_31` over runs 5-9 |
+  | state+0x0E | u24 | 1 | flow-meter ticks, copy or trip | likely: same values as the lifetime ticks |
+  | state+0x12 | u16 | 1 | flow-meter ticks, resettable? | likely: +1006 |
+  | state+0x01 | u8 | 1 | run counter? | guess: +5 = runs 5-9 |
+  | state+0x16 | u8 | 1 | shot counter? | guess: +1 = one shot |
+  | state+0x02 | u16 | 0.1 | PID 1 setpoint (deg) | likely: equals MCu in all 16 backup pairs |
+  | state+0x04 | u16 | 0.1 | PID 2 setpoint (deg)? | likely: equals MCu in all 16 backup pairs |
   | 0x04F9 | u8 | 1 | Profiles: Use (slot) | likely: 1 -> 3, MCu slot 1 -> 3 |
 
-  Hypothesis: 0x002F leaves out the water of descale and purge, 0x0027
-  counts it (two backup intervals with such runs fit, a third does not).
+  `state+` offsets count from the start of the state block (below).
+  Hypothesis: the copy at state+0x0E leaves out the water of descale and
+  purge, the lifetime counter at state+0x06 counts it (two backup intervals with such runs fit, a third does not).
   Counter widths (u8 vs u16, u24 vs u32) are not settled by one pair.
   `Profiles/Use` is named in the layout but not compared (the MCu shows
   the profile name).
@@ -468,15 +471,16 @@ Tray 250 ml, Purge 2000 ml.
     backup pairs its change equals the XOR of the changed settings
     bytes. Covered for certain: 0x0128-0x08AC. Not covered: the state
     block below it and the test tables from 0x0F54.
-  - **State block:** the counters above sit in a 30-byte block that
-    moves. It was at 0x0021 until 2026-11-21 and at 0x003F on
-    2026-11-27; the old place is zeroed. Its second byte counts up with
-    every save and had wrapped in between, so the block seems to move by
-    its own length every 256 saves (wear levelling). Its bytes 2-3 equal
-    the PID 1 setpoint in 0.1 deg: the setpoint is saved here, outside
-    the checksum. The offsets 0x0022-0x0037 in the table are therefore
-    only right for backups up to 2026-11-21; `levabak` does not follow
-    the block yet.
+  - **State block:** the counters and the current setpoints sit in a
+    30-byte block that moves. It was at 0x0021 until 2026-11-21 and at
+    0x003F on 2026-11-27; the old place is zeroed. Its second byte (the
+    run counter above) had wrapped in between, so the block seems to
+    move by its own length every 256 counts (wear levelling). The
+    setpoint is saved here, outside the checksum. `levabak` finds the
+    block per image: the one run of non-zero bytes in 0x0003-0x0082
+    (`backup.Block.Find`), and `levabak diff` compares it by meaning
+    across a move. Where the block goes after 0x005D, and what its
+    first byte (0x06 so far) means, is not known.
 
   `levabak check` cross-checks every entry that has a number in the MCu
   against the EEPROM. All backups of 2026-11-16 to 2026-11-27 pass.

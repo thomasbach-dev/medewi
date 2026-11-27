@@ -7,11 +7,6 @@ import (
 
 var layout32 = Layout{Firmware: "3.2", Entries: sorted(
 	[]Entry{
-		{0x0022, "u8", 1, 0, "run counter?", "", false, "guess", "+5 = runs 5-9"},
-		{0x0027, "u24", 1, 0, "flow-meter ticks, lifetime?", "", false, "likely", "+1006 = sum of field_31 over runs 5-9"},
-		{0x002F, "u24", 1, 0, "flow-meter ticks, copy or trip", "", false, "likely", "same values as 0x0027"},
-		{0x0033, "u16", 1, 0, "flow-meter ticks, resettable?", "", false, "likely", "+1006"},
-		{0x0037, "u8", 1, 0, "shot counter?", "", false, "guess", "+1 = one shot"},
 		{0x0132, "u16", 0.1, 0, "PID 1 steam beep setpoint (°)", "PID 1/Steam beep/Setpoint", true, "likely", "equals MCu, unchanged"},
 		{0x0134, "u16", 0.1, 0, "PID 1 eco setpoint (°)", "PID 1/Eco", true, "likely", "equals MCu, unchanged"},
 		{0x0136, "u16", 0.1, 0, "PID 1 reset setpoint (°)", "PID 1/Reset", true, "likely", "equals MCu, unchanged"},
@@ -29,7 +24,22 @@ var layout32 = Layout{Firmware: "3.2", Entries: sorted(
 	},
 	profileEntries32(),
 	doseEntries32(),
-)}
+), State: state32}
+
+// state32 is the block of counters and current setpoints. It was seen at
+// 0x0021 (until 2026-11-21) and at 0x003F (2026-11-27), after its second
+// byte had wrapped: it seems to move by its own length every 256 saves.
+// The region runs from the image's three header bytes to the bytes before
+// the checksum; where the block goes after 0x005D is not known.
+var state32 = Block{From: 0x0003, To: 0x0083, Size: 0x1E, Entries: []Entry{
+	{0x01, "u8", 1, 0, "run counter?", "", false, "guess", "+5 = runs 5-9; the block moved after it wrapped"},
+	{0x02, "u16", 0.1, 0, "PID 1 setpoint (°)", "PID 1/Setpoint", true, "likely", "equals MCu in every backup, unchanged"},
+	{0x04, "u16", 0.1, 0, "PID 2 setpoint (°)?", "PID 2/Setpoint", true, "likely", "equals MCu in every backup, unchanged"},
+	{0x06, "u24", 1, 0, "flow-meter ticks, lifetime?", "", false, "likely", "+1006 = sum of field_31 over runs 5-9"},
+	{0x0E, "u24", 1, 0, "flow-meter ticks, copy or trip", "", false, "likely", "same values as the lifetime ticks"},
+	{0x12, "u16", 1, 0, "flow-meter ticks, resettable?", "", false, "likely", "+1006"},
+	{0x16, "u8", 1, 0, "shot counter?", "", false, "guess", "+1 = one shot"},
+}}
 
 // Pressure profiles: four slots of profileSize32 bytes. A slot starts
 // with its 9-character name (right-aligned, space-padded; a cleared name
