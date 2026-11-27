@@ -114,7 +114,7 @@ func eepromRows(b *backup.Backup, fw, prefix string, ls *layouts, stderr io.Writ
 		return nil
 	}
 	var rows [][]string
-	for _, e := range l.Entries {
+	for _, e := range l.At(b.MCm.Image) {
 		if !strings.HasPrefix(e.MCuPath, prefix) {
 			continue
 		}

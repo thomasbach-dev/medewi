@@ -20,10 +20,65 @@ type Entry struct {
 	Evidence   string // one line
 }
 
-// Layout is the set of known entries for one firmware version.
+// Layout is the set of known entries for one firmware version. Entries
+// sit at fixed offsets; the entries of State sit in a block the firmware
+// moves, so use At to get the entries of one image.
 type Layout struct {
 	Firmware string
 	Entries  []Entry
+	State    Block
+}
+
+// Block is a group of entries the firmware keeps together and moves
+// within the region [From, To) of the image; the rest of the region is
+// zero. The Offset of its entries counts from the block's start. The
+// zero Block means the layout has none.
+type Block struct {
+	From, To int
+	Size     int
+	Entries  []Entry
+}
+
+// Find returns the offset of the block in img: the first non-zero byte
+// of the region. ok is false when the region is empty, lies past the
+// image, or holds non-zero bytes outside one block.
+func (b Block) Find(img []byte) (base int, ok bool) {
+	if b.Size == 0 || b.To > len(img) {
+		return 0, false
+	}
+	base = b.From
+	for base < b.To && img[base] == 0 {
+		base++
+	}
+	if base+b.Size > b.To {
+		return 0, false
+	}
+	for _, v := range img[base+b.Size : b.To] {
+		if v != 0 {
+			return 0, false
+		}
+	}
+	return base, true
+}
+
+// at returns the block's entries with absolute offsets for a block at base.
+func (b Block) at(base int) []Entry {
+	out := make([]Entry, len(b.Entries))
+	for i, e := range b.Entries {
+		e.Offset += base
+		out[i] = e
+	}
+	return out
+}
+
+// At returns the entries of img ordered by offset: the fixed ones and,
+// when img holds the state block, the block's entries where it sits.
+func (l Layout) At(img []byte) []Entry {
+	base, ok := l.State.Find(img)
+	if !ok {
+		return l.Entries
+	}
+	return sorted(l.Entries, l.State.at(base))
 }
 
 // LayoutFor returns the known layout for a firmware version.
@@ -82,7 +137,7 @@ func leadingNumber(s string) (float64, bool) {
 // either side, or with a non-numeric MCu value, are skipped.
 func CrossCheck(u *MCu, m *MCm, l Layout) []Problem {
 	var probs []Problem
-	for _, e := range l.Entries {
+	for _, e := range l.At(m.Image) {
 		if e.MCuPath == "" || !e.Compare {
 			continue
 		}

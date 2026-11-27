@@ -55,9 +55,14 @@ func diffCmd(args []string, firmware string, stdout, stderr io.Writer) int {
 	} else {
 		l, haveLayout = backup.LayoutFor(fw)
 	}
+	// EEPROM rows carry B's offsets, also for a state block that moved.
+	var entries []backup.Entry
+	if haveLayout && b.MCm != nil {
+		entries = l.At(b.MCm.Image)
+	}
 	t := table{cols: []string{"section", "key", "a", "b", "note"}}
 	for _, c := range backup.Diff(a, b, l, haveLayout) {
-		if !keepChange(c, *prefix, l, haveLayout) {
+		if !keepChange(c, *prefix, entries) {
 			continue
 		}
 		t.rows = append(t.rows, []string{c.Section, c.Key, c.A, c.B, c.Note})
@@ -77,17 +82,18 @@ func diffCmd(args []string, firmware string, stdout, stderr io.Writer) int {
 
 // keepChange applies --path: a setting row by its key, a section row
 // ("<label>/") when either path is a prefix of the other, an EEPROM row by
-// its layout entry's MCuPath (unknown byte runs have none and are dropped).
-func keepChange(c backup.Change, prefix string, l backup.Layout, haveLayout bool) bool {
+// its layout entry's MCuPath (unknown byte runs and the row of a moved
+// state block have none and are dropped). entries are those of B's image.
+func keepChange(c backup.Change, prefix string, entries []backup.Entry) bool {
 	if prefix == "" {
 		return true
 	}
 	switch {
 	case c.Section == "eeprom":
-		if !haveLayout {
+		if c.Note == "state block moved" || strings.HasPrefix(c.Note, "in the state block") {
 			return false
 		}
-		for _, e := range l.Entries {
+		for _, e := range entries {
 			if hex4(e.Offset) == c.Key {
 				return strings.HasPrefix(e.MCuPath, prefix)
 			}
