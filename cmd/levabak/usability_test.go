@@ -255,8 +255,8 @@ func TestShowEEPROMPath(t *testing.T) {
 	p := write(t, d, "2026-11-10T094200Z_3.2.mcm.hex", eeprom(88))
 	_, out, _ := run0(t, "show", "--eeprom", "--format", "jsonl", "--path", "PID 1/", p)
 	rows := jsonRows(t, out)
-	if len(rows) != 4 {
-		t.Fatalf("want the 4 PID 1 entries, got %d: %s", len(rows), out)
+	if len(rows) != 11 {
+		t.Fatalf("want the 11 PID 1 entries, got %d: %s", len(rows), out)
 	}
 	_, out, _ = run0(t, "show", "--eeprom", "--format", "jsonl", "--path", "PID 1/Kc", p)
 	if len(jsonRows(t, out)) != 1 {
