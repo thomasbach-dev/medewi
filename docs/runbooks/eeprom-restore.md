@@ -33,24 +33,57 @@ included.
 
 ## What we know, and from where
 
-From the manuals only, not yet seen on our machine:
+Two programs are involved, on the two chips of the ito module.
 
-- Port 2323 is raw TCP. The first character resets the controller and
-  starts the bootloader; the module beeps and prints a greeting and a
-  menu like `(q)uit or (c)lear (f)lash (e)eprom (r)eset …` (ito manual
-  p. 31, 34).
-- `e` takes an EEPROM image as an Intel HEX file over XMODEM CRC; the
-  bootloader asks with a row of `C`. For a firmware upload it waits
-  60 s; assume the same here (firmware manual p. 58, ito manual p. 34).
-- `q` leaves the bootloader.
-- Transfers fail in the Wifi mode STA+AP; use AP or STA (ito manual
-  p. 31).
-- An image only fits the firmware version it came from (p. 58).
+**The Wifi chip (ESP8266)** runs a firmware based on the open-source
+[esp-link](https://github.com/jeelabs/esp-link). Port 2323 is esp-link's
+"programming port". In the stock source (`serial/serbridge.c`), which
+the vendor may have changed:
+
+- Connecting does nothing. The first data received resets the
+  controller, and the chip holds a "stay in the bootloader" signal for
+  as long as the connection lives. That first data is not passed on.
+- When the connection closes, the chip releases the signal and resets
+  the controller once more. So closing the connection should bring the
+  firmware back, whatever state the bootloader is in.
+- Port 23 has a trap of the same kind: a connection whose first bytes
+  are `0 ` (zero, space) or `?` and a line end also resets the
+  controller. medewi's commands all start with `MC`.
+
+**The controller (ATmega1284)** holds the vendor's own "ito bootloader".
+It is closed: no source, and the chip is read-protected. All we have is
+the ito manual (p. 31, 34):
+
+- After the reset it prints
+
+  ```
+  Connected to AVR
+  (q)uit or (c)lear (f)lash (e)eprom (r)eset
+  (p)ass-through (b)ootloader (s)ignal
+  ```
+
+- A command is its letter; the manual says "enter f (and press
+  RETURN)". Whether RETURN is needed is not known.
+- `e` answers `Waiting for XMODEM-CRC transfer...` and a growing row of
+  `C`. It takes "data in hex format (up to 4KB)" within 60 seconds.
+- `q` leaves the bootloader; pressing the encoder does the same.
+- "If a firmware upgrade fails, just repeat the process."
+- The vendor's terminal settings: raw TCP (not Telnet), RETURN sends
+  CR+LF, local echo on (so the bootloader does not echo).
+- Transfers fail in the Wifi mode STA+AP; use AP or STA.
+
+From the firmware manual: an image only fits the firmware version it
+came from (p. 58), and a bad settings checksum resets all settings to
+factory defaults (p. 234).
+
+Not known from any source: what the bootloader does with the heater
+outputs, whether it checks the image, and what it makes of our line
+ends and the short end record.
 
 Tried on a laptop against a local stand-in, not on the machine:
 
-- `socat` and `picocom` send nothing when they connect; the Enter key
-  sends one CR.
+- `socat` and `picocom` send nothing when they connect; with the
+  options below the Enter key sends CR+LF, like the vendor's terminal.
 - `sx` sends 128-byte blocks with CRC and pads the last one with 0x1A,
   like the vendor's terminal program. A backup file is about 11.5 kB of
   text: 91 blocks.
@@ -134,12 +167,12 @@ Terminal 2 is the keyboard:
 ```sh
 W=$(ls -d private/restore-probe/*/ | tail -1); W=${W%/}; echo "$W"
 cd "$W"
-picocom --noinit --noreset --send-cmd "sx -vv" --logfile screen.log tty
+picocom --noinit --noreset --echo --omap crcrlf --send-cmd "sx -vv" --logfile screen.log tty
 ```
 
 picocom says `Terminal ready`. Still nothing was sent. Its own keys:
 `C-a C-s` sends a file, `C-a C-q` quits. Everything else you type goes
-to the bootloader.
+to the bootloader, and you see it because of `--echo`.
 
 Note the wall-clock time of each step below on paper, and what the
 machine does: beeps, display, pump, heating lamp.
@@ -148,8 +181,9 @@ machine does: beeps, display, pump, heating lamp.
 
 Press RETURN once.
 
-Expected: the machine beeps, the display changes, and a greeting with
-the menu appears in terminal 2.
+Expected: the machine beeps, the display changes, and terminal 2 shows
+`Connected to AVR` and the menu line `(q)uit or (c)lear (f)lash
+(e)eprom (r)eset (p)ass-through (b)ootloader (s)ignal`.
 
 If nothing appears within 10 s: press nothing more. Go to "No answer
 after RETURN" below.
@@ -157,9 +191,11 @@ after RETURN" below.
 ## 6. Send the image
 
 1. Check Caps Lock. Type a lower-case `e`.
-2. Expected: a prompt, then a growing row of `C`.
-3. Press `C-a C-s`. picocom asks `*** file:`. Type `restore.hex` and
-   press Enter.
+2. Expected: `Waiting for XMODEM-CRC transfer...`, then a growing row
+   of `C`. If nothing comes within 3 s, press RETURN once (the manual
+   says a command wants it) and note that it was needed.
+3. Within 60 s, press `C-a C-s`. picocom asks `*** file:`. Type
+   `restore.hex` and press Enter.
 4. `sx` prints the blocks it sends and ends with `Transfer complete`.
    It takes a few seconds.
 
@@ -170,13 +206,16 @@ If `sx` ends with `Transfer incomplete`, or no `C` ever appears: go to
 
 ## 7. Leave the bootloader
 
-Type a lower-case `q`.
+Type a lower-case `q`. If nothing happens within 3 s, press RETURN
+once.
 
 Expected: the controller starts again; the display shows the normal
 start-up. Note how long that takes.
 
 Then quit picocom with `C-a C-q` and stop socat in terminal 1 with
-`Ctrl-C`.
+`Ctrl-C`. Closing the connection resets the controller once more, if
+the Wifi chip behaves like stock esp-link: note whether the machine
+restarts a second time.
 
 ## 8. Read back
 
@@ -239,10 +278,18 @@ license key.
 
 ### The controller does not come back after `q`
 
-Wait two minutes. Then switch the machine off at its power switch, wait
-ten seconds, switch it on. If it starts normally, go to step 8. If the
-display stays dark or shows the bootloader, connect again (step 4), type
-`q` once, and note what the terminal shows.
+In this order, waiting a minute after each:
+
+1. Press the encoder once: the manual says it leaves the bootloader
+   like `q`.
+2. Close the connection: quit picocom (`C-a C-q`) and stop socat. Stock
+   esp-link then resets the controller into the firmware.
+3. Switch the machine off at its power switch, wait ten seconds, switch
+   it on.
+
+If it starts normally, go to step 8. If the display stays dark or shows
+the bootloader after all three, connect again (step 4), press RETURN,
+and note what the terminal shows.
 
 ### A wrong key was typed
 

@@ -11,13 +11,20 @@ nothing connects to port 2323 (`CLAUDE.md`, `docs/use-cases.md`,
 `docs/deployment.md`, the capture runbook).
 
 The offline half of the path exists: `levabak write` makes an image with
-a fixed checksum, and `xmodem/` holds a sender. What we know about the
-bootloader itself comes from two manuals only (firmware manual p. 58,
-ito module manual p. 31–34): its greeting, its menu, the `e` command and
-XMODEM CRC. We have never seen its prompts, its timing, its line ends,
-how long the controller is away, or what the machine does afterwards.
-The simulator's bootloader (#85) and the restore client (#86, #87) would
-be built on guesses.
+a fixed checksum, and `xmodem/` holds a sender.
+
+Two programs sit behind port 2323. The Wifi chip runs a firmware based
+on the open-source esp-link, whose source shows how its programming port
+resets the controller on the first data and again when the connection
+closes. The controller holds the vendor's own bootloader, which is
+closed: the chip is read-protected and there is no source. For it we
+have the manuals only (firmware manual p. 58, ito module manual
+p. 31–34): the greeting, the menu, the prompt of the `e` command and
+XMODEM CRC. Nobody here has seen its timing, its line ends, how it
+treats the heater outputs, whether it checks an image, how long the
+controller is away, or what the machine does afterwards. The runbook
+lists what each source says. The simulator's bootloader (#85) and the
+restore client (#86, #87) would be built on guesses.
 
 The vendor documents a restore that a person does with a terminal
 program. Doing exactly that once, with an image the machine already
