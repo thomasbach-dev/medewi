@@ -82,7 +82,7 @@ func TestDiffDamagedChangedValue(t *testing.T) {
 }
 
 var testLayout = Layout{Firmware: "t", Entries: []Entry{
-	{0x0000, "u16", 0.1, "Kc", "", false, "confirmed", ""},
+	{0x0000, "u16", 0.1, 0, "Kc", "", false, "confirmed", ""},
 }}
 
 func TestDiffEEPROM(t *testing.T) {

@@ -430,11 +430,56 @@ Tray 250 ml, Purge 2000 ml.
 
   Hypothesis: 0x002F leaves out the water of descale and purge, 0x0027
   counts it (two backup intervals with such runs fit, a third does not).
-  0x0087 changed (cd -> a0) and is unknown. Counter widths (u8 vs u16,
-  u24 vs u32) are not settled by one pair. `levabak check` cross-checks
-  the MCu values `PID 1/Kc`, `PID 1/Ti`, `PID 1/Td` and `PID 1/WU limit`
-  against these offsets. `Profiles/Use` is named in the layout but not
-  compared (the MCu shows the profile name).
+  Counter widths (u8 vs u16, u24 vs u32) are not settled by one pair.
+  `Profiles/Use` is named in the layout but not compared (the MCu shows
+  the profile name).
+
+  Mapped on 2026-11-27 by editing an empty profile slot, one dose, a
+  user setpoint and the eco timers at the menu, with a backup after each
+  step (`levabak layout` has every entry):
+
+  - **Pressure profiles:** four slots of 0x6B bytes from 0x04FF. A slot
+    holds, by offset in the slot:
+
+    | in slot | type | meaning |
+    |---|---|---|
+    | 0x00 | 9 chars | name, right-aligned and space-padded; a cleared name is nine spaces, a never-used one nine zero bytes |
+    | 0x0D | 9 x (u16, u16) | pre-infusion points: time, pressure |
+    | 0x35 | 9 x (u16, u16) | shot points: time, pressure |
+    | 0x5D | u8 | pre-infusion repeat |
+    | 0x5E | u8, 0.1 s | pre-infusion wait |
+    | 0x60 | u8 | end: 0 STOP, 1 SUSTAIN (likely) |
+    | 0x67 | u16, 0.1 deg | the profile's PID 1 setpoint |
+
+    A point's time is stored as tenths of a second plus 1, its pressure
+    as tenths of a bar plus 181; 0 means "not set". Raw pressure values
+    of 1-180 were not seen; they would fit a pump power as a phase
+    angle. The bytes at 0x09, 0x31 and 0x59 of a slot are unknown.
+  - **Doses:** eleven records of 0x11 bytes from 0x079E, in menu order.
+    In a record: 0x02 volume (u16, ml), 0x04 in, 0x06 out (u16, 0.1 g),
+    0x08 ratio (u16, 0.1). The MCu shows only the fields of the dose's
+    method; the others keep their old values. The first two bytes and
+    the last seven (method, path, flags, profile) are unknown.
+  - **PID 1 block:** 0x0132 steam beep setpoint, 0x0134 eco setpoint,
+    0x0136 reset setpoint, 0x0138/0x013A/0x013C user setpoints 1-3,
+    0x013E safety limit (all u16, 0.1 deg; 0 = not set).
+  - **Eco timers:** 0x08AA time to eco, 0x08AC time to standby (u16, min).
+  - **Checksum:** 0x0087 is an XOR over the settings. In every one of 16
+    backup pairs its change equals the XOR of the changed settings
+    bytes. Covered for certain: 0x0128-0x08AC. Not covered: the state
+    block below it and the test tables from 0x0F54.
+  - **State block:** the counters above sit in a 30-byte block that
+    moves. It was at 0x0021 until 2026-11-21 and at 0x003F on
+    2026-11-27; the old place is zeroed. Its second byte counts up with
+    every save and had wrapped in between, so the block seems to move by
+    its own length every 256 saves (wear levelling). Its bytes 2-3 equal
+    the PID 1 setpoint in 0.1 deg: the setpoint is saved here, outside
+    the checksum. The offsets 0x0022-0x0037 in the table are therefore
+    only right for backups up to 2026-11-21; `levabak` does not follow
+    the block yet.
+
+  `levabak check` cross-checks every entry that has a number in the MCu
+  against the EEPROM. All backups of 2026-11-16 to 2026-11-27 pass.
 
 ## Autotune
 
