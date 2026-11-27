@@ -115,6 +115,8 @@ dumps are never committed.
 
 Status: `levabak` (offline, `backup/`) decodes the MCu menu tree and the
 known EEPROM entries, checks a backup for damage and diffs two backups.
+`levabak write` makes a new image file with edited entries and a fixed
+checksum; nothing puts such a file on the machine yet (decision 0007).
 `medewictl backup` still only fetches the files.
 
 ## UC12: Machine tuning

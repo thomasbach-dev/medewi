@@ -1,6 +1,7 @@
 // Command levabak checks, lists and compares leva! settings backups: the
 // MCu menu dump and the MCm firmware (EEPROM) dump that medewictl backup
-// writes. It only reads files; it never talks to the machine.
+// writes. Its write subcommand makes a new MCm file from one, with
+// edited entries. It works on files only; it never talks to the machine.
 package main
 
 import (
@@ -43,6 +44,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		"show":   showCmd,
 		"diff":   diffCmd,
 		"layout": layoutCmd,
+		"write":  writeCmd,
 	}
 	cmd, ok := cmds[rest[0]]
 	if !ok {

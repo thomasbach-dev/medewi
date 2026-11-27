@@ -7,6 +7,7 @@ import (
 
 var layout32 = Layout{Firmware: "3.2", Entries: sorted(
 	[]Entry{
+		{0x0087, "u8", 1, 0, "settings checksum (XOR)", "", false, "confirmed", "its change equals the XOR of the changed settings bytes in 16 backup pairs"},
 		{0x0132, "u16", 0.1, 0, "PID 1 steam beep setpoint (°)", "PID 1/Steam beep/Setpoint", true, "likely", "equals MCu, unchanged"},
 		{0x0134, "u16", 0.1, 0, "PID 1 eco setpoint (°)", "PID 1/Eco", true, "likely", "equals MCu, unchanged"},
 		{0x0136, "u16", 0.1, 0, "PID 1 reset setpoint (°)", "PID 1/Reset", true, "likely", "equals MCu, unchanged"},
@@ -24,7 +25,12 @@ var layout32 = Layout{Firmware: "3.2", Entries: sorted(
 	},
 	profileEntries32(),
 	doseEntries32(),
-), State: state32}
+), State: state32, Checksum: checksum32}
+
+// checksum32: in every one of 16 backup pairs the change of 0x0087
+// equals the XOR of the changed settings bytes. The region is the span
+// of the bytes seen changing; the real one is at least that wide.
+var checksum32 = Checksum{Offset: 0x0087, From: 0x0128, To: 0x08AD}
 
 // state32 is the block of counters and current setpoints. It was seen at
 // 0x0021 (until 2026-11-21) and at 0x003F (2026-11-27), after its second

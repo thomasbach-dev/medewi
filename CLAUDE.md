@@ -10,7 +10,7 @@ machine simulator (`sim/`, `cmd/levasim`), conformance suite
 (`conformance/`), capture tooling (`cmd/levacap`). Phase 2 (implemented):
 the always-on daemon `medewid` (`daemon/`, `watch/`, `brew/`, `store/`, `rawlog/`:
 exporter, brew DB, power control, release/reclaim of the machine, ops panel, raw traffic log), the client `cmd/medewictl`,
-the settings-backup reader `cmd/levabak` (`backup/`: check, show, diff),
+the settings-backup reader `cmd/levabak` (`backup/`: check, show, diff; `write` makes an edited EEPROM image file),
 the log decoder `cmd/levalog` (`logview/`, `systime/`, `program/`; its `extract`
 turns a raw-log window into a fixture, its `programs` finds program runs)
 and the NixOS module `nix/module.nix`; recipe execution is still to come.
