@@ -66,11 +66,8 @@ Tried on a laptop against a local stand-in, not on the machine:
 - The laptop on mains power and on the same network as the machine,
   with a stable connection (not at the edge of the Wifi).
 - In the repo, in `nix develop`, with `MEDEWI_MACHINE_ADDR` set
-  (`echo $MEDEWI_MACHINE_ADDR`). The terminal tools come from nixpkgs:
-
-  ```sh
-  nix shell nixpkgs#socat nixpkgs#picocom nixpkgs#lrzsz
-  ```
+  (`echo $MEDEWI_MACHINE_ADDR`). The dev shell brings the terminal
+  tools: `socat`, `picocom` and `sx` (from `lrzsz`).
 
   Open two terminals this way, both in the repo's root. Terminal 1 will
   hold the connection and the log, terminal 2 is where you type.
