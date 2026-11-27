@@ -10,7 +10,7 @@ For the "why" behind the shape described here, see the
 flowchart LR
     subgraph machine["Espresso machine"]
         leva["leva! firmware on ito controller<br/>TCP :23, plain-text protocol"]
-        boot["bootloader :2323<br/>(never touched)"]
+        boot["bootloader :2323<br/>(never touched by medewi)"]
     end
 
     subgraph repo["Medewi (this repo)"]
