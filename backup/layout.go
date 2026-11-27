@@ -27,6 +27,7 @@ type Layout struct {
 	Firmware string
 	Entries  []Entry
 	State    Block
+	Checksum Checksum
 }
 
 // Block is a group of entries the firmware keeps together and moves

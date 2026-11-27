@@ -229,7 +229,8 @@ works); the release survives a daemon restart and ends by itself, or with
 `<ts>_<fw>[_<note>].mcu.txt` and `.mcm.hex` (one timestamp for both), where
 `<ts>` looks like `2026-11-03T041500Z` and `<fw>` is the firmware version;
 `--note` adds `<note>`. A damaged MCu dump is refused. Read the files with
-`levabak check|show|diff DIR` (offline; `levabak --help`). The files contain
+`levabak check|show|diff DIR` (offline; `levabak --help`; `levabak write`
+makes an edited image file, which nothing sends to the machine yet). The files contain
 the license key: they are written `0600` and must never be committed. If the
 `mcm` dump fails, the `mcu` file already written stays in `DIR`.
 

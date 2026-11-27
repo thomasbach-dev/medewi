@@ -13,13 +13,14 @@ const helpHead = `usage: levabak [--firmware V] SUBCOMMAND [OPTIONS] BACKUP ...
 
 levabak reads leva! settings backups offline: the MCu dump (the settings
 menu tree, *.mcu.txt) and the MCm dump (the firmware image with the EEPROM,
-*.mcm.hex) that "medewictl backup --out DIR" writes. It never talks to the
-machine.
+*.mcm.hex) that "medewictl backup --out DIR" writes. write makes a new
+MCm file from one, with edited entries. It never talks to the machine.
 
   check   is the backup whole? problems with line numbers; exit 1 if any
   show    the settings as PATH and VALUE; --eeprom: the known EEPROM entries
   diff    A B: changed settings, then changed EEPROM bytes
   layout  the known EEPROM entries: offset, type, scale, name, confidence
+  write   a new MCm file from a backup's EEPROM image; --set edits entries
 
 levabak SUBCOMMAND --help prints that subcommand's part of this text and
 its flags.`
@@ -73,7 +74,8 @@ repo and out of pasted text.
 
 Warnings and errors go to stderr as "levabak: ..." lines; check's
 problems are rows on stdout.
-Exit codes: 0 ok, 1 read error (and check finding a problem), 2 usage error.
+Exit codes: 0 ok, 1 read error (and check finding a problem, write
+refusing an edit or a file), 2 usage error.
 diff exits 0 whether or not the backups differ.`
 
 // subHelp is one subcommand's part of the help.
@@ -203,6 +205,45 @@ first; the block moves, so their offset counts from its start
 		examples: []string{
 			"  levabak layout                                          # the entries for firmware 3.2",
 			"  levabak --firmware 3.2 layout --format csv > layout.csv",
+		},
+	},
+	{
+		name: "write",
+		text: `usage: levabak [--firmware V] write --out FILE [--set PATH=VALUE ...]
+             [--standard-eof] [--force] [--format F] BACKUP
+
+write takes the EEPROM image of exactly one backup (its MCm file) and
+writes it as a new MCm file to --out FILE. It writes that file and
+nothing else: no byte goes to the machine, and putting an image on the
+machine is not levabak's job. Without --set the new file equals the
+source byte for byte (16-byte records, LF line ends, the firmware's end
+record ":00000001F"); --standard-eof ends it with the Intel HEX end
+record ":00000001FF" instead.
+
+--set PATH=VALUE (repeatable) sets the EEPROM entry that belongs to an
+MCu path, as show --eeprom --path PATH lists it, and fixes the settings
+checksum (it XORs the change into the checksum byte). VALUE is a number
+in the entry's unit; a unit after it is ignored ("3.3b"), and "-" means
+not set where the entry knows that (profile points). The result differs
+from the source only in the entries' bytes and the checksum byte; write
+prints these changes like diff does (section, key, a, b, note).
+
+write refuses (exit 1, no file written): a path without an EEPROM
+entry, an entry of confidence guess, a value that is no multiple of the
+entry's scale, is negative or does not fit, a change to a byte outside
+the region the checksum is known to cover (the state block with the
+current setpoints lies outside), a damaged MCm dump, and an existing
+--out file unless --force. It does not check that a value makes sense
+to the firmware (a range, a profile point with a time but no pressure):
+compare with show --eeprom of a backup where the menu set such a value.
+
+The image holds everything the source holds, the license key included:
+keep FILE out of the repo. It is created with mode 0600. Name it like a
+backup (TIMESTAMP_FIRMWARE_NOTE.mcm.hex) and check, show --eeprom and
+diff read it.`,
+		examples: []string{
+			"  levabak write --out copy.mcm.hex x.mcm.hex               # the same image again",
+			"  levabak write --out \"$D\"/2026-11-10T094200Z_3.2_edit.mcm.hex --set 'Eco/Eco=50' \"$D\"/2026-11-10T094200Z_3.2.mcm.hex",
 		},
 	},
 }

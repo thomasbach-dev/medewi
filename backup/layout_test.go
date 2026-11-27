@@ -65,10 +65,10 @@ func TestLayout32(t *testing.T) {
 			t.Errorf("entry at %#x = %+v, want %+v", w.Offset, e, w)
 		}
 	}
-	// 6 fixed entries, 4 profile slots of 41 entries, 11 doses of 4,
+	// The checksum, 6 fixed entries, 4 profile slots of 41 entries, 11 doses of 4,
 	// 6 more in the PID 1 block, 2 eco timers. The counters are in the
 	// state block (TestLayout32State).
-	if got, want := len(l.Entries), 6+4*41+11*4+6+2; got != want {
+	if got, want := len(l.Entries), 1+6+4*41+11*4+6+2; got != want {
 		t.Errorf("got %d entries, want %d", got, want)
 	}
 	if _, ok := LayoutFor("unknown"); ok {

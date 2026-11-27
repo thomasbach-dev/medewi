@@ -215,8 +215,8 @@ in
           self.packages.${pkgs.stdenv.hostPlatform.system}.levalog
         }/bin/levalog --xml ${lib.escapeShellArg cfg.xmlFile} "$@"
       '')
-      # Offline settings-backup checker (check, show, diff, layout); it
-      # needs no XML.
+      # Offline settings-backup tool (check, show, diff, layout, write);
+      # it needs no XML.
       self.packages.${pkgs.stdenv.hostPlatform.system}.levabak
     ];
 

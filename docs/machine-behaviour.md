@@ -470,7 +470,14 @@ Tray 250 ml, Purge 2000 ml.
   - **Checksum:** 0x0087 is an XOR over the settings. In every one of 16
     backup pairs its change equals the XOR of the changed settings
     bytes. Covered for certain: 0x0128-0x08AC. Not covered: the state
-    block below it and the test tables from 0x0F54.
+    block below it and the test tables from 0x0F54. `levabak write
+    --set` edits an entry and XORs the change into 0x0087; it refuses a
+    change outside 0x0128-0x08AC. Replaying the menu edits between
+    consecutive backups this way gives the machine's own image, checksum
+    included, in each of the 11 pairs where only known entries changed.
+  - **Dump file form:** 16-byte records, upper-case hex, and the short
+    end record; `levabak write` without `--set` gives each of the 17
+    backup files back byte for byte.
   - **State block:** the counters and the current setpoints sit in a
     30-byte block that moves. It was at 0x0021 until 2026-11-21 and at
     0x003F on 2026-11-27; the old place is zeroed. Its second byte (the
