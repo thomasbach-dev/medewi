@@ -138,8 +138,14 @@ a truncated kind naming the cause (`truncated-lost`, `truncated-released`,
   damage (the daemon uses the same check and refuses a damaged MCu dump),
   diffs two backups and holds the known EEPROM layout per firmware. No
   machine I/O; `backup/backuptest` has synthetic dumps for tests.
-- `cmd/levabak` — `levabak check`, `show`, `diff` and `layout` over
-  `backup/`, installed on brewhost by the module.
+  It also encodes an image and sets entries in it (checksum fixed), for
+  `levabak write`.
+- `cmd/levabak` — `levabak check`, `show`, `diff`, `layout` and `write`
+  over `backup/`, installed on brewhost by the module.
+- `xmodem/` — XMODEM-CRC sender (blocks, CRC-16, retries, timeouts, end
+  of transfer) for the restore of write path B
+  ([decision 0007](decisions/0007-settings-write-mechanisms.md)). It
+  knows the protocol only and opens no connection; nothing uses it yet.
 - `cmd/levalog` — `levalog fields`, `runs`, `events` (with `--every`) and
   `summary` over `logview`, installed on brewhost by the module.
 - `nix/module.nix` — the `nixosModules.medewid` service.
